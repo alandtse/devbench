@@ -1,0 +1,56 @@
+# devbench
+
+A standalone SKSE plugin that hosts a **general test bench for Skyrim mod development**:
+an in-process server that exposes mod functionality to **AI agents (MCP)** and to **plain
+HTTP clients (REST)** through one endpoint, on `127.0.0.1`.
+
+It is transport-agnostic by design. A `ToolRegistry` is the single source of truth; the MCP
+and REST adapters *reflect* it, so a tool registered once is reachable over both protocols
+automatically. Other SKSE mods register their own tools through a small C ABI, turning
+devbench into a shared bench rather than a per-mod server.
+
+## Design
+
+```
+            register (in-proc or cross-plugin C-ABI)
+ mods ───────────────────────────────────────────────▶  ToolRegistry  ◀── EventBus
+                                                              ▲                ▲
+                                              ┌───────────────┴──────┐         │
+                                         McpAdapter             RestAdapter ───┘
+                                         (/mcp, JSON-RPC)       (/api/*, plain HTTP)
+                                              └──────────┬───────────┘
+                                                  one httplib server, one port
+```
+
+- **`ToolRegistry`** — name → `{descriptor, handler}`. Handlers are JSON-in / JSON-out and
+  run on the listener thread; handlers that touch game/render state marshal to the main
+  thread via `MainThread::RunAndWait`, which **returns the value synchronously** (the
+  agentic-renderdoc model: an agent gets data back, not just an ack).
+- **`EventBus`** — fan-out for notifications (e.g. shader recompiles): MCP notifications for
+  agents, `GET /api/events?since=N` polling or SSE for HTTP clients.
+- **Adapters** — generic; neither contains a tool name. The descriptor's JSON Schema doubles
+  as the MCP `inputSchema` and the REST `GET /api/tools` documentation.
+
+The tool surface is intentionally **thin and powerful** (an `eval`/`console` primitive plus a
+small set of conveniences) rather than a tool per operation.
+
+## Safety
+
+Bound to `127.0.0.1` only. The bench has no auth and can execute arbitrary commands in the
+game process — that is acceptable for a *local dev bench* but it must never be bound to a
+network-reachable address, and `eval`-class tools are gated behind an explicit enable.
+
+## Build
+
+xmake, C++23, CommonLibSSE-NG (submodule). cpp-mcp is vendored as a patched local xmake
+package (the patch exposes its `httplib` server so the REST facade can share the port).
+
+```
+git submodule update --init --recursive
+xmake
+# auto-deploy: set SkyrimPluginTargets to ';'-separated game Data dirs before building
+```
+
+## License
+
+GPL-3.0 (see `COPYING`/`EXCEPTIONS`). Dependencies (CommonLibSSE-NG, cpp-mcp) are MIT.
