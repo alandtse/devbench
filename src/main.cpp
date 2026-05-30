@@ -1,9 +1,12 @@
+#include "Server.h"
 #include "Version.h"
 
 #include <spdlog/sinks/basic_file_sink.h>
 
 namespace
 {
+	dvb::Server g_server;  // owns the registry, event bus, and MCP/REST transports
+
 	void InitLogging()
 	{
 		auto path = SKSE::log::log_directory();
@@ -24,7 +27,9 @@ namespace
 		// The server is started after data load so game state is queryable. Wiring
 		// (ToolRegistry + MCP/REST adapters over cpp-mcp's httplib) lands next.
 		if (a_msg && a_msg->type == SKSE::MessagingInterface::kDataLoaded) {
-			logs::info("devbench: data loaded");
+			// Start after data load so game state is queryable. Tools register before
+			// this (in-proc now; cross-plugin C-ABI later) and appear on both transports.
+			g_server.Start();
 		}
 	}
 }
