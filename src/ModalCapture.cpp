@@ -1,7 +1,6 @@
 #include "ModalCapture.h"
 
 #include <atomic>
-#include <mutex>
 
 namespace
 {
@@ -25,15 +24,12 @@ namespace dvb::ModalCapture
 {
 	void Install()
 	{
-		static std::once_flag once;
-		std::call_once(once, []() {
-			// MessageBoxMenu::QueueMessage — RelocationID covers SE/AE and maps to VR via
-			// the address library (the same id CommonLibSSE-NG uses for this function).
-			REL::Relocation<std::uintptr_t> target{ REL::RelocationID(51422, 52271) };
-			auto& trampoline = SKSE::GetTrampoline();
-			QueueMessageHook::func = trampoline.write_branch<5>(target.address(), &QueueMessageHook::thunk);
-			logs::info("ModalCapture: hooked MessageBoxMenu::QueueMessage");
-		});
+		// TEMPORARILY DISABLED: the write_branch<5> detour on QueueMessage
+		// (RELOCATION_ID 51422/52271) CTDs the game when a message box is queued. Under
+		// investigation (prologue/id verification) — re-enable once the safe hook is
+		// confirmed. Until then Current() returns nullptr and menu describe/accept
+		// report no modal, but the bench is otherwise unaffected.
+		logs::warn("ModalCapture: QueueMessage hook disabled pending crash fix");
 	}
 
 	RE::MessageBoxData* Current() { return g_data.load(std::memory_order_relaxed); }
