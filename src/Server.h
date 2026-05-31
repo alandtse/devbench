@@ -22,7 +22,7 @@ namespace dvb
 	class Server
 	{
 	public:
-		explicit Server(std::string a_host = "127.0.0.1", int a_port = 8910);
+		explicit Server(std::string a_host = "127.0.0.1", int a_port = 8920);
 		~Server();
 
 		Server(const Server&) = delete;
