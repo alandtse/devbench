@@ -16,8 +16,10 @@ namespace dvb
 		// In-game hotkeys (DXScanCode; 0 = disabled). Let recording/replay run with no
 		// MCP/REST client connected — the standalone-benchmark path. Ignored while the
 		// console is open so they don't fire on keystrokes typed into it.
-		int         recordHotkey = 0;           ///< toggle record start/stop
+		int         recordHotkey = 0;           ///< toggle record start/stop (DXScanCode)
 		int         replayHotkey = 0;           ///< replay a recording (see replayPath)
+		bool        recordHotkeyShift = false;  ///< require Shift held with recordHotkey
+		bool        replayHotkeyShift = false;  ///< require Shift held with replayHotkey
 		std::string replayPath = "";            ///< replay target; empty = most recent recording
 		bool        replayRestoreScene = true;  ///< replay hotkey re-establishes the recorded scene
 

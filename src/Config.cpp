@@ -26,6 +26,8 @@ namespace dvb
 				{ "logLevel", a_cfg.logLevel },
 				{ "recordHotkey", a_cfg.recordHotkey },
 				{ "replayHotkey", a_cfg.replayHotkey },
+				{ "recordHotkeyShift", a_cfg.recordHotkeyShift },
+				{ "replayHotkeyShift", a_cfg.replayHotkeyShift },
 				{ "replayPath", a_cfg.replayPath },
 				{ "replayRestoreScene", a_cfg.replayRestoreScene },
 				{ "autoRunPath", a_cfg.autoRunPath },
@@ -56,6 +58,8 @@ namespace dvb
 			cfg.logLevel = j.value("logLevel", cfg.logLevel);
 			cfg.recordHotkey = j.value("recordHotkey", cfg.recordHotkey);
 			cfg.replayHotkey = j.value("replayHotkey", cfg.replayHotkey);
+			cfg.recordHotkeyShift = j.value("recordHotkeyShift", cfg.recordHotkeyShift);
+			cfg.replayHotkeyShift = j.value("replayHotkeyShift", cfg.replayHotkeyShift);
 			cfg.replayPath = j.value("replayPath", cfg.replayPath);
 			cfg.replayRestoreScene = j.value("replayRestoreScene", cfg.replayRestoreScene);
 			cfg.autoRunPath = j.value("autoRunPath", cfg.autoRunPath);
