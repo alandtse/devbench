@@ -1,5 +1,6 @@
 #include "Config.h"
 #include "ConsoleLogCapture.h"
+#include "ModalCapture.h"
 #include "GameEvents.h"
 #include "HostApi.h"
 #include "Server.h"
@@ -69,6 +70,7 @@ namespace
 				// Start() so they appear on both transports from the first request; then
 				// attach game-event sources.
 				dvb::ConsoleLogCapture::Install();
+				dvb::ModalCapture::Install();
 				g_server = std::make_unique<dvb::Server>("127.0.0.1", cfg.port);
 				dvb::RegisterCoreTools(g_server->Tools(), g_server->Events());
 				dvb::HostApi::Init(g_server->Tools(), g_server->Events());
@@ -93,7 +95,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
 	SKSE::Init(a_skse);
 	InitLogging();
-	SKSE::AllocTrampoline(64);  // for the ConsoleLogCapture VPrint detour
+	SKSE::AllocTrampoline(128);  // ConsoleLogCapture VPrint + ModalCapture QueueMessage detours
 	logs::info("devbench {} loaded", DEVBENCH_VERSION_STRING);
 
 	if (auto* messaging = SKSE::GetMessagingInterface())
