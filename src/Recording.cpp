@@ -1,6 +1,8 @@
 #include "Recording.h"
 
+#include "GameState.h"
 #include "MainThread.h"
+#include "ToolRegistry.h"
 
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
@@ -12,6 +14,7 @@
 #include <format>
 #include <fstream>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -25,6 +28,24 @@ namespace dvb::Recording
 		constexpr long   kDefaultIntervalMs = 1000;
 		constexpr long   kMinIntervalMs = 100;
 		constexpr double kRadToDeg = 57.295779513082323;  // 180/pi — console setangle is degrees, data.angle is radians
+
+		// Last entry point devbench brokered into the current scene (a save load or a coc),
+		// so a recording can stamp a reproducible "how to get here" into its manifest. Guarded
+		// because the game/console tools write it from the listener thread and the recorder
+		// reads it at start. Empty kind → entry unknown (player walked here).
+		struct EntryPoint
+		{
+			std::string kind;   // "save" | "coc" | ""
+			std::string value;  // save name | cell id
+		};
+		std::mutex g_entryMtx;
+		EntryPoint g_entry;
+
+		EntryPoint CurrentEntry()
+		{
+			std::lock_guard lock(g_entryMtx);
+			return g_entry;
+		}
 
 		// Read the live player pose on the main thread. Null if the player isn't loaded
 		// (main menu / mid-load) so the sampler skips the tick rather than logging a bogus
@@ -40,6 +61,7 @@ namespace dvb::Recording
 				{ "y", pos.y },
 				{ "z", pos.z },
 				{ "angleZ", pc->GetAngleZ() },  // radians
+				{ "frame", game::CurrentFrame() },
 			};
 		}
 
@@ -70,8 +92,15 @@ namespace dvb::Recording
 					m["interior"] = cell->IsInteriorCell();
 				}
 				const auto pos = pc->GetPosition();
-				m["anchor"] = json{ { "x", pos.x }, { "y", pos.y }, { "z", pos.z }, { "angleZ", pc->GetAngleZ() } };
+				m["anchor"] = json{ { "x", pos.x }, { "y", pos.y }, { "z", pos.z }, { "angleZ", pc->GetAngleZ() }, { "frame", game::CurrentFrame() } };
 			}
+
+			// Reproducible entry point (save/coc devbench brokered), or a loud "unknown" so
+			// a replay won't silently pretend it can restore the scene.
+			if (const EntryPoint e = CurrentEntry(); !e.kind.empty())
+				m["entryPoint"] = json{ { "kind", e.kind }, { "value", e.value } };
+			else
+				m["entryPoint"] = json{ { "kind", "unknown" }, { "note", "no save/coc brokered by devbench before recording; replay cannot restore the scene — load from a save and re-record, or set entryPoint manually" } };
 			return m;
 		}
 
@@ -225,5 +254,62 @@ namespace dvb::Recording
 		}
 
 		return json{ { "error", "unknown action (start|stop|status)" }, { "action", action } };
+	}
+
+	void NoteLoadEntry(const std::string& a_saveName)
+	{
+		std::lock_guard lock(g_entryMtx);
+		g_entry = EntryPoint{ "save", a_saveName };
+	}
+
+	void NoteCocEntry(const std::string& a_cellId)
+	{
+		std::lock_guard lock(g_entryMtx);
+		g_entry = EntryPoint{ "coc", a_cellId };
+	}
+
+	json BuildReplaySteps(const json& a_args)
+	{
+		const std::string path = a_args.value("path", std::string{});
+		if (path.empty())
+			throw ToolError(400, "replay requires 'path' (a recording file)");
+		std::ifstream in(path);
+		if (!in)
+			throw ToolError(404, std::format("recording not found: {}", path));
+		json rec;
+		try {
+			in >> rec;
+		} catch (const std::exception& e) {
+			throw ToolError(400, std::format("invalid recording JSON: {}", e.what()));
+		}
+		if (!rec.contains("steps") || !rec["steps"].is_array())
+			throw ToolError(400, "recording has no 'steps' array");
+
+		json steps = json::array();
+
+		// restoreScene: re-establish the recorded entry point so the trajectory runs in the
+		// scene it was captured in (loading the save also restores its time/weather). Without
+		// it, replay just teleports along the path in whatever scene is currently loaded.
+		if (a_args.value("restoreScene", false)) {
+			const json        meta = rec.value("meta", json::object());
+			const json        entry = meta.value("entryPoint", json::object());
+			const std::string kind = entry.value("kind", std::string{});
+			const std::string value = entry.value("value", std::string{});
+			if (kind == "save" && !value.empty()) {
+				// game load (by name) skips the content-mismatch modal.
+				steps.push_back(json{ { "tool", "game" }, { "args", json{ { "action", "load" }, { "name", value } } } });
+				steps.push_back(json{ { "waitUntil", "playerLoaded" }, { "timeoutMs", 60000 } });
+			} else if (kind == "coc" && !value.empty()) {
+				steps.push_back(json{ { "tool", "console" }, { "args", json{ { "action", "exec" }, { "command", "coc " + value } } } });
+				steps.push_back(json{ { "waitUntil", "playerLoaded" }, { "timeoutMs", 60000 } });
+			} else {
+				logs::warn("devbench record(replay): restoreScene requested but entryPoint is '{}' — running trajectory without scene restore",
+					kind.empty() ? "unknown" : kind);
+			}
+		}
+
+		for (const auto& s : rec["steps"])
+			steps.push_back(s);
+		return steps;
 	}
 }

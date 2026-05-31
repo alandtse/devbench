@@ -1,5 +1,6 @@
 #include "Config.h"
 #include "GameEvents.h"
+#include "GameState.h"
 #include "HostApi.h"
 #include "Server.h"
 #include "Tools.h"
@@ -67,6 +68,7 @@ namespace
 				// registers its self-test tool) BEFORE Start() so they appear on both
 				// transports from the first request; then attach game-event sources.
 				g_server = std::make_unique<dvb::Server>("127.0.0.1", cfg.port);
+				g_server->Events().SetFrameProvider(&dvb::game::CurrentFrame);
 				dvb::RegisterCoreTools(g_server->Tools(), g_server->Events());
 				dvb::HostApi::Init(g_server->Tools(), g_server->Events());
 				g_server->Start();

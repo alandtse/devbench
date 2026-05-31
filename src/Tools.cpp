@@ -3,6 +3,7 @@
 #include "ConsoleLogCapture.h"
 #include "EventBus.h"
 #include "GameEvents.h"
+#include "GameState.h"
 #include "Json.h"
 #include "MainThread.h"
 #include "Recording.h"
@@ -60,6 +61,21 @@ namespace dvb
 			const std::string command = a_args.value("command", std::string{});
 			if (command.empty())
 				throw ToolError(400, "missing required parameter 'command'");
+
+			// A `coc <cell>` is a reproducible entry point for a later recording — note the
+			// cell so the recording manifest can capture "how to get here". (|0x20 lowercases
+			// ASCII letters for the prefix test without a <cctype> dependency.)
+			if (command.size() > 4 && (command[0] | 0x20) == 'c' && (command[1] | 0x20) == 'o' &&
+				(command[2] | 0x20) == 'c' && command[3] == ' ') {
+				std::string cell = command.substr(4);
+				if (const auto nb = cell.find_first_not_of(' '); nb != std::string::npos) {
+					cell = cell.substr(nb);
+					if (const auto sp = cell.find(' '); sp != std::string::npos)
+						cell = cell.substr(0, sp);
+					if (!cell.empty())
+						Recording::NoteCocEntry(cell);
+				}
+			}
 
 			auto* task = SKSE::GetTaskInterface();
 			if (!task)
@@ -160,6 +176,7 @@ namespace dvb
 				if (saves.empty())
 					throw ToolError(404, std::format("no .ess saves in {}", saveDir.string()));
 				const std::string name = saves.front().name;
+				Recording::NoteLoadEntry(name);  // reproducible entry point for a later recording
 				task->AddTask([name]() {
 					if (auto* m = RE::BGSSaveLoadManager::GetSingleton())
 						m->Load(name.c_str(), false);
@@ -181,6 +198,7 @@ namespace dvb
 							[&](const SaveEntry& s) { return s.name == name; });
 					if (!exists)
 						throw ToolError(404, std::format("save '{}' not found in {} — use action='list' for valid names", name, saveDir.string()));
+					Recording::NoteLoadEntry(name);  // reproducible entry point for a later recording
 				}
 				task->AddTask([name, isSave]() {
 					auto* m = RE::BGSSaveLoadManager::GetSingleton();
@@ -286,6 +304,7 @@ namespace dvb
 					{ "version", DEVBENCH_VERSION_STRING },
 					{ "vr", REL::Module::IsVR() },
 					{ "playerLoaded", loaded },
+					{ "frame", game::CurrentFrame() },
 				};
 			});
 		}
@@ -618,23 +637,34 @@ namespace dvb
 		record.name = "record";
 		record.description =
 			"Capture a manual play-through as a replayable scenario. action='start' begins "
-			"sampling the player pose every intervalMs (default 1000, min 100) on a background "
-			"thread and captures a one-time scene manifest (worldspace/cell, time of day, "
-			"weather, anchor pose) — the state a shader benchmark must reproduce; a game must be "
-			"loaded. 'stop' writes the trajectory to "
-			"Data/SKSE/Plugins/devbench/recordings/recording_<stamp>.json (a scenario the "
-			"'scenario' tool can replay — player-teleport steps + waits) and returns its path + "
-			"meta. 'status' reports recording/sampleCount/intervalMs. Emits "
-			"record.started / record.stopped events as scenario markers.";
+			"sampling the player pose (x/y/z/angleZ + game frame) every intervalMs (default "
+			"1000, min 100) on a background thread and captures a one-time scene manifest "
+			"(worldspace/cell, time of day, weather, anchor pose, and the entryPoint — the save "
+			"loaded or coc'd to reach the scene, or 'unknown'); a game must be loaded. 'stop' "
+			"writes the trajectory to Data/SKSE/Plugins/devbench/recordings/recording_<stamp>.json "
+			"and returns its path + meta. 'status' reports recording/sampleCount/intervalMs. "
+			"'replay' runs a recording file ('path'): with restoreScene=true it re-establishes "
+			"the entryPoint (loads the save / coc's the cell) and waits for the player before the "
+			"trajectory, so the run reproduces the recorded scene; otherwise it teleports along "
+			"the path in the current scene. Emits record.started / record.stopped markers.";
 		record.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "start", "stop", "status" }) }, { "description", "start | stop | status" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "start", "stop", "status", "replay" }) }, { "description", "start | stop | status | replay" } } },
 								{ "intervalMs", json{ { "type", "integer" }, { "description", "start: pose sample period in ms (default 1000, min 100)" } } },
+								{ "path", json{ { "type", "string" }, { "description", "replay: recording file to play back (from stop's 'path')" } } },
+								{ "restoreScene", json{ { "type", "boolean" }, { "description", "replay: re-establish the recorded entryPoint + wait for load before the trajectory (default false)" } } },
 							} },
 		};
 		a_registry.Register(std::move(record),
-			[&a_events](const json& a_args, const ToolContext&) {
+			[&a_registry, &a_events](const json& a_args, const ToolContext& a_ctx) {
+				// replay assembles a step list (optionally prefixed with scene restore) and runs
+				// it through the scenario engine, which needs the registry — hence handled here
+				// rather than in Recording::Handle.
+				if (a_args.value("action", std::string{}) == "replay") {
+					const json steps = Recording::BuildReplaySteps(a_args);
+					return ScenarioHandler(json{ { "steps", steps } }, a_ctx, a_registry, a_events);
+				}
 				return Recording::Handle(a_args, a_events);
 			});
 	}

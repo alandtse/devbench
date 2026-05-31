@@ -22,10 +22,19 @@ namespace dvb
 	public:
 		struct Event
 		{
-			uint64_t    seq = 0;  ///< monotonic, assigned on publish
+			uint64_t    seq = 0;     ///< monotonic, assigned on publish
+			int         frame = -1;  ///< game frame at publish (-1 if no provider / unresolved)
 			std::string topic;
 			json        payload;
 		};
+
+		/// Stamp each published event with the current game frame (for syncing events to a
+		/// Tracy/CS capture). Optional — without a provider, Event::frame stays -1.
+		void SetFrameProvider(std::function<int()> a_fn)
+		{
+			std::lock_guard lock(m_mutex);
+			m_frameProvider = std::move(a_fn);
+		}
 
 		using Subscriber = std::function<void(const Event&)>;
 		using SubId = uint64_t;
@@ -53,6 +62,8 @@ namespace dvb
 			{
 				std::lock_guard lock(m_mutex);
 				ev.seq = ++m_seq;
+				if (m_frameProvider)
+					ev.frame = m_frameProvider();
 				ev.topic.assign(a_topic);
 				ev.payload = std::move(a_payload);
 				m_recent.push_back(ev);
@@ -92,5 +103,6 @@ namespace dvb
 		SubId                                     m_nextSub = 0;
 		std::vector<Event>                        m_recent;
 		std::vector<std::pair<SubId, Subscriber>> m_subs;
+		std::function<int()>                      m_frameProvider;
 	};
 }

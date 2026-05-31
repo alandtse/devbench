@@ -62,7 +62,7 @@ namespace dvb
 			}
 			json arr = json::array();
 			for (const auto& ev : m_events.Since(since))
-				arr.push_back(json{ { "seq", ev.seq }, { "topic", ev.topic }, { "data", ev.payload } });
+				arr.push_back(json{ { "seq", ev.seq }, { "frame", ev.frame }, { "topic", ev.topic }, { "data", ev.payload } });
 			WriteJson(res, 200, json{ { "headSeq", m_events.HeadSeq() }, { "events", arr } });
 		});
 	}
