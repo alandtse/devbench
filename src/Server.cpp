@@ -23,8 +23,16 @@ namespace dvb
 		if (m_mcp)
 			return true;
 
-		m_mcp = std::make_unique<mcp::server>(m_host, m_port);
-		m_mcp->set_server_info("devbench", DEVBENCH_VERSION_STRING);
+		// This cpp-mcp revision takes a configuration struct (host/port are no
+		// longer positional ctor args).
+		mcp::server::configuration cfg;
+		cfg.host = m_host;
+		cfg.port = m_port;
+		cfg.name = "devbench";
+		cfg.version = DEVBENCH_VERSION_STRING;
+
+		m_mcp = std::make_unique<mcp::server>(cfg);
+		m_mcp->set_server_info(cfg.name, cfg.version);
 		m_mcp->set_capabilities(json{ { "tools", json::object() }, { "logging", json::object() } });
 
 		// MCP tools + notifications.
