@@ -20,11 +20,14 @@ namespace dvb
 		bool          g_replayShift = false;
 		std::string   g_replayPath;
 		bool          g_replayRestore = true;
-		bool          g_shiftDown = false;  // tracked from the input stream
 
-		// DXScanCodes for the modifier keys we track.
-		constexpr int kLShift = 42;  // 0x2A
-		constexpr int kRShift = 54;  // 0x36
+		// Current Shift state via the OS (matches CS's InputCombo::MatchesKeyboardCombo) —
+		// robust regardless of whether/when Shift events arrive on the input sink, which is
+		// why this replaced the earlier event-stream tracking.
+		bool ShiftHeld()
+		{
+			return (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+		}
 
 		// The sink fires on the main thread, but the record tool marshals back to the main
 		// thread via RunAndWait — invoking it inline would deadlock. So dispatch on a detached
@@ -57,29 +60,23 @@ namespace dvb
 					return RE::BSEventNotifyControl::kContinue;
 				for (auto* e = *a_events; e; e = e->next) {
 					auto* btn = e->AsButtonEvent();
-					if (!btn || btn->GetDevice() != RE::INPUT_DEVICE::kKeyboard)
+					if (!btn || !btn->IsDown())  // first frame down only — no key-repeat
 						continue;
-					const int code = static_cast<int>(btn->GetIDCode());
-
-					// Track Shift held-state across batches (you hold Shift, then tap the key in a
-					// later batch). IsPressed() is true while down/held, false on the up event.
-					if (code == kLShift || code == kRShift) {
-						g_shiftDown = btn->IsPressed();
-						continue;
-					}
-
-					if (!btn->IsDown())  // hotkeys: first frame down only — no key-repeat
+					if (btn->GetDevice() != RE::INPUT_DEVICE::kKeyboard)
 						continue;
 					if (ConsoleOpen())  // don't fire on keystrokes typed into the console
 						continue;
-					if (g_recordKey && code == g_recordKey && (!g_recordShift || g_shiftDown)) {
-						logs::info("devbench: record hotkey fired (key={}, shiftHeld={})", code, g_shiftDown);
+					const int  code = static_cast<int>(btn->GetIDCode());
+					const bool shift = ShiftHeld();
+					if (g_recordKey && code == g_recordKey && (!g_recordShift || shift)) {
+						logs::info("devbench: record hotkey fired (key={}, shift={})", code, shift);
 						FireAsync(json{ { "action", "toggle" } });
-					} else if (g_replayKey && code == g_replayKey && (!g_replayShift || g_shiftDown)) {
-						logs::info("devbench: replay hotkey fired (key={}, shiftHeld={})", code, g_shiftDown);
+					} else if (g_replayKey && code == g_replayKey && (!g_replayShift || shift)) {
+						logs::info("devbench: replay hotkey fired (key={}, shift={})", code, shift);
 						FireAsync(json{ { "action", "replay" }, { "path", g_replayPath }, { "restoreScene", g_replayRestore } });
-					} else if (g_recordKey && code == g_recordKey) {
-						logs::debug("devbench: record key pressed without Shift — ignored");
+					} else if ((g_recordKey && code == g_recordKey) || (g_replayKey && code == g_replayKey)) {
+						logs::debug("devbench: hotkey base key {} down, shift={} (req rec={}/rep={})",
+							code, shift, g_recordShift, g_replayShift);
 					}
 				}
 				return RE::BSEventNotifyControl::kContinue;
