@@ -3,11 +3,17 @@
 #include "EventBus.h"
 #include "Json.h"
 
+#include <mutex>
+#include <unordered_set>
+
 namespace dvb
 {
 	namespace
 	{
 		EventBus* g_bus = nullptr;
+
+		std::mutex g_menuMutex;
+		std::unordered_set<std::string> g_openMenus;  // live set, updated from the sink
 
 		// Sink for menu open/close — covers loading screens, the main menu, and the
 		// new-game message boxes / RaceSex menu that block automated flows.
@@ -17,8 +23,18 @@ namespace dvb
 			RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event,
 				RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
 			{
-				if (a_event && g_bus)
-					g_bus->Publish("menu", json{ { "name", a_event->menuName.c_str() }, { "opening", a_event->opening } });
+				if (a_event) {
+					const std::string name = a_event->menuName.c_str();
+					{
+						std::lock_guard lock(g_menuMutex);
+						if (a_event->opening)
+							g_openMenus.insert(name);
+						else
+							g_openMenus.erase(name);
+					}
+					if (g_bus)
+						g_bus->Publish("menu", json{ { "name", name }, { "opening", a_event->opening } });
+				}
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
@@ -61,5 +77,11 @@ namespace dvb
 			return;
 		}
 		g_bus->Publish("lifecycle", json{ { "event", event } });
+	}
+
+	std::vector<std::string> GetOpenMenus()
+	{
+		std::lock_guard<std::mutex> lock(g_menuMutex);
+		return { g_openMenus.begin(), g_openMenus.end() };
 	}
 }

@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MIT
+//
+// This interface header and its companion DevBenchAPI.cpp are licensed MIT (see
+// DevBenchAPI.LICENSE.txt) so ANY SKSE plugin — including proprietary/non-GPL mods —
+// may vendor them to talk to devbench. This is independent of the devbench *plugin*,
+// which is GPL-3.0. Matches the MergeMapper / SkyrimVRESL convention.
 #pragma once
 
 #include <cstdint>

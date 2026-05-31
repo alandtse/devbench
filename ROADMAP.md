@@ -28,13 +28,11 @@ had to do manually while waiting out the load). Sources:
 Wire each into the existing `EventBus` → already fans out to MCP notifications and the REST
 poll/SSE endpoint.
 
-### 3. Batch console sequences (`batch` tool)
-Run an ordered sequence of console commands. **Skyrim supports this natively** via
-`bat <file>` (reads `Data/<file>.txt` line by line) — so the plan is to lean on that: accept a
-JSON array of commands, write a temp bat file under `Data`, and invoke `bat`, OR enqueue the
-commands in order through the existing fenced `ExecuteCommand` path. Optional per-command or
-whole-batch capture. Useful for scripted test setup (position the player, set weather, spawn
-actors, then assert).
+### 3. Batch console sequences — covered by native `bat`, no tool
+**Dropped.** Skyrim already runs command sequences natively via `bat <file>` (reads a `.txt`
+from the game directory), and that's reachable through the existing `console` tool —
+`console exec "bat <name>"`. A dedicated inline `batch` tool was prototyped and removed as
+redundant. To script setup, write a `.txt` and `console exec "bat <name>"`.
 
 ### 4. Blocking menu / message-box handling (`menu` tool)
 Read and dismiss/accept modal menus that **block gameplay** — especially during a new game
@@ -84,8 +82,12 @@ for letting users turn the bench on/off without a rebuild.
 - **`eval` primitive + `search_api` discovery** — thin-but-powerful surface (the
   agentic-renderdoc model): let an agent run script against live RE/game state and discover the
   callable surface, rather than a bespoke tool per operation. Builds on `MainThread::RunAndWait`.
-- **Cross-plugin C-ABI** — let *other* SKSE mods register tools into devbench over a versioned
-  C ABI (JSON-string in/out + sink callback), the original "general test bench" goal.
+- **Cross-plugin C-ABI** — *implemented* (`DevBenchAPI`, build-validated; runtime self-test
+  pending). Other SKSE mods register tools / emit events via a versioned interface fetched by
+  SKSE messaging (MergeMapper/HIGGS idiom), with C-callback handlers + JSON-string payloads.
+  **Clients VENDOR the API via the `devbench-api` vcpkg port (`DevBench::API`) — never copy it**
+  (drifts). The API glue (`DevBenchAPI.h`/`.cpp`) is MIT so any plugin can use it; the devbench
+  plugin stays GPL-3.0. Port REF/SHA512 are filled on first GitHub push; local overlay until then.
 - **`EventBus` SSE stream** — `GET /api/events/stream` alongside the `?since=N` poll.
 - **Back-port the hook-side fence to Community Shaders' `RemoteControl`** (CS-side) — its shipping
   `ConsoleLogCapture` still uses the read-time slice that we proved breaks on spam.

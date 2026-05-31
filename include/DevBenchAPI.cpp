@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// MIT-licensed (see DevBenchAPI.LICENSE.txt) so any plugin may vendor it; the devbench
+// plugin itself is GPL-3.0. Compile this in YOUR plugin only (not in devbench).
 #include "DevBenchAPI.h"
 
 // Consumer-side helper — compile this in YOUR plugin (devbench itself does not build

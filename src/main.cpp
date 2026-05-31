@@ -1,3 +1,4 @@
+#include "Config.h"
 #include "ConsoleLogCapture.h"
 #include "GameEvents.h"
 #include "HostApi.h"
@@ -5,11 +6,13 @@
 #include "Tools.h"
 #include "Version.h"
 
+#include <memory>
 #include <spdlog/sinks/basic_file_sink.h>
 
 namespace
 {
-	dvb::Server g_server;  // owns the registry, event bus, and MCP/REST transports
+	// Constructed at kDataLoaded with the configured port (null if disabled via config).
+	std::unique_ptr<dvb::Server> g_server;
 
 	void InitLogging()
 	{
@@ -33,21 +36,28 @@ namespace
 		if (!a_msg)
 			return;
 		if (a_msg->type == SKSE::MessagingInterface::kDataLoaded) {
-			// Start after data load so game state is queryable. Install the console
-			// detour, register built-in tools, and wire the cross-plugin host API (which
-			// registers its self-test tool) all BEFORE Start() so they appear on both
-			// transports from the first request; then attach game-event sources.
-			dvb::ConsoleLogCapture::Install();
-			dvb::RegisterCoreTools(g_server.Tools());
-			dvb::HostApi::Init(g_server.Tools(), g_server.Events());
-			g_server.Start();
-			dvb::InstallGameEvents(g_server.Events());
+			const dvb::Config cfg = dvb::LoadConfig();
+			if (!cfg.enabled) {
+				logs::info("devbench: server disabled via config; not starting");
+			} else {
+				// Install the console detour, register built-in tools, and wire the
+				// cross-plugin host API (which registers its self-test tool) all BEFORE
+				// Start() so they appear on both transports from the first request; then
+				// attach game-event sources.
+				dvb::ConsoleLogCapture::Install();
+				g_server = std::make_unique<dvb::Server>("127.0.0.1", cfg.port);
+				dvb::RegisterCoreTools(g_server->Tools());
+				dvb::HostApi::Init(g_server->Tools(), g_server->Events());
+				g_server->Start();
+				dvb::InstallGameEvents(g_server->Events());
+			}
 		}
-		// Cross-plugin interface handshake (no-op unless it's the request message).
-		dvb::HostApi::OnInterfaceRequest(a_msg);
-		// Publish lifecycle events (dataLoaded and later load/save/new-game). No-op
-		// until InstallGameEvents has run, so the kDataLoaded above is published too.
-		dvb::OnSKSEMessage(a_msg->type);
+		if (g_server) {
+			// Cross-plugin interface handshake (no-op unless it's the request message).
+			dvb::HostApi::OnInterfaceRequest(a_msg);
+			// Publish lifecycle events (dataLoaded and later load/save/new-game).
+			dvb::OnSKSEMessage(a_msg->type);
+		}
 	}
 }
 

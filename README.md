@@ -55,6 +55,19 @@ xmake
 # auto-deploy: set SkyrimPluginTargets to ';'-separated game Data dirs before building
 ```
 
+## Configuration
+
+Headless config (no in-game menu yet) at `Data/SKSE/Plugins/devbench/config.json` — read
+once at `kDataLoaded`, before the server starts. Missing/invalid → defaults. See
+`config.example.json`:
+
+```json
+{ "enabled": true, "port": 8920 }
+```
+
+`enabled: false` skips starting the server entirely. Bind address is fixed to `127.0.0.1`
+and is not configurable.
+
 ## License
 
 GPL-3.0 (see `COPYING`/`EXCEPTIONS`). Dependencies (CommonLibSSE-NG, cpp-mcp) are MIT.

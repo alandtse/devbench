@@ -1,10 +1,17 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace dvb
 {
 	class EventBus;
+
+	/// Names of currently-open menus, tracked live from MenuOpenCloseEvent. Lets the
+	/// `menu` tool detect blocking modals (e.g. "MessageBoxMenu") without touching the
+	/// UI on the listener thread. Thread-safe.
+	std::vector<std::string> GetOpenMenus();
 
 	/// Install game event sources that publish into `a_bus`:
 	///  - a MenuOpenCloseEvent sink → "menu" events { name, opening } (loading screens,
