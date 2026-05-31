@@ -1,3 +1,4 @@
+#include "Autorun.h"
 #include "Config.h"
 #include "GameEvents.h"
 #include "GameState.h"
@@ -72,6 +73,7 @@ namespace
 				g_server->Events().SetFrameProvider(&dvb::game::CurrentFrame);
 				dvb::RegisterCoreTools(g_server->Tools(), g_server->Events());
 				dvb::InstallInputHotkeys(g_server->Tools(), cfg);  // standalone record/replay (no client)
+				dvb::ArmAutoRun(g_server->Tools(), cfg.autoRunPath, cfg.autoRunRestoreScene);
 				dvb::HostApi::Init(g_server->Tools(), g_server->Events());
 				g_server->Start();
 				dvb::InstallGameEvents(g_server->Events());
@@ -86,6 +88,9 @@ namespace
 		if (g_server) {
 			// Publish lifecycle events (dataLoaded and later load/save/new-game).
 			dvb::OnSKSEMessage(a_msg->type);
+			// Fire the one-shot autorun benchmark once a game has loaded.
+			if (a_msg->type == SKSE::MessagingInterface::kPostLoadGame)
+				dvb::OnPostLoadGame();
 		}
 	}
 }

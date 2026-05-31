@@ -20,6 +20,11 @@ namespace dvb
 		int         replayHotkey = 0;           ///< replay a recording (see replayPath)
 		std::string replayPath = "";            ///< replay target; empty = most recent recording
 		bool        replayRestoreScene = true;  ///< replay hotkey re-establishes the recorded scene
+
+		// Autorun: replay a recording once on the first load of the session — a fully
+		// unattended benchmark with no client and no keypress. Empty = off.
+		std::string autoRunPath = "";            ///< recording to replay on first postLoadGame
+		bool        autoRunRestoreScene = true;  ///< autorun loads the recording's entry save first
 	};
 
 	// Load Data/SKSE/Plugins/devbench/config.json. If the file is missing it is

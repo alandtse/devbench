@@ -28,6 +28,8 @@ namespace dvb
 				{ "replayHotkey", a_cfg.replayHotkey },
 				{ "replayPath", a_cfg.replayPath },
 				{ "replayRestoreScene", a_cfg.replayRestoreScene },
+				{ "autoRunPath", a_cfg.autoRunPath },
+				{ "autoRunRestoreScene", a_cfg.autoRunRestoreScene },
 			};
 			out << j.dump(2) << '\n';
 		}
@@ -55,6 +57,8 @@ namespace dvb
 			cfg.replayHotkey = j.value("replayHotkey", cfg.replayHotkey);
 			cfg.replayPath = j.value("replayPath", cfg.replayPath);
 			cfg.replayRestoreScene = j.value("replayRestoreScene", cfg.replayRestoreScene);
+			cfg.autoRunPath = j.value("autoRunPath", cfg.autoRunPath);
+			cfg.autoRunRestoreScene = j.value("autoRunRestoreScene", cfg.autoRunRestoreScene);
 		} catch (const std::exception& e) {
 			logs::warn("devbench: bad config ({}) — using defaults", e.what());
 			return Config{};
