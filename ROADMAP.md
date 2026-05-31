@@ -44,6 +44,42 @@ automated new-game → in-world flows stall on a popup.
 - Act: accept / select option / close (via `RE::UIMessageQueue`, menu button invocation, or the
   message-box callback).
 
+## Milestone: Community Shaders parity → deprecate the built-in MCP server
+
+End state: Community Shaders no longer embeds its own MCP server (cpp-mcp + the
+`RemoteControl` transport drop out of CS); instead CS **registers its tools into devbench**
+over the cross-plugin C-ABI, and devbench is the single endpoint. This requires the C-ABI
+(see Foundation) as the enabler, since CS-specific tools touch `globals::features` / CS
+internals that a separate plugin can't reach directly.
+
+Mapping of CS `RemoteControl` tools → devbench:
+
+| CS tool | Kind | Plan |
+| --- | --- | --- |
+| `console` (exec/read) | generic | **Done** in devbench — with the better hook-side fence. |
+| `inspect(state)` | generic | **Done** (extend fields toward CS's as needed). |
+| `inspect(shadercache)` | CS-domain | CS registers via C-ABI. |
+| `feature` (list/toggle/set/reset) | CS-domain | CS registers via C-ABI. |
+| `capture` (renderdoc/screenshot) | CS-domain | CS registers via C-ABI. |
+| `abtest` (status/start/stop/clear/diff) | CS-domain | CS registers via C-ABI. |
+| shader-recompile events | CS-domain | CS publishes into devbench's `EventBus` via C-ABI. |
+
+Steps: (1) ship the C-ABI in devbench + a small consumer header; (2) add a devbench-registrant
+module in CS that registers the CS-domain tools/events; (3) gate CS's built-in server behind a
+deprecation flag (default to devbench when present); (4) remove CS's in-process server once
+devbench is the established path. Keep tool names/inputSchemas matching CS so existing clients
+are unaffected.
+
+## Configuration
+
+devbench is headless (no menu yet), so it needs a small **config file** to control startup —
+at minimum `enabled` (start the MCP/REST server at all) and `port` (default 8920); bind stays
+`127.0.0.1` only. JSON under `SKSE/Plugins/devbench/` (read at `kDataLoaded` before
+`Server::Start()`). This mirrors how CS gates its server per-runtime, and is the prerequisite
+for letting users turn the bench on/off without a rebuild.
+- **TODO: GUI integration** — an in-game menu (ImGui, as CS has) to toggle enable/port live and
+  show connected clients, rather than edit-file-then-relaunch. Config file first; GUI later.
+
 ## Foundation (discussed, not yet built)
 - **`eval` primitive + `search_api` discovery** — thin-but-powerful surface (the
   agentic-renderdoc model): let an agent run script against live RE/game state and discover the
