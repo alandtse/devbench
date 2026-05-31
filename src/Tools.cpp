@@ -2,7 +2,9 @@
 
 #include "ConsoleLogCapture.h"
 #include "Json.h"
+#include "MainThread.h"
 #include "ToolRegistry.h"
+#include "Version.h"
 
 namespace dvb
 {
@@ -72,6 +74,26 @@ namespace dvb
 
 			return json{ { "queued", true }, { "command", command }, { "capturing", capture } };
 		}
+
+		// inspect: read live game state. Demonstrates the value-returning primitive —
+		// the read runs on the main thread and its result is returned synchronously.
+		json InspectHandler(const json& a_args, const ToolContext&)
+		{
+			const std::string kind = a_args.value("kind", std::string("state"));
+			if (kind != "state")
+				throw ToolError(400, std::format("unknown kind '{}'", kind));
+
+			return MainThread::RunAndWait([]() -> json {
+				auto* pc = RE::PlayerCharacter::GetSingleton();
+				const bool loaded = pc && pc->Get3D() != nullptr;
+				return json{
+					{ "plugin", "devbench" },
+					{ "version", DEVBENCH_VERSION_STRING },
+					{ "vr", REL::Module::IsVR() },
+					{ "playerLoaded", loaded },
+				};
+			});
+		}
 	}
 
 	void RegisterCoreTools(ToolRegistry& a_registry)
@@ -92,5 +114,19 @@ namespace dvb
 								 } },
 		};
 		a_registry.Register(std::move(console), &ConsoleHandler);
+
+		ToolDescriptor inspect;
+		inspect.name = "inspect";
+		inspect.description =
+			"Read live game/plugin state. Runs on the main thread and returns the value "
+			"synchronously (times out if the game is mid-load / not pumping tasks).";
+		inspect.readOnly = true;
+		inspect.inputSchema = json{
+			{ "type", "object" },
+			{ "properties", json{
+									 { "kind", json{ { "type", "string" }, { "enum", json::array({ "state" }) }, { "description", "'state' → { plugin, version, vr, playerLoaded }" } } },
+								 } },
+		};
+		a_registry.Register(std::move(inspect), &InspectHandler);
 	}
 }
