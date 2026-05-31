@@ -30,6 +30,7 @@ namespace dvb
 				{ "replayRestoreScene", a_cfg.replayRestoreScene },
 				{ "autoRunPath", a_cfg.autoRunPath },
 				{ "autoRunRestoreScene", a_cfg.autoRunRestoreScene },
+				{ "loadSettleMs", a_cfg.loadSettleMs },
 			};
 			out << j.dump(2) << '\n';
 		}
@@ -59,6 +60,7 @@ namespace dvb
 			cfg.replayRestoreScene = j.value("replayRestoreScene", cfg.replayRestoreScene);
 			cfg.autoRunPath = j.value("autoRunPath", cfg.autoRunPath);
 			cfg.autoRunRestoreScene = j.value("autoRunRestoreScene", cfg.autoRunRestoreScene);
+			cfg.loadSettleMs = j.value("loadSettleMs", cfg.loadSettleMs);
 		} catch (const std::exception& e) {
 			logs::warn("devbench: bad config ({}) — using defaults", e.what());
 			return Config{};

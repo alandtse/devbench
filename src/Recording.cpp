@@ -40,6 +40,7 @@ namespace dvb::Recording
 		};
 		std::mutex g_entryMtx;
 		EntryPoint g_entry;
+		int        g_loadSettleMs = 3000;  // default; set from config via SetLoadSettleMs
 
 		EntryPoint CurrentEntry()
 		{
@@ -270,6 +271,11 @@ namespace dvb::Recording
 		g_entry = EntryPoint{ "coc", a_cellId };
 	}
 
+	void SetLoadSettleMs(int a_ms)
+	{
+		g_loadSettleMs = (a_ms < 0) ? 0 : a_ms;
+	}
+
 	json BuildReplaySteps(const json& a_args)
 	{
 		std::string path = a_args.value("path", std::string{});
@@ -329,6 +335,11 @@ namespace dvb::Recording
 				logs::warn("devbench record(replay): restoreScene requested but entryPoint is '{}' — running trajectory without scene restore",
 					kind.empty() ? "unknown" : kind);
 			}
+			// Settle after the load before teleporting (local/per-machine; overridable per call).
+			// Only when a load was actually prefixed (steps non-empty) — no load, no settle.
+			const long settleMs = a_args.value("settleMs", static_cast<long>(g_loadSettleMs));
+			if (!steps.empty() && settleMs > 0)
+				steps.push_back(json{ { "wait", settleMs } });
 		}
 
 		for (const auto& s : rec["steps"])

@@ -25,6 +25,12 @@ namespace dvb
 		// unattended benchmark with no client and no keypress. Empty = off.
 		std::string autoRunPath = "";            ///< recording to replay on first postLoadGame
 		bool        autoRunRestoreScene = true;  ///< autorun loads the recording's entry save first
+
+		// Settle delay (ms) inserted after a restore-load before the replayed trajectory runs.
+		// Teleporting the player the instant a load finishes (cells/physics/AI not settled) is
+		// crash-prone. This is LOCAL/per-machine (settle time is hardware-dependent), not baked
+		// into the portable recording. A replay call may override it with a settleMs arg.
+		int loadSettleMs = 3000;
 	};
 
 	// Load Data/SKSE/Plugins/devbench/config.json. If the file is missing it is

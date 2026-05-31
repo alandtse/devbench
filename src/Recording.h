@@ -23,6 +23,11 @@ namespace dvb::Recording
 	void NoteLoadEntry(const std::string& a_saveName);
 	void NoteCocEntry(const std::string& a_cellId);
 
+	/// Default settle delay (ms) inserted after a restore-load before the trajectory, so the
+	/// game settles before the player is teleported. Local/per-machine (set from config);
+	/// a replay call's settleMs arg overrides it.
+	void SetLoadSettleMs(int a_ms);
+
 	/// Build the step list for action=replay from a recording file (a_args.path). With
 	/// a_args.restoreScene=true, prepend the entry point (load the save / coc the cell) +
 	/// waitUntil playerLoaded so the trajectory runs in the recorded scene. Throws ToolError
