@@ -6,7 +6,7 @@ namespace dvb
 	{
 		const ToolDescriptor descCopy = a_desc;  // for the listener (notified post-insert)
 		RegistrationListener listener;
-		bool replaced;
+		bool                 replaced;
 		{
 			std::lock_guard lock(m_mutex);
 			replaced = m_tools.contains(a_desc.name);
@@ -34,7 +34,7 @@ namespace dvb
 	std::optional<ToolDescriptor> ToolRegistry::Describe(std::string_view a_name) const
 	{
 		std::lock_guard lock(m_mutex);
-		const auto it = m_tools.find(std::string(a_name));
+		const auto      it = m_tools.find(std::string(a_name));
 		if (it == m_tools.end())
 			return std::nullopt;
 		return it->second.desc;
@@ -42,7 +42,7 @@ namespace dvb
 
 	std::vector<ToolDescriptor> ToolRegistry::List() const
 	{
-		std::lock_guard lock(m_mutex);
+		std::lock_guard             lock(m_mutex);
 		std::vector<ToolDescriptor> out;
 		out.reserve(m_tools.size());
 		for (const auto& [name, entry] : m_tools)
@@ -57,7 +57,7 @@ namespace dvb
 		ToolHandler handler;
 		{
 			std::lock_guard lock(m_mutex);
-			const auto it = m_tools.find(std::string(a_name));
+			const auto      it = m_tools.find(std::string(a_name));
 			if (it == m_tools.end())
 				return ToolResult::Failure(404, std::format("unknown tool '{}'", a_name));
 			handler = it->second.handler;

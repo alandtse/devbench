@@ -27,6 +27,6 @@ namespace dvb
 
 	private:
 		ToolRegistry& m_registry;
-		EventBus& m_events;
+		EventBus&     m_events;
 	};
 }

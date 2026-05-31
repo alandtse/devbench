@@ -7,7 +7,7 @@ namespace dvb::ConsoleLogCapture
 	Result ReadFenced(size_t a_maxLines)
 	{
 		Result out;
-		auto* cl = RE::ConsoleLog::GetSingleton();
+		auto*  cl = RE::ConsoleLog::GetSingleton();
 		if (!cl)
 			return out;
 		const char* raw = cl->buffer.c_str();  // ConsoleLog::buffer — the accumulated scrollback
@@ -37,12 +37,12 @@ namespace dvb::ConsoleLogCapture
 
 		// Split [start, stop) into trimmed, non-empty lines.
 		const std::string region = buf.substr(start, stop - start);
-		std::string line;
-		auto flush = [&]() {
-			if (!line.empty()) {
-				out.lines.push_back(line);
-				line.clear();
-			}
+		std::string       line;
+		auto              flush = [&]() {
+            if (!line.empty()) {
+                out.lines.push_back(line);
+                line.clear();
+            }
 		};
 		for (const char c : region) {
 			if (c == '\n' || c == '\r')

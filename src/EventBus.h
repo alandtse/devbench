@@ -22,9 +22,9 @@ namespace dvb
 	public:
 		struct Event
 		{
-			uint64_t seq = 0;  ///< monotonic, assigned on publish
+			uint64_t    seq = 0;  ///< monotonic, assigned on publish
 			std::string topic;
-			json payload;
+			json        payload;
 		};
 
 		using Subscriber = std::function<void(const Event&)>;
@@ -34,7 +34,7 @@ namespace dvb
 		SubId Subscribe(Subscriber a_fn)
 		{
 			std::lock_guard lock(m_mutex);
-			const SubId id = ++m_nextSub;
+			const SubId     id = ++m_nextSub;
 			m_subs.emplace_back(id, std::move(a_fn));
 			return id;
 		}
@@ -48,7 +48,7 @@ namespace dvb
 		/// Append to the recent ring and notify subscribers.
 		void Publish(std::string_view a_topic, json a_payload)
 		{
-			Event ev;
+			Event                   ev;
 			std::vector<Subscriber> targets;
 			{
 				std::lock_guard lock(m_mutex);
@@ -70,7 +70,7 @@ namespace dvb
 		/// Events with seq strictly greater than `a_since` (for poll-style readers).
 		std::vector<Event> Since(uint64_t a_since) const
 		{
-			std::lock_guard lock(m_mutex);
+			std::lock_guard    lock(m_mutex);
 			std::vector<Event> out;
 			for (const auto& e : m_recent)
 				if (e.seq > a_since)
@@ -87,10 +87,10 @@ namespace dvb
 	private:
 		static constexpr size_t kMaxRecent = 256;  // bounded; oldest dropped first
 
-		mutable std::mutex m_mutex;
-		uint64_t m_seq = 0;
-		SubId m_nextSub = 0;
-		std::vector<Event> m_recent;
+		mutable std::mutex                        m_mutex;
+		uint64_t                                  m_seq = 0;
+		SubId                                     m_nextSub = 0;
+		std::vector<Event>                        m_recent;
 		std::vector<std::pair<SubId, Subscriber>> m_subs;
 	};
 }

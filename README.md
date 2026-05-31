@@ -5,7 +5,7 @@ an in-process server that exposes mod functionality to **AI agents (MCP)** and t
 HTTP clients (REST)** through one endpoint, on `127.0.0.1`.
 
 It is transport-agnostic by design. A `ToolRegistry` is the single source of truth; the MCP
-and REST adapters *reflect* it, so a tool registered once is reachable over both protocols
+and REST adapters _reflect_ it, so a tool registered once is reachable over both protocols
 automatically. Other SKSE mods register their own tools through a small C ABI, turning
 devbench into a shared bench rather than a per-mod server.
 
@@ -37,7 +37,7 @@ small set of conveniences) rather than a tool per operation.
 ## Safety
 
 Bound to `127.0.0.1` only. The bench has no auth and can execute arbitrary commands in the
-game process — that is acceptable for a *local dev bench* but it must never be bound to a
+game process — that is acceptable for a _local dev bench_ but it must never be bound to a
 network-reachable address, and `eval`-class tools are gated behind an explicit enable.
 
 ## Build
@@ -66,7 +66,7 @@ Missing/invalid → defaults. See `config.example.json`:
 ```
 
 `enabled: false` skips starting the server entirely. Bind address is fixed to `127.0.0.1`.
-`port` is the *starting* port: if it's busy (a second instance, etc.) devbench auto-iterates
+`port` is the _starting_ port: if it's busy (a second instance, etc.) devbench auto-iterates
 to the next free port and writes the bound port to `Data/SKSE/Plugins/devbench/runtime.json`
 (`{ "port": N }`) so fixed-URL clients can discover it.
 
@@ -104,7 +104,7 @@ anything touching game state. See `include/DevBenchAPI.h` and `cmake/ports/devbe
 ### Design your tools the agentic-renderdoc way
 
 devbench follows the **[agentic-renderdoc](https://github.com/EdenLabs/agentic-renderdoc#why-this-design)**
-model: a *thin but powerful* surface an agent can drive, where a call **returns the value**, not
+model: a _thin but powerful_ surface an agent can drive, where a call **returns the value**, not
 just an ack. Match that when you register, so an agent gets a coherent bench rather than a pile of
 one-off verbs:
 
@@ -114,7 +114,7 @@ one-off verbs:
 - **Few powerful tools over many narrow ones.** Prefer one `shadercache` tool with an `action`
   enum to four verbs. A general primitive (an `eval`-style entry into your subsystem) beats a tool
   per operation.
-- **Self-describe.** Put a real `inputSchema` and a clear `description` on every tool — that *is*
+- **Self-describe.** Put a real `inputSchema` and a clear `description` on every tool — that _is_
   the MCP schema and the REST docs; it's how an agent discovers what you offer cold.
 - **Make failure legible.** Validate inputs and return an actionable error (what was wrong + how to
   list valid values), rather than silently succeeding.
@@ -138,7 +138,7 @@ a `ping` self-test. Other mods add theirs via the C ABI above.
 The **`scenario`** tool runs a timed step list server-side and returns a per-step transcript — one
 call replaces hand-chained requests with frame-accurate timing. Each step is a `tool` dispatch
 (any registered tool), a fixed `wait`, an event-driven **`waitFor`**, or a state-poll `waitUntil`.
-**Prefer `waitFor`** — it keys off the *actual* Skyrim event (a load is done when
+**Prefer `waitFor`** — it keys off the _actual_ Skyrim event (a load is done when
 `lifecycle:postLoadGame` fires) rather than a guessed sleep. This is the validated battery — load,
 wait for the load event, settle, rotate in place, then free the camera:
 
@@ -183,15 +183,16 @@ Still to come (see [ROADMAP](ROADMAP.md)): a `measure` primitive (frametime over
 
 ## License
 
-The **devbench plugin** is **GPL-3.0** (`COPYING`) with the standard Skyrim **Modding Exception
-+ GPL-3.0 §7 linking exception** (`EXCEPTIONS`) — the same grant Community Shaders and other SKSE
-mods carry. It lets the plugin link against the proprietary game code it modifies ("Modded Code")
-and against the **Modding Libraries** it builds on — **CommonLibSSE-NG** and **cpp-mcp** (both
-MIT) — without those linked parts becoming GPL-covered.
+The **devbench plugin** is **GPL-3.0** (`COPYING`) with the standard Skyrim \*\*Modding Exception
+
+- GPL-3.0 §7 linking exception** (`EXCEPTIONS`) — the same grant Community Shaders and other SKSE
+  mods carry. It lets the plugin link against the proprietary game code it modifies ("Modded Code")
+  and against the **Modding Libraries** it builds on — **CommonLibSSE-NG** and **cpp-mcp\*\* (both
+  MIT) — without those linked parts becoming GPL-covered.
 
 The cross-plugin **API glue is separately MIT** and **carries no copyleft effect**:
 `include/DevBenchAPI.h`, `DevBenchAPI.cpp`, and `DevBenchAPI.LICENSE.txt`. **Any** SKSE plugin —
-*including closed-source / non-GPL mods* — may vendor those files (via the `devbench-api` vcpkg
+_including closed-source / non-GPL mods_ — may vendor those files (via the `devbench-api` vcpkg
 port) to talk to devbench with **zero GPL obligation**. This mirrors the **MergeMapper /
 SkyrimVRESL** convention: the integration header is permissively licensed precisely so the whole
 modding community can depend on it regardless of their own license.

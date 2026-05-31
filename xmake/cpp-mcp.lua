@@ -21,60 +21,70 @@ local cpp_mcp_root = path.join(os.projectdir(), "lib", "cpp-mcp")
 local patched_inc = path.join(os.projectdir(), "build", "cpp-mcp-patched", "include")
 
 target("cpp-mcp")
-    set_kind("static")
-    set_languages("c++17")
-    set_group("extern")
+set_kind("static")
+set_languages("c++17")
+set_group("extern")
 
-    add_files(
-        path.join(cpp_mcp_root, "src", "mcp_message.cpp"),
-        path.join(cpp_mcp_root, "src", "mcp_resource.cpp"),
-        path.join(cpp_mcp_root, "src", "mcp_server.cpp"),
-        path.join(cpp_mcp_root, "src", "mcp_tool.cpp"))
+add_files(
+    path.join(cpp_mcp_root, "src", "mcp_message.cpp"),
+    path.join(cpp_mcp_root, "src", "mcp_resource.cpp"),
+    path.join(cpp_mcp_root, "src", "mcp_server.cpp"),
+    path.join(cpp_mcp_root, "src", "mcp_tool.cpp")
+)
 
-    -- Patched mirror first so its mcp_message.h / mcp_server.h win over the
-    -- submodule's; common/ supplies httplib.h (no shared-ABI concern there).
-    add_includedirs(patched_inc, path.join(cpp_mcp_root, "common"), { public = true })
+-- Patched mirror first so its mcp_message.h / mcp_server.h win over the
+-- submodule's; common/ supplies httplib.h (no shared-ABI concern there).
+add_includedirs(patched_inc, path.join(cpp_mcp_root, "common"), { public = true })
 
-    add_defines("MCP_MAX_SESSIONS=10", "MCP_SESSION_TIMEOUT=30",
-        "_WINSOCKAPI_", "_CRT_SECURE_NO_WARNINGS", { public = true })
+add_defines(
+    "MCP_MAX_SESSIONS=10",
+    "MCP_SESSION_TIMEOUT=30",
+    "_WINSOCKAPI_",
+    "_CRT_SECURE_NO_WARNINGS",
+    { public = true }
+)
 
-    add_cxflags("/utf-8", "/bigobj", "/W0", "/std:c++17", { force = true })
-    add_packages("nlohmann_json")
-    add_syslinks("ws2_32", "crypt32")
+add_cxflags("/utf-8", "/bigobj", "/W0", "/std:c++17", { force = true })
+add_packages("nlohmann_json")
+add_syslinks("ws2_32", "crypt32")
 
-    -- Generate the patched header mirror before compiling. on_load runs with the
-    -- full os/io/raise API available (unlike the description sandbox).
-    on_load(function (target)
-        local root = path.join(os.projectdir(), "lib", "cpp-mcp")
-        local out = path.join(os.projectdir(), "build", "cpp-mcp-patched", "include")
-        if not os.isfile(path.join(root, "src", "mcp_server.cpp")) then
-            raise("cpp-mcp submodule missing. Run: git submodule update --init --recursive lib/cpp-mcp")
-        end
-        os.mkdir(out)
-        for _, hdr in ipairs(os.files(path.join(root, "include", "*.h"))) do
-            local name = path.filename(hdr)
-            local content = io.readfile(hdr)
-            if name == "mcp_message.h" then
-                if not content:find('#include "json.hpp"', 1, true) then
-                    raise("cpp-mcp: expected `#include \"json.hpp\"` in mcp_message.h; upstream changed — review xmake/cpp-mcp.lua")
-                end
-                content = content:gsub('#include "json%.hpp"', "#include <nlohmann/json.hpp>")
-            elseif name == "mcp_server.h" then
-                local anchor = "\nprivate:\n    std::string host_;"
-                if not content:find(anchor, 1, true) then
-                    raise("cpp-mcp: expected private section anchor in mcp_server.h; upstream changed — review xmake/cpp-mcp.lua")
-                end
-                local getter = "\n" ..
-                    "    /**\n" ..
-                    "     * @brief Access the underlying httplib server to register custom routes.\n" ..
-                    "     * Lets a consumer mount additional endpoints (e.g. a REST facade) on the\n" ..
-                    "     * same host/port as the MCP transport. Register routes before start().\n" ..
-                    "     */\n" ..
-                    "    httplib::Server* http() { return http_server_.get(); }\n" ..
-                    anchor
-                content = content:gsub("\nprivate:\n    std::string host_;", getter, 1)
+-- Generate the patched header mirror before compiling. on_load runs with the
+-- full os/io/raise API available (unlike the description sandbox).
+on_load(function(target)
+    local root = path.join(os.projectdir(), "lib", "cpp-mcp")
+    local out = path.join(os.projectdir(), "build", "cpp-mcp-patched", "include")
+    if not os.isfile(path.join(root, "src", "mcp_server.cpp")) then
+        raise("cpp-mcp submodule missing. Run: git submodule update --init --recursive lib/cpp-mcp")
+    end
+    os.mkdir(out)
+    for _, hdr in ipairs(os.files(path.join(root, "include", "*.h"))) do
+        local name = path.filename(hdr)
+        local content = io.readfile(hdr)
+        if name == "mcp_message.h" then
+            if not content:find('#include "json.hpp"', 1, true) then
+                raise(
+                    'cpp-mcp: expected `#include "json.hpp"` in mcp_message.h; upstream changed — review xmake/cpp-mcp.lua'
+                )
             end
-            io.writefile(path.join(out, name), content)
+            content = content:gsub('#include "json%.hpp"', "#include <nlohmann/json.hpp>")
+        elseif name == "mcp_server.h" then
+            local anchor = "\nprivate:\n    std::string host_;"
+            if not content:find(anchor, 1, true) then
+                raise(
+                    "cpp-mcp: expected private section anchor in mcp_server.h; upstream changed — review xmake/cpp-mcp.lua"
+                )
+            end
+            local getter = "\n"
+                .. "    /**\n"
+                .. "     * @brief Access the underlying httplib server to register custom routes.\n"
+                .. "     * Lets a consumer mount additional endpoints (e.g. a REST facade) on the\n"
+                .. "     * same host/port as the MCP transport. Register routes before start().\n"
+                .. "     */\n"
+                .. "    httplib::Server* http() { return http_server_.get(); }\n"
+                .. anchor
+            content = content:gsub("\nprivate:\n    std::string host_;", getter, 1)
         end
-    end)
+        io.writefile(path.join(out, name), content)
+    end
+end)
 target_end()

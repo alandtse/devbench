@@ -31,7 +31,7 @@ namespace dvb
 
 	Config LoadConfig()
 	{
-		Config cfg;
+		Config                      cfg;
 		const std::filesystem::path path = "Data/SKSE/Plugins/devbench/config.json";
 
 		std::ifstream file(path);

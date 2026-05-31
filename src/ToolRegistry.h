@@ -41,17 +41,17 @@ namespace dvb
 	{
 		std::string name;
 		std::string description;
-		json inputSchema = json::object();
-		bool readOnly = false;  ///< hint: side-effect-free (REST may also expose via GET)
+		json        inputSchema = json::object();
+		bool        readOnly = false;  ///< hint: side-effect-free (REST may also expose via GET)
 	};
 
 	/// Outcome of Invoke — a result payload or an error. No exception crosses the
 	/// adapter boundary; ToolError / std::exception are folded into this.
 	struct ToolResult
 	{
-		bool ok = true;
-		json value;  ///< result payload when ok
-		int errorCode = 0;
+		bool        ok = true;
+		json        value;  ///< result payload when ok
+		int         errorCode = 0;
 		std::string errorMessage;
 
 		static ToolResult Success(json a_value) { return { true, std::move(a_value), 0, {} }; }
@@ -94,11 +94,11 @@ namespace dvb
 		struct Entry
 		{
 			ToolDescriptor desc;
-			ToolHandler handler;
+			ToolHandler    handler;
 		};
 
-		mutable std::mutex m_mutex;
+		mutable std::mutex                     m_mutex;
 		std::unordered_map<std::string, Entry> m_tools;
-		RegistrationListener m_onRegister;
+		RegistrationListener                   m_onRegister;
 	};
 }

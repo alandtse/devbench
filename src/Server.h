@@ -29,7 +29,7 @@ namespace dvb
 		Server& operator=(const Server&) = delete;
 
 		ToolRegistry& Tools() { return m_registry; }
-		EventBus& Events() { return m_events; }
+		EventBus&     Events() { return m_events; }
 
 		/// Wire adapters and start listening (non-blocking). Idempotent.
 		bool Start();
@@ -37,12 +37,12 @@ namespace dvb
 		bool Running() const;
 
 	private:
-		std::string m_host;
-		int m_port;
-		ToolRegistry m_registry;
-		EventBus m_events;
+		std::string                  m_host;
+		int                          m_port;
+		ToolRegistry                 m_registry;
+		EventBus                     m_events;
 		std::unique_ptr<mcp::server> m_mcp;
-		std::unique_ptr<McpAdapter> m_mcpAdapter;
+		std::unique_ptr<McpAdapter>  m_mcpAdapter;
 		std::unique_ptr<RestAdapter> m_restAdapter;
 	};
 }

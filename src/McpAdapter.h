@@ -24,8 +24,8 @@ namespace dvb
 
 	private:
 		ToolRegistry& m_registry;
-		EventBus& m_events;
-		mcp::server& m_server;
-		uint64_t m_sub = 0;
+		EventBus&     m_events;
+		mcp::server&  m_server;
+		uint64_t      m_sub = 0;
 	};
 }

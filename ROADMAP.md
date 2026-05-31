@@ -12,33 +12,40 @@ calls, so they appear on both MCP and REST automatically.
 ## Planned tools
 
 ### 1. Save / load game (`game` tool)
+
 Load the last or a named save, trigger a save, and list saves — likely via
 `RE::BGSSaveLoadManager`. Console has **no** load command, so this fills a real gap: it gives a
 settled, real game state for testing instead of `coc`, which forces heavy new-game init
 (script populate, the per-frame NPC-AI spam, long shader compiles). Directly answers the
 earlier "can we load the last game?" question.
+
 - Actions: `load` (last/named), `save`, `list`.
 
 ### 2. Lifecycle & scene events → `EventBus` (MCP notifications + `GET /api/events`)
+
 Emit events so an agent knows **when** it is safe to act, instead of polling `inspect` (which we
 had to do manually while waiting out the load). Sources:
+
 - Load lifecycle via SKSE `MessagingInterface`: data loaded (`kDataLoaded`), new game
   (`kNewGame`), `kPreLoadGame` / `kPostLoadGame`, `kSaveGame`, `kDeleteGame`.
 - Loading-screen open/close and other menus via `RE::MenuOpenCloseEvent` (e.g. "Loading Menu").
 - Cell / location change via cell-loaded / actor-cell sinks (e.g. `TESCellFullyLoadedEvent`).
-Wire each into the existing `EventBus` → already fans out to MCP notifications and the REST
-poll/SSE endpoint.
+  Wire each into the existing `EventBus` → already fans out to MCP notifications and the REST
+  poll/SSE endpoint.
 
 ### 3. Batch console sequences — covered by native `bat`, no tool
+
 **Dropped.** Skyrim already runs command sequences natively via `bat <file>` (reads a `.txt`
 from the game directory), and that's reachable through the existing `console` tool —
 `console exec "bat <name>"`. A dedicated inline `batch` tool was prototyped and removed as
 redundant. To script setup, write a `.txt` and `console exec "bat <name>"`.
 
 ### 4. Blocking menu / message-box handling (`menu` tool) — **DONE for MessageBoxMenu (AE-validated)**
+
 Read and dismiss/accept modal menus that **block gameplay** — especially during a new game
 (intro sequence, alternate-start dialogs, `MessageBoxMenu`, `RaceSex Menu`). Without this,
 automated new-game → in-world flows stall on a popup.
+
 - Read: `menu list`/`describe` — currently-open menus via `RE::UI`; `MessageBoxMenu` body +
   buttons read directly off `MessageBoxMenu::GetCurrentMessageBoxData()`, no GFx scrape.
 - Act: `menu accept`/`close` via `MessageBoxMenu::SelectOption(index)` — answers + dismisses with
@@ -58,16 +65,16 @@ Validated live on 1.6.1170 (tools callable over MCP/REST; reversible toggle + ev
 CS `RemoteControl` tools → devbench bridge (all `openshaders.*`, C-ABI, exception-contained,
 main-thread-marshaled):
 
-| CS tool | Status |
-| --- | --- |
-| `console` | **Owned by devbench** (better hook-side fence) — not ported. |
-| `inspect` (state + shadercache read) | **Done** — `openshaders.inspect`. |
-| `feature` (list/get/set/reset/toggle) | **Done** — `openshaders.feature` (reversible toggle, flip computed main-thread). |
-| `shadercache` (clear / deleteDisk) | **Done** — `openshaders.shadercache` (`ShaderCache::Clear`/`DeleteDiskCache`). Read stays on `inspect`. |
-| `capture` (renderdoc/screenshot) | **Done** — `openshaders.capture`. |
-| `abtest` (status/start/stop/clear/diff) | **Done** — `openshaders.abtest`. |
-| `settings` (save/load/reset global config) | **Done** — `openshaders.settings` (`State::Save`/`Load`). |
-| shader-recompile events | **Done** — `openshaders.shaderRecompiled` from `CompilationSet::Complete`. |
+| CS tool                                    | Status                                                                                                  |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `console`                                  | **Owned by devbench** (better hook-side fence) — not ported.                                            |
+| `inspect` (state + shadercache read)       | **Done** — `openshaders.inspect`.                                                                       |
+| `feature` (list/get/set/reset/toggle)      | **Done** — `openshaders.feature` (reversible toggle, flip computed main-thread).                        |
+| `shadercache` (clear / deleteDisk)         | **Done** — `openshaders.shadercache` (`ShaderCache::Clear`/`DeleteDiskCache`). Read stays on `inspect`. |
+| `capture` (renderdoc/screenshot)           | **Done** — `openshaders.capture`.                                                                       |
+| `abtest` (status/start/stop/clear/diff)    | **Done** — `openshaders.abtest`.                                                                        |
+| `settings` (save/load/reset global config) | **Done** — `openshaders.settings` (`State::Save`/`Load`).                                               |
+| shader-recompile events                    | **Done** — `openshaders.shaderRecompiled` from `CompilationSet::Complete`.                              |
 
 Steps (all complete): (1) C-ABI + consumer header; (2) `DevBenchBridge` registers all CS-domain
 tools/events; (3)/(4) CS's embedded server **removed outright** (no deprecation flag needed —
@@ -85,10 +92,12 @@ at minimum `enabled` (start the MCP/REST server at all) and `port` (default 8920
 `127.0.0.1` only. JSON under `SKSE/Plugins/devbench/` (read at `kPostLoad` before
 `Server::Start()`). **Done** (`enabled`/`port`, with port auto-iterate + `runtime.json`); mirrors
 how CS gates its server per-runtime, and lets users turn the bench on/off without a rebuild.
+
 - **TODO: GUI integration** — an in-game menu (ImGui, as CS has) to toggle enable/port live and
   show connected clients, rather than edit-file-then-relaunch. Config file first; GUI later.
 
 ## Foundation (discussed, not yet built)
+
 - **`eval` primitive + `search_api` discovery** — thin-but-powerful surface (the
   agentic-renderdoc model): let an agent run script against live RE/game state and discover the
   callable surface, rather than a bespoke tool per operation. Builds on `MainThread::RunAndWait`.
@@ -111,9 +120,9 @@ reposition-along-heading (`player.setpos` from `getpos`+`getangle`), free camera
 
 - **`scenario` runner — DONE.** One `scenario` call runs a step list server-side and returns a
   per-step transcript. Steps: `tool` (dispatch any registered tool, incl. consumer-registered
-  ones), `wait` (fixed ms), **`waitFor`** (block on a Skyrim *event* from the `EventBus` —
+  ones), `wait` (fixed ms), **`waitFor`** (block on a Skyrim _event_ from the `EventBus` —
   lifecycle `postLoadGame`/`saveGame`/… or `menuOpened`/`menuClosed`, or a generic `{topic,
-  match}`), and `waitUntil` (poll live state: `playerLoaded`/`noModal`/`noMenu`). `repeat` +
+match}`), and `waitUntil` (poll live state: `playerLoaded`/`noModal`/`noMenu`). `repeat` +
   `continueOnError` top-level. Runs on the listener thread, so it sleeps/polls directly and
   marshals each action to the main thread. Prefer `waitFor` over fixed `wait` — keys off the real
   signal, no guessed sleeps. Avoids client-side HTTP jitter → reproducible.
@@ -125,7 +134,7 @@ reposition-along-heading (`player.setpos` from `getpos`+`getangle`), free camera
 - **`waitSettled`** — a `scenario` wait that blocks until frametime variance drops under a
   threshold ("coc in, wait till settled"); builds on the same frametime sampling as `measure`.
 - **Record → replay** — a recording mode that samples player pose (`getpos`/`getangle` + camera
-  state) at a fixed cadence (≈1 s) while the user plays *manually*, persists the trajectory as a
+  state) at a fixed cadence (≈1 s) while the user plays _manually_, persists the trajectory as a
   `scenario` file, then replays it. Cadence + interpolation tunable; the captured path doubles as
   the `measure` window. Cheapest first cut needs no new engine hooks — poll the existing pose reads
   on a timer and emit a scenario.
@@ -135,13 +144,15 @@ reposition-along-heading (`player.setpos` from `getpos`+`getangle`), free camera
 Loading a save whose content no longer matches the load order pops a Yes/No `MessageBoxMenu`
 that gates the load. Fully reversed (Ghidra-named SE/AE/VR + added to CommonLibVR). Two engine
 callbacks drive this dialog:
-- **`LoadGameMissingContentCallBack`** — *"…relies on content that is no longer present… Continue
-  Loading?"* (missing masters/plugins). **All runtimes** (anon-ns in SE/VR, global in AE).
-- **`LoadGameUnrecognizedContentCallBack`** — *"…search … in the Creations menu"*. **AE-only**
+
+- **`LoadGameMissingContentCallBack`** — _"…relies on content that is no longer present… Continue
+  Loading?"_ (missing masters/plugins). **All runtimes** (anon-ns in SE/VR, global in AE).
+- **`LoadGameUnrecognizedContentCallBack`** — _"…search … in the Creations menu"_. **AE-only**
   (Creations). (Also an AE-only `LoadGameMissingContentDownloadCallBack` sibling.)
 
 **No detour, no callsite hook — read & answer entirely through globals + one non-SEH call.**
 New CommonLibVR API on `RE::MessageBoxMenu`:
+
 - **`MessageBoxData* GetCurrentMessageBoxData()`** — the displayed box's data (`queue.back()`). Read
   `bodyText` (BSString), `buttonText` (BSTArray<BSString>), `type`, `optionIndexOffset`, `callback`.
   **Text is plain struct data — no GFx movie scrape.**
@@ -154,14 +165,14 @@ New CommonLibVR API on `RE::MessageBoxMenu`:
   kicks off a real `BGSSaveLoadManager` load.
 
 **Two corrections found during implementation:** (a) the queue id is `519819`/`406362`, **not**
-`519818`/`406360` — the latter is the per-type *skip-filter* byte-table, and using it returned an
+`519818`/`406360` — the latter is the per-type _skip-filter_ byte-table, and using it returned an
 empty/garbage array on a displayed box (this was the live bug fixed in CommonLibVR #160). (b) The
 `BSTArray<MessageBoxData*>` queue is **not** popped when the box is shown: `ProcessButtonPress`
-reads `queue[size-1]` *while displayed* and only pops on answer (via `RemoveMessageFromQueue`). So
+reads `queue[size-1]` _while displayed_ and only pops on answer (via `RemoveMessageFromQueue`). So
 `GetCurrentMessageBoxData()` (`queue.back()`) reliably reads the shown box on **all runtimes** —
 strictly better than
 `GetCurrentMessageBoxMenu()` (AE-only, id `406361`, absent on SE/VR). The `MenuOpenCloseEvent`
-("MessageBoxMenu") open signal is still the right trigger to know *when* to read.
+("MessageBoxMenu") open signal is still the right trigger to know _when_ to read.
 
 **Still never detour `MessageBoxMenu::QueueMessage`** (AE `0x94b720`, id `52271`): it is an MSVC
 `__try`/SEH function (`UNW_FLAG_UHANDLER`); a `write_branch<5>` relocates its SEH prologue into a
@@ -172,13 +183,14 @@ disabled `ModalCapture`.** The read/answer path above touches it not at all, so 
 Limitation: `SelectOption` handles one active box; if boxes are stacked it does not re-trigger the
 engine's "show next" refresh (the SWF normally drives that). Single-modal is the common case.
 
-### Tracy / profiler integration — emit *markers*, leave *data* to clients
+### Tracy / profiler integration — emit _markers_, leave _data_ to clients
 
 devbench should **not** hard-depend on Tracy or try to be a profiler data source — mods that are
 Tracy-instrumented (Community Shaders) own their zones, and a client can already pull frametime
-from a live Tracy connection (the `tracy` MCP) or from the game's own timing. What devbench *is*
+from a live Tracy connection (the `tracy` MCP) or from the game's own timing. What devbench _is_
 uniquely positioned to add is **semantic markers**: it knows when a scenario step starts/ends and
 when a `measure` window opens. So:
+
 - Always emit these as **`EventBus` events** (`scenario.step` begin/end, `measure.window`) — free,
   no new dep, and any client (incl. a Tracy-side tool) can align a capture to them.
 - **Optionally**, behind a compile flag (mirroring CS's `TRACY_SUPPORT`), mirror those markers as
@@ -200,6 +212,7 @@ auto-uploads. Until then, releases are manual.
 
 Expose devbench's own state over the same MCP/REST surface (most also belongs in the future UI,
 but it's cheap and useful to an agent):
+
 - **`config` tool** (build first) — `get` returns `{enabled, configuredPort, boundPort, logLevel}`;
   `set` applies `logLevel` live (bump to debug, reproduce, read the log) and persists
   `enabled`/`port` to config.json flagged restart-required. High value, low cost.
@@ -219,13 +232,14 @@ but it's cheap and useful to an agent):
 ## Scope guard — keep `scenario` thin; don't grow a scripting language
 
 `scenario` is a **thin sequencer** (dispatch a tool · `wait` · `waitFor` · `waitUntil` · `repeat`),
-deliberately *not* a DSL. The wheel we must not reinvent is JavaScript: do **not** add expressions,
+deliberately _not_ a DSL. The wheel we must not reinvent is JavaScript: do **not** add expressions,
 variables, arithmetic (e.g. the `setpos = x + d·sin θ` math), branching, or loops-with-conditions
 to the JSON step list. Two escape hatches cover logic-heavy needs instead:
+
 - **client-side composition** — the agent computes values and emits concrete steps (it already has
   a real language); and
 - the planned **`eval` primitive** — one powerful "run a script against live RE state" tool (the
   agentic-renderdoc model), which is the right home for computation, not a bespoke step grammar.
 
-Adding *primitives* (a `camera` tool, `measure`, `waitSettled`, record→replay emitting a step
-file) is in-scope; adding *control flow* to the step list is not.
+Adding _primitives_ (a `camera` tool, `measure`, `waitSettled`, record→replay emitting a step
+file) is in-scope; adding _control flow_ to the step list is not.

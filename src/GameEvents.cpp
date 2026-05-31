@@ -12,7 +12,7 @@ namespace dvb
 	{
 		EventBus* g_bus = nullptr;
 
-		std::mutex g_menuMutex;
+		std::mutex                      g_menuMutex;
 		std::unordered_set<std::string> g_openMenus;  // live set, updated from the sink
 
 		// Sink for menu open/close — covers loading screens, the main menu, and the

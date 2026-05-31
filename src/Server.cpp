@@ -19,9 +19,9 @@ namespace
 	// so pairing it with WSACleanup here is safe whether or not winsock is already up.
 	bool PortAvailable(const std::string& a_host, int a_port)
 	{
-		WSADATA wsa;
-		const bool started = ::WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
-		bool available = true;
+		WSADATA      wsa;
+		const bool   started = ::WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+		bool         available = true;
 		const SOCKET s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 		if (s != INVALID_SOCKET) {
 			sockaddr_in addr{};
@@ -68,7 +68,7 @@ namespace dvb
 		// occupied port just moves to the next). The bound port is written to
 		// runtime.json so fixed-URL clients can discover a non-default choice.
 		constexpr int kMaxTries = 16;
-		int chosen = m_port;
+		int           chosen = m_port;
 		for (int i = 0; i < kMaxTries; ++i) {
 			if (PortAvailable(m_host, m_port + i)) {
 				chosen = m_port + i;

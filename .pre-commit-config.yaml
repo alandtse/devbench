@@ -11,6 +11,9 @@ repos:
     rev: v21.1.8
     hooks:
       - id: clang-format
+        # Restrict to C/C++; clang-format v21 errors on JSON without a Json
+        # language section, and JSON is already handled by prettier below.
+        types_or: [c, c++]
 
   - repo: https://github.com/JohnnyMorganz/stylua
     rev: v2.3.1

@@ -35,7 +35,7 @@ namespace dvb
 		// Invoke: POST /api/tool/<name>, body is the arguments object.
 		a_http.Post(R"(/api/tool/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
 			const std::string name = req.matches[1];
-			json args = json::object();
+			json              args = json::object();
 			if (!req.body.empty()) {
 				try {
 					args = json::parse(req.body);

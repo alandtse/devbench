@@ -25,9 +25,9 @@ namespace dvb::ConsoleLogCapture
 
 	struct Result
 	{
-		bool sawBegin = false;             ///< begin marker present in the buffer
-		bool sawEnd = false;               ///< end marker present after it (window complete)
-		std::vector<std::string> lines;    ///< lines between the markers, marker lines excluded
+		bool                     sawBegin = false;  ///< begin marker present in the buffer
+		bool                     sawEnd = false;    ///< end marker present after it (window complete)
+		std::vector<std::string> lines;             ///< lines between the markers, marker lines excluded
 	};
 
 	/// Read ConsoleLog's buffer and slice the most recent fenced window (between the last

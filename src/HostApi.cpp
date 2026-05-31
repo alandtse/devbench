@@ -11,7 +11,7 @@ namespace dvb::HostApi
 	namespace
 	{
 		ToolRegistry* g_registry = nullptr;
-		EventBus* g_events = nullptr;
+		EventBus*     g_events = nullptr;
 
 		// Concrete implementation of the published C-ABI interface, wired to the
 		// host's registry + bus.
@@ -41,14 +41,14 @@ namespace dvb::HostApi
 				d.inputSchema = desc.value("inputSchema", json::object());
 				d.readOnly = desc.value("readOnly", false);
 
-				const auto handler = a_handler;
+				const auto  handler = a_handler;
 				void* const ctx = a_ctx;
 				// Wrap the C callback as a ToolHandler: pass args as a JSON string, collect
 				// the result the consumer writes via our sink. Nothing C++ crosses the DLL
 				// boundary — only const char* and function pointers.
 				return g_registry->Register(std::move(d),
 					[handler, ctx](const json& a_args, const ToolContext&) -> json {
-						std::string result;
+						std::string          result;
 						DevBenchAPI::WriteFn write = +[](void* a_sink, const char* a_json) {
 							*static_cast<std::string*>(a_sink) = a_json ? a_json : "";
 						};
@@ -92,13 +92,10 @@ namespace dvb::HostApi
 		{
 			static constexpr const char* desc =
 				R"({"description":"devbench C-ABI self-test; echoes its args.","inputSchema":{"type":"object"},"readOnly":true})";
-			g_interface.RegisterTool("ping", desc,
-				+[](void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write) {
+			g_interface.RegisterTool("ping", desc, +[](void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write) {
 					const std::string args = (a_argsJson && *a_argsJson) ? a_argsJson : "{}";
 					const std::string out = R"({"pong":true,"echo":)" + args + "}";
-					a_write(a_sink, out.c_str());
-				},
-				nullptr);
+					a_write(a_sink, out.c_str()); }, nullptr);
 		}
 	}
 

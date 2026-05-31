@@ -41,7 +41,7 @@ namespace dvb
 				// fenced command's output.
 				return MainThread::RunAndWait([]() -> json {
 					const auto r = ConsoleLogCapture::ReadFenced(200);
-					json arr = json::array();
+					json       arr = json::array();
 					for (const auto& l : r.lines)
 						arr.push_back(l);
 					return json{
@@ -110,13 +110,13 @@ namespace dvb
 		// is exactly the name `load` takes).
 		struct SaveEntry
 		{
-			std::string name;
+			std::string        name;
 			fs::file_time_type mtime;
 		};
 		std::vector<SaveEntry> EnumerateSaves(const fs::path& a_dir)
 		{
 			std::vector<SaveEntry> out;
-			std::error_code ec;
+			std::error_code        ec;
 			for (const auto& e : fs::directory_iterator(a_dir, ec)) {
 				if (e.path().extension() == ".ess")
 					out.push_back({ e.path().stem().string(), e.last_write_time(ec) });
@@ -140,7 +140,7 @@ namespace dvb
 
 			if (action == "list") {
 				const fs::path saveDir = ResolveSaveDir(a_args);
-				json saves = json::array();
+				json           saves = json::array();
 				for (const auto& s : EnumerateSaves(saveDir))
 					saves.push_back(s.name);
 				return json{ { "dir", saveDir.string() }, { "count", saves.size() }, { "saves", std::move(saves) } };
@@ -155,7 +155,7 @@ namespace dvb
 				// Main Menu (verified live), so resolve the newest .ess ourselves and load
 				// it by name — the named path works from the menu.
 				const fs::path saveDir = ResolveSaveDir(a_args);
-				const auto saves = EnumerateSaves(saveDir);
+				const auto     saves = EnumerateSaves(saveDir);
 				if (saves.empty())
 					throw ToolError(404, std::format("no .ess saves in {}", saveDir.string()));
 				const std::string name = saves.front().name;
@@ -175,9 +175,9 @@ namespace dvb
 					// Validate the save exists rather than silently queueing a no-op load
 					// (a bare {queued:true} on a bad name is a cold-start trap for agents).
 					const fs::path saveDir = ResolveSaveDir(a_args);
-					const auto saves = EnumerateSaves(saveDir);
-					const bool exists = std::any_of(saves.begin(), saves.end(),
-						[&](const SaveEntry& s) { return s.name == name; });
+					const auto     saves = EnumerateSaves(saveDir);
+					const bool     exists = std::any_of(saves.begin(), saves.end(),
+							[&](const SaveEntry& s) { return s.name == name; });
 					if (!exists)
 						throw ToolError(404, std::format("save '{}' not found in {} — use action='list' for valid names", name, saveDir.string()));
 				}
@@ -259,7 +259,7 @@ namespace dvb
 				// Answer the active MessageBoxMenu by button index (default 0) via CommonLib's
 				// SelectOption() — runs the modal's callback and dismisses it; no detour.
 				const int index = a_args.value("index", 0);
-				auto* task = SKSE::GetTaskInterface();
+				auto*     task = SKSE::GetTaskInterface();
 				if (!task)
 					throw ToolError(500, "SKSE TaskInterface unavailable");
 				task->AddTask([index]() { RE::MessageBoxMenu::SelectOption(index); });
@@ -278,7 +278,7 @@ namespace dvb
 				throw ToolError(400, std::format("unknown kind '{}'", kind));
 
 			return MainThread::RunAndWait([]() -> json {
-				auto* pc = RE::PlayerCharacter::GetSingleton();
+				auto*      pc = RE::PlayerCharacter::GetSingleton();
 				const bool loaded = pc && pc->Get3D() != nullptr;
 				return json{
 					{ "plugin", "devbench" },
@@ -320,7 +320,7 @@ namespace dvb
 		struct WaitForSpec
 		{
 			std::string topic;
-			json match;
+			json        match;
 		};
 
 		// Normalize a step's "waitFor" into {topic, match}. String shorthands: a
@@ -394,19 +394,19 @@ namespace dvb
 				throw ToolError(400, "repeat capped at 1000");
 			const bool continueOnError = a_args.value("continueOnError", false);
 
-			json results = json::array();
+			json       results = json::array();
 			const auto t0 = steady_clock::now();
-			bool anyFailure = false;
-			bool aborted = false;
+			bool       anyFailure = false;
+			bool       aborted = false;
 
 			for (int rep = 0; rep < repeat && !aborted; ++rep) {
 				for (size_t i = 0; i < steps.size() && !aborted; ++i) {
 					const json& step = steps[i];
-					json r{ { "index", i } };
+					json        r{ { "index", i } };
 					if (repeat > 1)
 						r["repeat"] = rep;
 					const auto stepStart = steady_clock::now();
-					bool stepFailed = false;
+					bool       stepFailed = false;
 
 					try {
 						if (step.contains("wait")) {
@@ -416,14 +416,14 @@ namespace dvb
 							std::this_thread::sleep_for(milliseconds(ms));
 						} else if (step.contains("waitFor")) {
 							const WaitForSpec spec = ParseWaitFor(step);
-							const long timeoutMs = step.value("timeoutMs", static_cast<long>(60000));
-							const long pollMs = step.value("pollMs", static_cast<long>(100));
+							const long        timeoutMs = step.value("timeoutMs", static_cast<long>(60000));
+							const long        pollMs = step.value("pollMs", static_cast<long>(100));
 							r["kind"] = "waitFor";
 							r["topic"] = spec.topic;
 							r["match"] = spec.match;
 							// Only events published after this step begins count.
-							uint64_t since = a_events.HeadSeq();
-							bool satisfied = false;
+							uint64_t   since = a_events.HeadSeq();
+							bool       satisfied = false;
 							const auto deadline = steady_clock::now() + milliseconds(timeoutMs);
 							while (steady_clock::now() < deadline) {
 								for (const auto& ev : a_events.Since(since)) {
@@ -444,11 +444,11 @@ namespace dvb
 							}
 						} else if (step.contains("waitUntil")) {
 							const std::string cond = step["waitUntil"].get<std::string>();
-							const long timeoutMs = step.value("timeoutMs", static_cast<long>(30000));
-							const long pollMs = step.value("pollMs", static_cast<long>(250));
+							const long        timeoutMs = step.value("timeoutMs", static_cast<long>(30000));
+							const long        pollMs = step.value("pollMs", static_cast<long>(250));
 							r["kind"] = "waitUntil";
 							r["cond"] = cond;
-							bool satisfied = false;
+							bool       satisfied = false;
 							const auto deadline = steady_clock::now() + milliseconds(timeoutMs);
 							do {
 								if (CheckState(cond)) {
@@ -464,7 +464,7 @@ namespace dvb
 							}
 						} else if (step.contains("tool")) {
 							const std::string tool = step["tool"].get<std::string>();
-							const json args = step.value("args", json::object());
+							const json        args = step.value("args", json::object());
 							r["kind"] = "tool";
 							r["tool"] = tool;
 							if (step.contains("label"))
@@ -525,10 +525,10 @@ namespace dvb
 		console.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-									 { "action", json{ { "type", "string" }, { "enum", json::array({ "exec", "read" }) }, { "description", "'exec' (default) runs `command`; 'read' returns the fenced output and closes the window" } } },
-									 { "command", json{ { "type", "string" }, { "description", "the console command, exactly as typed after ~ (required for exec)" } } },
-									 { "capture", json{ { "type", "boolean" }, { "description", "exec: fence and capture this command's output for the next read" } } },
-								 } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "exec", "read" }) }, { "description", "'exec' (default) runs `command`; 'read' returns the fenced output and closes the window" } } },
+								{ "command", json{ { "type", "string" }, { "description", "the console command, exactly as typed after ~ (required for exec)" } } },
+								{ "capture", json{ { "type", "boolean" }, { "description", "exec: fence and capture this command's output for the next read" } } },
+							} },
 		};
 		a_registry.Register(std::move(console), &ConsoleHandler);
 
@@ -543,10 +543,10 @@ namespace dvb
 		game.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-									 { "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast" }) }, { "description", "list | save | load | loadLast" } } },
-									 { "name", json{ { "type", "string" }, { "description", "save file name (required for save/load; from action='list')" } } },
-									 { "dir", json{ { "type", "string" }, { "description", "list only: override the saves directory (default resolves from sLocalSavePath)" } } },
-								 } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast" }) }, { "description", "list | save | load | loadLast" } } },
+								{ "name", json{ { "type", "string" }, { "description", "save file name (required for save/load; from action='list')" } } },
+								{ "dir", json{ { "type", "string" }, { "description", "list only: override the saves directory (default resolves from sLocalSavePath)" } } },
+							} },
 		};
 		a_registry.Register(std::move(game), &GameHandler);
 
@@ -559,8 +559,8 @@ namespace dvb
 		inspect.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-									 { "kind", json{ { "type", "string" }, { "enum", json::array({ "state" }) }, { "description", "'state' → { plugin, version, vr, playerLoaded }" } } },
-								 } },
+								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state" }) }, { "description", "'state' → { plugin, version, vr, playerLoaded }" } } },
+							} },
 		};
 		a_registry.Register(std::move(inspect), &InspectHandler);
 
@@ -577,10 +577,10 @@ namespace dvb
 		menu.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-									 { "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "close" }) }, { "description", "list | describe | accept | close" } } },
-									 { "name", json{ { "type", "string" }, { "description", "menu name to hide (required for close), e.g. MessageBoxMenu" } } },
-									 { "index", json{ { "type", "integer" }, { "description", "accept: 0-based button index to select (default 0). See describe's buttons/cancelIndex." } } },
-								 } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "close" }) }, { "description", "list | describe | accept | close" } } },
+								{ "name", json{ { "type", "string" }, { "description", "menu name to hide (required for close), e.g. MessageBoxMenu" } } },
+								{ "index", json{ { "type", "integer" }, { "description", "accept: 0-based button index to select (default 0). See describe's buttons/cancelIndex." } } },
+							} },
 		};
 		a_registry.Register(std::move(menu), &MenuHandler);
 
@@ -603,10 +603,10 @@ namespace dvb
 			{ "type", "object" },
 			{ "required", json::array({ "steps" }) },
 			{ "properties", json{
-									 { "steps", json{ { "type", "array" }, { "description", "ordered steps; each is one of tool/wait/waitFor/waitUntil (see description)" }, { "items", json{ { "type", "object" } } } } },
-									 { "repeat", json{ { "type", "integer" }, { "description", "run the whole step list N times (default 1, max 1000)" } } },
-									 { "continueOnError", json{ { "type", "boolean" }, { "description", "keep going after a failed/timed-out step instead of aborting (default false)" } } },
-								 } },
+								{ "steps", json{ { "type", "array" }, { "description", "ordered steps; each is one of tool/wait/waitFor/waitUntil (see description)" }, { "items", json{ { "type", "object" } } } } },
+								{ "repeat", json{ { "type", "integer" }, { "description", "run the whole step list N times (default 1, max 1000)" } } },
+								{ "continueOnError", json{ { "type", "boolean" }, { "description", "keep going after a failed/timed-out step instead of aborting (default false)" } } },
+							} },
 		};
 		a_registry.Register(std::move(scenario),
 			[&a_registry, &a_events](const json& a_args, const ToolContext& a_ctx) {
