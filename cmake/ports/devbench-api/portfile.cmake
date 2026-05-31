@@ -2,17 +2,15 @@
 # Mirrors the SkyrimVRESL port: installs the MIT API header + its companion .cpp
 # (compiled into the consumer via the config's INTERFACE_SOURCES).
 #
-# TODO(first-push): fill REF + SHA512 once devbench is published to GitHub. Until
-# then, consume locally via an overlay port — point vcpkg at this directory:
-#   vcpkg install devbench-api --overlay-ports=<devbench>/cmake/ports
-# (with REF set to a local commit / using vcpkg_from_git on a file:// path), or add
-# `"overlay-ports"` in the consumer's vcpkg-configuration.json. See README in this dir.
+# Pinned to a published commit. devbench-api isn't in the official vcpkg registry, so
+# consumers add this directory to VCPKG_OVERLAY_PORTS (see README). To ship a newer API
+# revision, bump REF to the new commit and SHA512 to its archive hash.
 
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO alandtse/devbench
-    REF 0000000000000000000000000000000000000000
-    SHA512 0
+    REF 2f0dac74f409f895b8b74e5440be8371e33fe0b0
+    SHA512 0bc46d6a09cf0b216373b1ec09d8da8b338b58b90618f3b1b8cea07616875a7fc85c6e777166a0998213f0e73e7ea099e20142591fe3de77f36113241985ae3e
     HEAD_REF main
 )
 
