@@ -58,15 +58,49 @@ xmake
 ## Configuration
 
 Headless config (no in-game menu yet) at `Data/SKSE/Plugins/devbench/config.json` — read
-once at `kDataLoaded`, before the server starts. Missing/invalid → defaults. See
-`config.example.json`:
+once at `kPostLoad` (before any consumer's `kDataLoaded`), then the server starts.
+Missing/invalid → defaults. See `config.example.json`:
 
 ```json
 { "enabled": true, "port": 8920 }
 ```
 
-`enabled: false` skips starting the server entirely. Bind address is fixed to `127.0.0.1`
-and is not configurable.
+`enabled: false` skips starting the server entirely. Bind address is fixed to `127.0.0.1`.
+`port` is the *starting* port: if it's busy (a second instance, etc.) devbench auto-iterates
+to the next free port and writes the bound port to `Data/SKSE/Plugins/devbench/runtime.json`
+(`{ "port": N }`) so fixed-URL clients can discover it.
+
+## Use devbench from your mod
+
+Register your own MCP/REST tools (and emit events) into the running host over a small C ABI.
+Don't copy the API files — vendor the `devbench-api` vcpkg port (the portfile fetches the
+MIT-licensed API source from this repo):
+
+```cmake
+find_package(devbench-api CONFIG REQUIRED)
+target_link_libraries(YourPlugin PRIVATE DevBench::API)
+```
+
+After SKSE sends your plugin `kPostLoad`:
+
+```cpp
+#include <DevBenchAPI.h>
+if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {            // null if devbench absent
+    dvb->RegisterTool("yourmod.do", R"({"description":"…","inputSchema":{…}})",
+                      &YourHandler, yourCtx);                        // handler: C fn ptr + ctx
+    dvb->EmitEvent("yourmod.ready", R"({"ok":true})");
+}
+```
+
+Your tool then appears on both `/mcp` (`tools/list`/`tools/call`) and `/api/tool/<name>`.
+Handlers run on the server thread — marshal to the main game thread (SKSE `TaskInterface`) for
+anything touching game state. See `include/DevBenchAPI.h` and `cmake/ports/devbench-api/README.md`.
+
+## Built-in tools
+
+`console` (run/capture commands, fenced), `inspect` (live state), `game` (save/load/loadLast/list),
+`menu` (list open menus / close a blocking modal), plus a `ping` self-test. Other mods add theirs
+via the C ABI above.
 
 ## License
 

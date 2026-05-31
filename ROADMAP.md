@@ -72,9 +72,9 @@ are unaffected.
 
 devbench is headless (no menu yet), so it needs a small **config file** to control startup —
 at minimum `enabled` (start the MCP/REST server at all) and `port` (default 8920); bind stays
-`127.0.0.1` only. JSON under `SKSE/Plugins/devbench/` (read at `kDataLoaded` before
-`Server::Start()`). This mirrors how CS gates its server per-runtime, and is the prerequisite
-for letting users turn the bench on/off without a rebuild.
+`127.0.0.1` only. JSON under `SKSE/Plugins/devbench/` (read at `kPostLoad` before
+`Server::Start()`). **Done** (`enabled`/`port`, with port auto-iterate + `runtime.json`); mirrors
+how CS gates its server per-runtime, and lets users turn the bench on/off without a rebuild.
 - **TODO: GUI integration** — an in-game menu (ImGui, as CS has) to toggle enable/port live and
   show connected clients, rather than edit-file-then-relaunch. Config file first; GUI later.
 
@@ -82,12 +82,32 @@ for letting users turn the bench on/off without a rebuild.
 - **`eval` primitive + `search_api` discovery** — thin-but-powerful surface (the
   agentic-renderdoc model): let an agent run script against live RE/game state and discover the
   callable surface, rather than a bespoke tool per operation. Builds on `MainThread::RunAndWait`.
-- **Cross-plugin C-ABI** — *implemented* (`DevBenchAPI`, build-validated; runtime self-test
-  pending). Other SKSE mods register tools / emit events via a versioned interface fetched by
-  SKSE messaging (MergeMapper/HIGGS idiom), with C-callback handlers + JSON-string payloads.
-  **Clients VENDOR the API via the `devbench-api` vcpkg port (`DevBench::API`) — never copy it**
-  (drifts). The API glue (`DevBenchAPI.h`/`.cpp`) is MIT so any plugin can use it; the devbench
-  plugin stays GPL-3.0. Port REF/SHA512 are filled on first GitHub push; local overlay until then.
+- **Cross-plugin C-ABI** — **done & validated end-to-end** (`DevBenchAPI`). Confirmed live: CS
+  registers its `feature` tool into devbench over the C-ABI and it's callable over both MCP and
+  REST (list + mutating toggle round-trip). Two integration fixes were required — init at
+  `kPostLoad` (ready before consumers' `kDataLoaded`) and a `nullptr`-sender listener (the
+  MergeMapper idiom) so consumer dispatches arrive. **Clients VENDOR the API via the
+  `devbench-api` vcpkg port (`DevBench::API`) — never copy the source** (MIT glue; plugin GPL-3.0).
 - **`EventBus` SSE stream** — `GET /api/events/stream` alongside the `?since=N` poll.
 - **Back-port the hook-side fence to Community Shaders' `RemoteControl`** (CS-side) — its shipping
   `ConsoleLogCapture` still uses the read-time slice that we proved breaks on spam.
+
+## Benchmarking & structured tests (planned)
+
+Console primitives are validated for scripted tests over MCP/REST: turn (`player.setangle z`),
+reposition-along-heading (`player.setpos` from `getpos`+`getangle`), free camera (`tfc`). Gaps
+that need dedicated tooling:
+
+- **`camera` tool** (`RE::PlayerCamera`) — force 1st/3rd person, set FOV, and drive the
+  **auto-vanity orbit** (camera circling the player). The orbit auto-sweeps every view angle, so
+  it's the ideal benchmark camera; console can only nudge `fAutoVanityModeDelay` (idle-triggered).
+- **`scenario` runner** — one call runs a typed step list in-process with frame-accurate timing:
+  `load`/`coc`, `waitUntil` (playerLoaded / menu-closed) and `waitSettled` (frametime variance
+  under threshold — "coc in, wait till settled"), `repeat`, `measure`. Avoids client-side HTTP
+  jitter → reproducible benchmarks.
+- **`measure` primitive** — sample frametime over a window → min/avg/p95/p99 (the benchmark
+  output), and/or correlate with **Tracy** zones around each window.
+
+Client-driven sequencing (issue command, poll inspect/events, sleep, repeat) works today for
+ad-hoc tests (validated: load → rotate ×4 with verify); the above is for repeatable,
+timing-precise benchmarks.
