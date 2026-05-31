@@ -38,43 +38,42 @@ redundant. To script setup, write a `.txt` and `console exec "bat <name>"`.
 Read and dismiss/accept modal menus that **block gameplay** — especially during a new game
 (intro sequence, alternate-start dialogs, `MessageBoxMenu`, `RaceSex Menu`). Without this,
 automated new-game → in-world flows stall on a popup.
-- Read: currently-open menus + message-box text (via `RE::UI` / the menu's GFx movie).
-- Act: accept / select option / close (via `RE::UIMessageQueue`, menu button invocation, or the
-  message-box callback).
+- Read: currently-open menus (via `RE::UI`); **`MessageBoxMenu` text is RE-complete** — read
+  `bodyText`/`buttonText` directly off `MessageBoxMenu::GetCurrentMessageBoxData()`, no GFx scrape
+  (see "Modal handling" below).
+- Act: **`MessageBoxMenu` is RE-complete** — `MessageBoxMenu::SelectOption(index)` answers +
+  dismisses with no `QueueMessage` detour. Other modal menus (`RaceSex Menu`, alternate-start) are
+  not yet reversed and need their own callback/button RE.
 
-## Milestone: Community Shaders parity → deprecate the built-in MCP server
+## Milestone: Community Shaders parity → deprecate the built-in MCP server — **DONE (Open Shaders PR #66)**
 
-End state: Community Shaders no longer embeds its own MCP server (cpp-mcp + the
-`RemoteControl` transport drop out of CS); instead CS **registers its tools into devbench**
-over the cross-plugin C-ABI, and devbench is the single endpoint. This requires the C-ABI
-(see Foundation) as the enabler, since CS-specific tools touch `globals::features` / CS
-internals that a separate plugin can't reach directly.
+End state reached: Open Shaders no longer embeds its own MCP server — cpp-mcp + the `RemoteControl`
+transport (and the `extern/cpp-mcp` submodule) are removed, and CS registers its tools into devbench
+over the cross-plugin C-ABI under the `openshaders.*` namespace. devbench is the single endpoint.
+Validated live on 1.6.1170 (tools callable over MCP/REST; reversible toggle + events confirmed).
 
-Mapping of CS `RemoteControl` tools → devbench:
+CS `RemoteControl` tools → devbench bridge (all `openshaders.*`, C-ABI, exception-contained,
+main-thread-marshaled):
 
-| CS tool | Kind | Plan |
-| --- | --- | --- |
-| `console` (exec/read) | generic | **Done** in devbench — with the better hook-side fence. |
-| `inspect(state)` | generic | **Done** (extend fields toward CS's as needed). |
-| `feature` (list/toggle) | CS-domain | **Done** — registered as `openshaders.feature` (namespaced, reversible toggle, exception-contained); validated live over MCP/REST. |
-| `feature` (set/reset) | CS-domain | TODO — add to the bridge handler. |
-| `shadercache` (read + save/load/default/clear) | CS-domain | TODO — CS registers via C-ABI. Read (`inspect(shadercache)`) **and** the management actions (save/load/default/clear the compiled cache) — bench-relevant for cold-compile benchmarks / repro. |
-| `capture` (renderdoc/screenshot) | CS-domain | TODO — CS registers via C-ABI. |
-| `abtest` (status/start/stop/clear/diff) | CS-domain | TODO — CS registers via C-ABI. |
-| shader-recompile events | CS-domain | TODO — publish via `EmitEvent`. The pattern is proven: the bridge already emits `openshaders.feature.changed`; add `openshaders.shaderRecompiled` the same way. |
+| CS tool | Status |
+| --- | --- |
+| `console` | **Owned by devbench** (better hook-side fence) — not ported. |
+| `inspect` (state + shadercache read) | **Done** — `openshaders.inspect`. |
+| `feature` (list/get/set/reset/toggle) | **Done** — `openshaders.feature` (reversible toggle, flip computed main-thread). |
+| `shadercache` (clear / deleteDisk) | **Done** — `openshaders.shadercache` (`ShaderCache::Clear`/`DeleteDiskCache`). Read stays on `inspect`. |
+| `capture` (renderdoc/screenshot) | **Done** — `openshaders.capture`. |
+| `abtest` (status/start/stop/clear/diff) | **Done** — `openshaders.abtest`. |
+| `settings` (save/load/reset global config) | **Done** — `openshaders.settings` (`State::Save`/`Load`). |
+| shader-recompile events | **Done** — `openshaders.shaderRecompiled` from `CompilationSet::Complete`. |
 
-Steps: (1) C-ABI in devbench + consumer header — **done**; (2) devbench-registrant module in CS
-(`DevBenchBridge`) registering CS-domain tools/events — **`feature` + `openshaders.feature.changed`
-done**, rest TODO; (3) gate CS's built-in server behind a deprecation flag (default to devbench
-when present); (4) remove CS's in-process server once devbench is the established path.
+Steps (all complete): (1) C-ABI + consumer header; (2) `DevBenchBridge` registers all CS-domain
+tools/events; (3)/(4) CS's embedded server **removed outright** (no deprecation flag needed —
+devbench is the only path). Tool semantics/inputSchemas preserved under the namespace prefix.
 
-**Settings & UI disposition (not yet captured elsewhere):**
-- **Migrate CS's MCP transport settings** (server enable + port, currently per-runtime in CS's
-  `SettingsUser.json`) **out of CS** — devbench owns transport now (its `config.json`). CS keeps
-  only a per-runtime "use devbench bridge" toggle if anything.
-- **Repurpose CS's in-game `RemoteControl` menu into a bridge-status panel** — show "devbench
-  present (build N)", the tools CS registered, and the bound port; drop the server enable/port
-  controls. Keep tool names/inputSchemas stable so existing clients are unaffected.
+Settings & UI disposition — **done**: CS's MCP transport settings (enable/port/bindAddress) deleted
+(devbench owns transport via its `config.json`); CS's `RemoteControl` in-game menu is now a
+read-only **bridge-status panel** (devbench presence + build, registered tools, bound port from
+`runtime.json`).
 
 ## Configuration
 
@@ -128,28 +127,44 @@ reposition-along-heading (`player.setpos` from `getpos`+`getangle`), free camera
   the `measure` window. Cheapest first cut needs no new engine hooks — poll the existing pose reads
   on a timer and emit a scenario.
 
-### Modal handling — read/answer a blocking MessageBoxMenu (deferred; RCA below)
+### Modal handling — read/answer a blocking MessageBoxMenu (RE COMPLETE — ready to implement, no hook needed)
 
-Loading a save whose content no longer matches the load order pops a Yes/No
-`MessageBoxMenu` (`LoadGameUnrecognizedContentCallBack`) that gates the load. `menu` can detect it
-(`messageBoxOpen`) but **cannot read its text or select a button** — `kHide` does not dismiss a
-message box; a button callback must run. For automated benchmarks, **prefer saves compatible with
-the current load order** (no modal); this is the edge-case follow-up.
+Loading a save whose content no longer matches the load order pops a Yes/No `MessageBoxMenu`
+that gates the load. Fully reversed (Ghidra-named SE/AE/VR + added to CommonLibVR). Two engine
+callbacks drive this dialog:
+- **`LoadGameMissingContentCallBack`** — *"…relies on content that is no longer present… Continue
+  Loading?"* (missing masters/plugins). **All runtimes** (anon-ns in SE/VR, global in AE).
+- **`LoadGameUnrecognizedContentCallBack`** — *"…search … in the Creations menu"*. **AE-only**
+  (Creations). (Also an AE-only `LoadGameMissingContentDownloadCallBack` sibling.)
 
-**Do NOT detour `MessageBoxMenu::QueueMessage` at the function entry.** Ghidra-verified on
-1.6.1170: that function (AE `0x94b720`, id 52271) is an MSVC `__try`/SEH function with a registered
-unwind handler (`UNW_FLAG_UHANDLER`). A `write_branch<5>` relocates its SEH-frame prologue into a
-trampoline with no `.pdata`, so the x64 unwinder fails on the exception-guarded load path →
-guaranteed CTD (the id and branch alignment are both correct; branch size is irrelevant). This is
-why `ConsoleLog::VPrint` hooks fine (no unwind handler) but this one does not.
+**No detour, no callsite hook — read & answer entirely through globals + one non-SEH call.**
+New CommonLibVR API on `RE::MessageBoxMenu`:
+- **`MessageBoxData* GetCurrentMessageBoxData()`** — the displayed box's data (`queue.back()`). Read
+  `bodyText` (BSString), `buttonText` (BSTArray<BSString>), `type`, `optionIndexOffset`, `callback`.
+  **Text is plain struct data — no GFx movie scrape.**
+- **`void SelectOption(std::int32_t a_buttonIndex)`** — answer as if button N was clicked: computes
+  `optionIndexOffset + N`, pops+destroys the message via the engine `RemoveMessageFromQueue`
+  (id `51426`/`52284` — a plain function, **not** the SEH'd `QueueMessage`), posts `kHide` if the
+  queue empties (no SWF is driving the close), then runs `callback->Run(index)`. This is a faithful
+  replay of the engine's own `ProcessButtonPress` (the Scaleform "buttonPress" handler).
+  **MUST run on the main thread** — it mutates UI/game state and `Run(1)` ("Continue Loading")
+  kicks off a real `BGSSaveLoadManager` load.
 
-Safe implementation paths:
-- **`GetCurrentMessageBoxMenu()`** (AE id `406361`; absent on SE 1.5.97) off the existing
-  `MenuOpenCloseEvent` sink — read the *shown* box with no detour. (The pending-queue `BSTArray` is
-  popped when the box is displayed, so polling it races.)
-- **Callsite hook** (`stl::write_thunk_call`) at the load flow's call to `QueueMessage` — captures
-  the `MessageBoxData*` (→ `bodyText`, `buttonText`, `callback->Run(index)`) without touching the
-  SEH'd function body or its `.pdata`.
+**Race assumption was wrong — corrected:** the `BSTArray<MessageBoxData*>` queue (id `519818`/
+`406360`) is **not** popped when the box is shown. `ProcessButtonPress` reads `queue[size-1]` *while
+displayed* and only pops on answer (via `RemoveMessageFromQueue`). So `GetCurrentMessageBoxData()`
+(`queue.back()`) reliably reads the shown box on **all runtimes** — strictly better than
+`GetCurrentMessageBoxMenu()` (AE-only, id `406361`, absent on SE/VR). The `MenuOpenCloseEvent`
+("MessageBoxMenu") open signal is still the right trigger to know *when* to read.
+
+**Still never detour `MessageBoxMenu::QueueMessage`** (AE `0x94b720`, id `52271`): it is an MSVC
+`__try`/SEH function (`UNW_FLAG_UHANDLER`); a `write_branch<5>` relocates its SEH prologue into a
+trampoline with no `.pdata` → unwinder fails on the guarded load path → CTD. **This is what
+disabled `ModalCapture`.** The read/answer path above touches it not at all, so re-enabling
+`ModalCapture` no longer needs that hook — drop the QueueMessage entry detour entirely.
+
+Limitation: `SelectOption` handles one active box; if boxes are stacked it does not re-trigger the
+engine's "show next" refresh (the SWF normally drives that). Single-modal is the common case.
 
 ### Tracy / profiler integration — emit *markers*, leave *data* to clients
 
