@@ -175,7 +175,7 @@ POST /api/tool/scenario          // MCP: tools/call name=scenario — identical 
 `waitUntil` conditions: `playerLoaded`, `noModal`, `noMenu`.
 
 **Steps dispatch any registered tool — including tools other mods add over the C ABI.** A
-consumer mod such as Open Shaders (a fork of
+consumer mod such as [Open Shaders](https://github.com/alandtse/open-shaders) (a fork of
 [Community Shaders](https://www.nexusmods.com/skyrimspecialedition/mods/180419)) can register
 a `feature` tool so `{ "tool": "feature", "args": { "action": "toggle", "shortName": "..." } }`
 becomes a valid scenario step — letting a test flip a feature mid-run.
@@ -249,15 +249,10 @@ doing. See [ROADMAP](ROADMAP.md) for the planned `measure` primitive.
 
 ## License
 
-The **devbench plugin** is **GPL-3.0** (`COPYING`) with the standard Skyrim
-**Modding Exception — GPL-3.0 §7 linking exception** (`EXCEPTIONS`) — the same grant
-Community Shaders and other SKSE mods carry. It lets the plugin link against the proprietary
-game code it modifies ("Modded Code") and against the **Modding Libraries** it builds on —
-**CommonLibSSE-NG** and **cpp-mcp** (both MIT) — without those linked parts becoming GPL-covered.
+[GPL-3.0-or-later](COPYING) WITH [Modding Exception AND GPL-3.0 Linking Exception (with Corresponding Source)](EXCEPTIONS).
+Specifically, the Modded Code is Skyrim (and its variants) and Modding Libraries include [SKSE](https://skse.silverlock.org/), Commonlib (and variants), and Windows.
 
 The cross-plugin **API glue is separately MIT** and **carries no copyleft effect**:
 `include/DevBenchAPI.h`, `DevBenchAPI.cpp`, and `DevBenchAPI.LICENSE.txt`. **Any** SKSE plugin —
 _including closed-source / non-GPL mods_ — may vendor those files (via the `devbench-api` vcpkg
-port) to talk to devbench with **zero GPL obligation**. This mirrors the **MergeMapper /
-SkyrimVRESL** convention: the integration header is permissively licensed precisely so the whole
-modding community can depend on it regardless of their own license.
+port) to talk to devbench with **zero GPL obligation**.
