@@ -16,6 +16,7 @@ namespace
 {
 	// Constructed at kDataLoaded with the configured port (null if disabled via config).
 	std::unique_ptr<dvb::Server> g_server;
+	dvb::Config                  g_config;  // captured at kPostLoad; used at kInputLoaded
 
 	void InitLogging()
 	{
@@ -70,10 +71,10 @@ namespace
 				// Register built-in tools and wire the cross-plugin host API (which
 				// registers its self-test tool) BEFORE Start() so they appear on both
 				// transports from the first request; then attach game-event sources.
+				g_config = cfg;  // kept for kInputLoaded (input sink registers later)
 				g_server = std::make_unique<dvb::Server>("127.0.0.1", cfg.port);
 				g_server->Events().SetFrameProvider(&dvb::game::CurrentFrame);
 				dvb::RegisterCoreTools(g_server->Tools(), g_server->Events());
-				dvb::InstallInputHotkeys(g_server->Tools(), cfg);  // standalone record/replay (no client)
 				dvb::Recording::SetLoadSettleMs(cfg.loadSettleMs);
 				dvb::ArmAutoRun(g_server->Tools(), cfg.autoRunPath, cfg.autoRunRestoreScene);
 				dvb::HostApi::Init(g_server->Tools(), g_server->Events());
@@ -87,6 +88,11 @@ namespace
 					m->RegisterListener(nullptr, OnInterfaceMessage);
 			}
 		}
+		// Register input hotkeys at kInputLoaded — BSInputDeviceManager is null at kPostLoad,
+		// so registering then silently no-ops. kInputLoaded fires once the input subsystem is up.
+		if (a_msg->type == SKSE::MessagingInterface::kInputLoaded && g_server)
+			dvb::InstallInputHotkeys(g_server->Tools(), g_config);
+
 		if (g_server) {
 			// Publish lifecycle events (dataLoaded and later load/save/new-game).
 			dvb::OnSKSEMessage(a_msg->type);

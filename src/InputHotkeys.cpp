@@ -97,9 +97,12 @@ namespace dvb
 		g_replayShift = a_config.replayHotkeyShift;
 		g_replayPath = a_config.replayPath;
 		g_replayRestore = a_config.replayRestoreScene;
-		if (auto* idm = RE::BSInputDeviceManager::GetSingleton())
+		if (auto* idm = RE::BSInputDeviceManager::GetSingleton()) {
 			idm->AddEventSink(&g_inputSink);
-		logs::info("devbench: input hotkeys installed (record={} shift={}, replay={} shift={})",
-			g_recordKey, g_recordShift, g_replayKey, g_replayShift);
+			logs::info("devbench: input hotkeys installed (record={} shift={}, replay={} shift={})",
+				g_recordKey, g_recordShift, g_replayKey, g_replayShift);
+		} else {
+			logs::warn("devbench: BSInputDeviceManager unavailable — input hotkeys NOT installed");
+		}
 	}
 }
