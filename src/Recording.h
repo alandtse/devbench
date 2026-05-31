@@ -28,6 +28,10 @@ namespace dvb::Recording
 	/// a replay call's settleMs arg overrides it.
 	void SetLoadSettleMs(int a_ms);
 
+	/// Default sample interval (ms) for record `start` when no intervalMs arg is given (e.g. the
+	/// hotkey). Local/per-machine via config (recordIntervalMs). Clamped to the 10ms floor.
+	void SetDefaultIntervalMs(int a_ms);
+
 	/// Show a corner HUD message (marshaled to the main thread). Used for hotkey feedback
 	/// (record start/stop, replay) since devbench is otherwise headless. No-op if no task interface.
 	void Notify(const std::string& a_msg);

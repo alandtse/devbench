@@ -22,6 +22,7 @@ namespace dvb
 		bool        replayHotkeyShift = false;  ///< require Shift held with replayHotkey
 		std::string replayPath = "";            ///< replay target; empty = most recent recording
 		bool        replayRestoreScene = true;  ///< replay hotkey re-establishes the recorded scene
+		int         recordIntervalMs = 10;      ///< default record sample interval (ms; min 10); per-call intervalMs overrides
 
 		// Autorun: replay a recording once on the first load of the session — a fully
 		// unattended benchmark with no client and no keypress. Empty = off.

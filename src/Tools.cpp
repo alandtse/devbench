@@ -637,8 +637,9 @@ namespace dvb
 		record.name = "record";
 		record.description =
 			"Capture a manual play-through as a replayable scenario. action='start' begins "
-			"sampling the player pose (x/y/z/angleZ + game frame) every intervalMs (default "
-			"1000, min 100) on a background thread and captures a one-time scene manifest "
+			"sampling the player pose (x/y/z/angleZ/angleX + camera pos + game frame) every "
+			"intervalMs (default from config recordIntervalMs, min 10) on a background thread "
+			"and captures a one-time scene manifest "
 			"(worldspace/cell, time of day, weather, anchor pose, and the entryPoint — the save "
 			"loaded or coc'd to reach the scene, or 'unknown'); a game must be loaded. 'stop' "
 			"writes the trajectory to Data/SKSE/Plugins/devbench/recordings/recording_<stamp>.json "
@@ -651,7 +652,7 @@ namespace dvb
 			{ "type", "object" },
 			{ "properties", json{
 								{ "action", json{ { "type", "string" }, { "enum", json::array({ "start", "stop", "status", "replay" }) }, { "description", "start | stop | status | replay" } } },
-								{ "intervalMs", json{ { "type", "integer" }, { "description", "start: pose sample period in ms (default 1000, min 100)" } } },
+								{ "intervalMs", json{ { "type", "integer" }, { "description", "start: pose sample period in ms (default = config recordIntervalMs, min 10)" } } },
 								{ "path", json{ { "type", "string" }, { "description", "replay: recording file to play back (from stop's 'path')" } } },
 								{ "restoreScene", json{ { "type", "boolean" }, { "description", "replay: re-establish the recorded entryPoint + wait for load before the trajectory (default false)" } } },
 							} },
@@ -663,7 +664,12 @@ namespace dvb
 				// rather than in Recording::Handle.
 				if (a_args.value("action", std::string{}) == "replay") {
 					const json steps = Recording::BuildReplaySteps(a_args);
-					Recording::Notify("devbench: replaying recording");
+					long       estMs = 0;  // sum of wait steps ≈ replay duration
+					for (const auto& s : steps)
+						if (s.contains("wait"))
+							estMs += s["wait"].get<long>();
+					Recording::Notify(std::format("devbench: replaying {} steps (~{:.1f}s)", steps.size(), estMs / 1000.0));
+					logs::info("devbench: replay starting — {} steps, ~{}ms", steps.size(), estMs);
 					const json result = ScenarioHandler(json{ { "steps", steps } }, a_ctx, a_registry, a_events);
 					logs::info("devbench: replay finished — {} steps, ok={}",
 						result.value("stepsRun", 0), result.value("ok", false));

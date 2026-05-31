@@ -40,7 +40,8 @@ namespace dvb::Recording
 		};
 		std::mutex g_entryMtx;
 		EntryPoint g_entry;
-		int        g_loadSettleMs = 3000;  // default; set from config via SetLoadSettleMs
+		int        g_loadSettleMs = 3000;                     // set from config via SetLoadSettleMs
+		long       g_defaultIntervalMs = kDefaultIntervalMs;  // set from config via SetDefaultIntervalMs
 
 		EntryPoint CurrentEntry()
 		{
@@ -208,7 +209,7 @@ namespace dvb::Recording
 			if (rec.running.load())
 				return json{ { "error", "already recording — stop first" } };
 
-			long interval = a_args.value("intervalMs", kDefaultIntervalMs);
+			long interval = a_args.value("intervalMs", g_defaultIntervalMs);  // config default; arg overrides
 			if (interval < kMinIntervalMs)
 				interval = kMinIntervalMs;
 
@@ -261,8 +262,8 @@ namespace dvb::Recording
 			const fs::path path = WriteScenarioFile(scenario);
 
 			a_events.Publish("record.stopped", json{ { "sampleCount", rec.samples.size() }, { "path", path.string() } });
-			Notify(std::format("devbench: recording stopped — {} samples", rec.samples.size()));
-			logs::info("devbench: recording stopped — {} samples -> {}", rec.samples.size(), path.string());
+			Notify(std::format("devbench: recording stopped — {} samples, {:.1f}s", rec.samples.size(), recordedMs / 1000.0));
+			logs::info("devbench: recording stopped — {} samples, {}ms -> {}", rec.samples.size(), recordedMs, path.string());
 			return json{
 				{ "action", "stop" },
 				{ "sampleCount", rec.samples.size() },
@@ -307,6 +308,11 @@ namespace dvb::Recording
 	void SetLoadSettleMs(int a_ms)
 	{
 		g_loadSettleMs = (a_ms < 0) ? 0 : a_ms;
+	}
+
+	void SetDefaultIntervalMs(int a_ms)
+	{
+		g_defaultIntervalMs = (a_ms < kMinIntervalMs) ? kMinIntervalMs : a_ms;
 	}
 
 	json BuildReplaySteps(const json& a_args)

@@ -30,6 +30,7 @@ namespace dvb
 				{ "replayHotkeyShift", a_cfg.replayHotkeyShift },
 				{ "replayPath", a_cfg.replayPath },
 				{ "replayRestoreScene", a_cfg.replayRestoreScene },
+				{ "recordIntervalMs", a_cfg.recordIntervalMs },
 				{ "autoRunPath", a_cfg.autoRunPath },
 				{ "autoRunRestoreScene", a_cfg.autoRunRestoreScene },
 				{ "loadSettleMs", a_cfg.loadSettleMs },
@@ -62,6 +63,7 @@ namespace dvb
 			cfg.replayHotkeyShift = j.value("replayHotkeyShift", cfg.replayHotkeyShift);
 			cfg.replayPath = j.value("replayPath", cfg.replayPath);
 			cfg.replayRestoreScene = j.value("replayRestoreScene", cfg.replayRestoreScene);
+			cfg.recordIntervalMs = j.value("recordIntervalMs", cfg.recordIntervalMs);
 			cfg.autoRunPath = j.value("autoRunPath", cfg.autoRunPath);
 			cfg.autoRunRestoreScene = j.value("autoRunRestoreScene", cfg.autoRunRestoreScene);
 			cfg.loadSettleMs = j.value("loadSettleMs", cfg.loadSettleMs);

@@ -76,6 +76,7 @@ namespace
 				g_server->Events().SetFrameProvider(&dvb::game::CurrentFrame);
 				dvb::RegisterCoreTools(g_server->Tools(), g_server->Events());
 				dvb::Recording::SetLoadSettleMs(cfg.loadSettleMs);
+				dvb::Recording::SetDefaultIntervalMs(cfg.recordIntervalMs);
 				dvb::ArmAutoRun(g_server->Tools(), cfg.autoRunPath, cfg.autoRunRestoreScene);
 				dvb::HostApi::Init(g_server->Tools(), g_server->Events());
 				g_server->Start();
