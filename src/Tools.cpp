@@ -36,21 +36,22 @@ namespace dvb
 			const std::string action = a_args.value("action", std::string("exec"));
 
 			if (action == "read") {
-				const auto lines = ConsoleLogCapture::Snapshot(200);
-				const bool markersFound = ConsoleLogCapture::SawBegin() && ConsoleLogCapture::SawEnd();
-				json arr = json::array();
-				for (const auto& l : lines)
-					arr.push_back(json{ { "seq", l.seq }, { "frame", l.frame }, { "text", l.text } });
-				json out{
-					{ "markersFound", markersFound },
-					{ "sawBegin", ConsoleLogCapture::SawBegin() },
-					{ "sawEnd", ConsoleLogCapture::SawEnd() },
-					{ "count", arr.size() },
-					{ "headSeq", ConsoleLogCapture::HeadSeq() },
-					{ "lines", std::move(arr) },
-				};
-				ConsoleLogCapture::EndCapture();  // close the window opened by exec(capture)
-				return out;
+				// Slice ConsoleLog's buffer between the fence markers, on the main thread
+				// (the buffer is written there). markersFound=true → lines are exactly the
+				// fenced command's output.
+				return MainThread::RunAndWait([]() -> json {
+					const auto r = ConsoleLogCapture::ReadFenced(200);
+					json arr = json::array();
+					for (const auto& l : r.lines)
+						arr.push_back(l);
+					return json{
+						{ "markersFound", r.sawBegin && r.sawEnd },
+						{ "sawBegin", r.sawBegin },
+						{ "sawEnd", r.sawEnd },
+						{ "count", arr.size() },
+						{ "lines", std::move(arr) },
+					};
+				});
 			}
 			if (action != "exec")
 				throw ToolError(400, std::format("unknown action '{}'", action));
@@ -64,13 +65,11 @@ namespace dvb
 				throw ToolError(500, "SKSE TaskInterface unavailable");
 
 			const bool capture = a_args.contains("capture") && Truthy(a_args["capture"]);
-			if (capture)
-				ConsoleLogCapture::BeginCapture();
 
 			// ExecuteCommand is deferred (GFx console drains queued commands on a later
-			// tick). Fence the real command between two invalid marker commands; the
-			// detour records only what lands between their echoed tokens. Capture
-			// `command` by value so it outlives this lambda.
+			// tick). Fence the real command between two invalid marker commands so a later
+			// action='read' can slice ConsoleLog's buffer between their echoed tokens.
+			// Capture `command` by value so it outlives this lambda.
 			task->AddTask([command, capture]() {
 				if (capture)
 					RE::Console::ExecuteCommand(ConsoleLogCapture::kMarkerBegin);
@@ -517,11 +516,12 @@ namespace dvb
 		ToolDescriptor console;
 		console.name = "console";
 		console.description =
-			"Run a Skyrim console command, queued onto the main thread (runs next tick). "
-			"NOTE: output capture is temporarily DISABLED — the VPrint hook it relied on CTDs "
-			"when the console is opened (VPrint is SEH-framed). So capture=true and action='read' "
-			"currently return no lines (markersFound=false); exec is unaffected. To read a value, "
-			"verify via inspect / game state instead until capture is reworked off the detour.";
+			"Run a Skyrim console command. action='exec' (default) queues `command` onto the main "
+			"thread (runs next tick). With capture=true it is fenced between marker commands; a "
+			"later action='read' slices ConsoleLog's buffer between the markers and returns the "
+			"command's output as { markersFound, lines:[…] }. Useful for printing commands "
+			"(getav, getgs, getpos, help). Read promptly after exec — heavy ConsoleLog spam can "
+			"scroll the markers out of the buffer (then markersFound=false, no wrong data).";
 		console.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{

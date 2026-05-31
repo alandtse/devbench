@@ -1,5 +1,4 @@
 #include "Config.h"
-#include "ConsoleLogCapture.h"
 #include "GameEvents.h"
 #include "HostApi.h"
 #include "Server.h"
@@ -64,11 +63,9 @@ namespace
 			if (!cfg.enabled) {
 				logs::info("devbench: server disabled via config; not starting");
 			} else {
-				// Install the console detour, register built-in tools, and wire the
-				// cross-plugin host API (which registers its self-test tool) all BEFORE
-				// Start() so they appear on both transports from the first request; then
-				// attach game-event sources.
-				dvb::ConsoleLogCapture::Install();
+				// Register built-in tools and wire the cross-plugin host API (which
+				// registers its self-test tool) BEFORE Start() so they appear on both
+				// transports from the first request; then attach game-event sources.
 				g_server = std::make_unique<dvb::Server>("127.0.0.1", cfg.port);
 				dvb::RegisterCoreTools(g_server->Tools(), g_server->Events());
 				dvb::HostApi::Init(g_server->Tools(), g_server->Events());
@@ -93,7 +90,6 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
 	SKSE::Init(a_skse);
 	InitLogging();
-	SKSE::AllocTrampoline(64);  // for the ConsoleLogCapture VPrint detour
 	logs::info("devbench {} loaded", DEVBENCH_VERSION_STRING);
 
 	if (auto* messaging = SKSE::GetMessagingInterface())
