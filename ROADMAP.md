@@ -1,9 +1,10 @@
 # devbench roadmap
 
 Status: **core validated** — MCP (`/mcp`) + REST (`/api/*`) on one localhost port; `ToolRegistry`
-with generic adapters; `console` with a hook-side fenced capture (validated on a clean flat
-profile *and* a spam-heavy VR modlist — isolates a command's output from a multi-million-line
-ConsoleLog flood); `inspect` via the value-returning `MainThread::RunAndWait`.
+with generic adapters; `console` with a buffer-read fenced capture (reads `ConsoleLog::buffer` and
+slices the lines between two marker commands — no `VPrint` detour, because that function is SEH'd
+and a `write_branch` on it CTDs the console; see `ConsoleLogCapture`); `inspect` via the
+value-returning `MainThread::RunAndWait`.
 
 The items below are planned tools/capabilities. Each is one or more `ToolRegistry::Register`
 calls, so they appear on both MCP and REST automatically.
@@ -34,16 +35,18 @@ from the game directory), and that's reachable through the existing `console` to
 `console exec "bat <name>"`. A dedicated inline `batch` tool was prototyped and removed as
 redundant. To script setup, write a `.txt` and `console exec "bat <name>"`.
 
-### 4. Blocking menu / message-box handling (`menu` tool)
+### 4. Blocking menu / message-box handling (`menu` tool) — **DONE for MessageBoxMenu (AE-validated)**
 Read and dismiss/accept modal menus that **block gameplay** — especially during a new game
 (intro sequence, alternate-start dialogs, `MessageBoxMenu`, `RaceSex Menu`). Without this,
 automated new-game → in-world flows stall on a popup.
-- Read: currently-open menus (via `RE::UI`); **`MessageBoxMenu` text is RE-complete** — read
-  `bodyText`/`buttonText` directly off `MessageBoxMenu::GetCurrentMessageBoxData()`, no GFx scrape
-  (see "Modal handling" below).
-- Act: **`MessageBoxMenu` is RE-complete** — `MessageBoxMenu::SelectOption(index)` answers +
-  dismisses with no `QueueMessage` detour. Other modal menus (`RaceSex Menu`, alternate-start) are
-  not yet reversed and need their own callback/button RE.
+- Read: `menu list`/`describe` — currently-open menus via `RE::UI`; `MessageBoxMenu` body +
+  buttons read directly off `MessageBoxMenu::GetCurrentMessageBoxData()`, no GFx scrape.
+- Act: `menu accept`/`close` via `MessageBoxMenu::SelectOption(index)` — answers + dismisses with
+  no `QueueMessage` detour. **Validated live on AE 1.6.1170** (read a "missing content / Continue
+  loading?" Yes/No box, answered it, box dismissed). **SE** should resolve via the same id `519819`;
+  **VR** is blocked on `skyrim_vr_address_library` PR #121 adding the queue id (see Modal handling).
+- Not yet reversed: other modal menus (`RaceSex Menu`, alternate-start) need their own
+  callback/button RE.
 
 ## Milestone: Community Shaders parity → deprecate the built-in MCP server — **DONE (Open Shaders PR #66)**
 
@@ -127,7 +130,7 @@ reposition-along-heading (`player.setpos` from `getpos`+`getangle`), free camera
   the `measure` window. Cheapest first cut needs no new engine hooks — poll the existing pose reads
   on a timer and emit a scenario.
 
-### Modal handling — read/answer a blocking MessageBoxMenu (RE COMPLETE — ready to implement, no hook needed)
+### Modal handling — read/answer a blocking MessageBoxMenu (IMPLEMENTED & AE-validated, no hook needed)
 
 Loading a save whose content no longer matches the load order pops a Yes/No `MessageBoxMenu`
 that gates the load. Fully reversed (Ghidra-named SE/AE/VR + added to CommonLibVR). Two engine
@@ -150,10 +153,13 @@ New CommonLibVR API on `RE::MessageBoxMenu`:
   **MUST run on the main thread** — it mutates UI/game state and `Run(1)` ("Continue Loading")
   kicks off a real `BGSSaveLoadManager` load.
 
-**Race assumption was wrong — corrected:** the `BSTArray<MessageBoxData*>` queue (id `519818`/
-`406360`) is **not** popped when the box is shown. `ProcessButtonPress` reads `queue[size-1]` *while
-displayed* and only pops on answer (via `RemoveMessageFromQueue`). So `GetCurrentMessageBoxData()`
-(`queue.back()`) reliably reads the shown box on **all runtimes** — strictly better than
+**Two corrections found during implementation:** (a) the queue id is `519819`/`406362`, **not**
+`519818`/`406360` — the latter is the per-type *skip-filter* byte-table, and using it returned an
+empty/garbage array on a displayed box (this was the live bug fixed in CommonLibVR #160). (b) The
+`BSTArray<MessageBoxData*>` queue is **not** popped when the box is shown: `ProcessButtonPress`
+reads `queue[size-1]` *while displayed* and only pops on answer (via `RemoveMessageFromQueue`). So
+`GetCurrentMessageBoxData()` (`queue.back()`) reliably reads the shown box on **all runtimes** —
+strictly better than
 `GetCurrentMessageBoxMenu()` (AE-only, id `406361`, absent on SE/VR). The `MenuOpenCloseEvent`
 ("MessageBoxMenu") open signal is still the right trigger to know *when* to read.
 
