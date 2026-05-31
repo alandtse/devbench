@@ -29,6 +29,18 @@ namespace
 		spdlog::set_pattern("[%H:%M:%S.%e] [%^%L%$] %v");
 	}
 
+	// Apply the config's log level (default info). Lowering to debug/trace surfaces
+	// per-tool-invocation logging for diagnosing client/agent interactions.
+	void ApplyLogLevel(const std::string& a_level)
+	{
+		const auto lvl = spdlog::level::from_str(a_level);  // unknown string → 'off'; guard that
+		const auto resolved = (lvl == spdlog::level::off && a_level != "off") ? spdlog::level::info : lvl;
+		if (resolved == spdlog::level::off && a_level != "off")
+			logs::warn("devbench: unknown logLevel '{}' — keeping info", a_level);
+		spdlog::set_level(resolved);
+		spdlog::flush_on(resolved);
+	}
+
 	// Listener for messages from ANY plugin (registered with a nullptr sender). The
 	// default OnMessage listener only receives SKSE-sender messages, so a consumer mod's
 	// interface request would never reach us without this. Only acts on the request.
@@ -48,6 +60,7 @@ namespace
 		// tool handlers query game state lazily when invoked (by then the game is loaded).
 		if (a_msg->type == SKSE::MessagingInterface::kPostLoad) {
 			const dvb::Config cfg = dvb::LoadConfig();
+			ApplyLogLevel(cfg.logLevel);
 			if (!cfg.enabled) {
 				logs::info("devbench: server disabled via config; not starting");
 			} else {

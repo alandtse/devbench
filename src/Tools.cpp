@@ -8,6 +8,7 @@
 #include "ToolRegistry.h"
 #include "Version.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <thread>
@@ -81,47 +82,68 @@ namespace dvb
 			return json{ { "queued", true }, { "command", command }, { "capturing", capture } };
 		}
 
-		// game: programmatic save / load via BGSSaveLoadManager. loadLast gives a settled
-		// real-save state for testing WITHOUT coc's heavy new-game init. Runs on the main
-		// thread (save/load mutate game state and queue async internally). Fire-and-forget
-		// — watch lifecycle events / inspect playerLoaded for completion.
+		namespace fs = std::filesystem;
+
+		// Resolve the saves directory: explicit `dir` arg wins (escape hatch for exotic
+		// setups); else <My Games game folder> / sLocalSavePath (read from the INI; the
+		// 's' prefix guarantees a string), supporting an absolute setting. Running
+		// in-process means MO2/USVFS-virtualized saves resolve correctly. Caveat:
+		// bUseMyGamesDirectory=0 (saves under the install dir) isn't handled — pass `dir`.
+		fs::path ResolveSaveDir(const json& a_args)
+		{
+			if (const std::string dirArg = a_args.value("dir", std::string{}); !dirArg.empty())
+				return dirArg;
+			const auto logDir = SKSE::log::log_directory();
+			if (!logDir)
+				throw ToolError(500, "save directory unavailable (no log dir)");
+			fs::path local = "Saves";  // default sLocalSavePath
+			if (auto* ini = RE::INISettingCollection::GetSingleton()) {
+				if (auto* s = ini->GetSetting("sLocalSavePath:General")) {
+					if (const char* sp = s->GetString(); sp && *sp)
+						local = sp;
+				}
+			}
+			return local.is_absolute() ? local : (logDir->parent_path() / local);
+		}
+
+		// .ess save stems in `a_dir` with mtime, newest first. CommonLib doesn't expose
+		// the game's save-entry array, so we enumerate the directory ourselves (the stem
+		// is exactly the name `load` takes).
+		struct SaveEntry
+		{
+			std::string name;
+			fs::file_time_type mtime;
+		};
+		std::vector<SaveEntry> EnumerateSaves(const fs::path& a_dir)
+		{
+			std::vector<SaveEntry> out;
+			std::error_code ec;
+			for (const auto& e : fs::directory_iterator(a_dir, ec)) {
+				if (e.path().extension() == ".ess")
+					out.push_back({ e.path().stem().string(), e.last_write_time(ec) });
+			}
+			std::sort(out.begin(), out.end(), [](const SaveEntry& a, const SaveEntry& b) { return a.mtime > b.mtime; });
+			return out;
+		}
+
+		// Appended to load responses: a queued load is async AND may be gated by a
+		// content-mismatch modal, so a bare {queued:true} would mislead a caller.
+		constexpr const char* kLoadNote =
+			"async — watch lifecycle 'postLoadGame' / inspect playerLoaded for completion. "
+			"A content-mismatch MessageBoxMenu (Yes/No) may gate it; check `menu` action=list.";
+
+		// game: programmatic save / load / list via BGSSaveLoadManager. loadLast gives a
+		// settled real-save state for testing WITHOUT coc's heavy new-game init. Mutating
+		// actions run on the main thread and are async — see kLoadNote.
 		json GameHandler(const json& a_args, const ToolContext&)
 		{
 			const std::string action = a_args.value("action", std::string{});
 
 			if (action == "list") {
-				// No console command lists saves and CommonLib doesn't expose the game's
-				// save-entry array, so enumerate the saves directory ourselves (.ess stem =
-				// the name `load` takes). Resolve the real dir rather than guessing:
-				//   - explicit `dir` arg wins (escape hatch for exotic setups);
-				//   - else <My Games game folder> / sLocalSavePath (read from the INI; the
-				//     's' prefix guarantees it's a string), supporting an absolute setting.
-				// Running in-process means MO2/USVFS-virtualized saves resolve correctly.
-				// Caveat: bUseMyGamesDirectory=0 (saves under the install dir) isn't handled
-				// — pass `dir` for that. The resolved dir is returned for transparency.
-				namespace fs = std::filesystem;
-				fs::path saveDir;
-				if (const std::string dirArg = a_args.value("dir", std::string{}); !dirArg.empty()) {
-					saveDir = dirArg;
-				} else {
-					const auto logDir = SKSE::log::log_directory();
-					if (!logDir)
-						throw ToolError(500, "save directory unavailable (no log dir)");
-					fs::path local = "Saves";  // default sLocalSavePath
-					if (auto* ini = RE::INISettingCollection::GetSingleton()) {
-						if (auto* s = ini->GetSetting("sLocalSavePath:General")) {
-							if (const char* sp = s->GetString(); sp && *sp)
-								local = sp;
-						}
-					}
-					saveDir = local.is_absolute() ? local : (logDir->parent_path() / local);
-				}
+				const fs::path saveDir = ResolveSaveDir(a_args);
 				json saves = json::array();
-				std::error_code ec;
-				for (const auto& entry : fs::directory_iterator(saveDir, ec)) {
-					if (entry.path().extension() == ".ess")
-						saves.push_back(entry.path().stem().string());
-				}
+				for (const auto& s : EnumerateSaves(saveDir))
+					saves.push_back(s.name);
 				return json{ { "dir", saveDir.string() }, { "count", saves.size() }, { "saves", std::move(saves) } };
 			}
 
@@ -130,17 +152,36 @@ namespace dvb
 				throw ToolError(500, "SKSE TaskInterface unavailable");
 
 			if (action == "loadLast") {
-				task->AddTask([]() {
+				// BGSSaveLoadManager::LoadMostRecentSaveGame() is a silent no-op from the
+				// Main Menu (verified live), so resolve the newest .ess ourselves and load
+				// it by name — the named path works from the menu.
+				const fs::path saveDir = ResolveSaveDir(a_args);
+				const auto saves = EnumerateSaves(saveDir);
+				if (saves.empty())
+					throw ToolError(404, std::format("no .ess saves in {}", saveDir.string()));
+				const std::string name = saves.front().name;
+				task->AddTask([name]() {
 					if (auto* m = RE::BGSSaveLoadManager::GetSingleton())
-						m->LoadMostRecentSaveGame();
+						m->Load(name.c_str(), false);
 				});
-				return json{ { "queued", true }, { "action", action } };
+				logs::info("devbench: game loadLast -> '{}'", name);
+				return json{ { "queued", true }, { "action", action }, { "name", name }, { "note", kLoadNote } };
 			}
 			if (action == "save" || action == "load") {
 				const std::string name = a_args.value("name", std::string{});
 				if (name.empty())
 					throw ToolError(400, std::format("action '{}' requires a 'name'", action));
 				const bool isSave = (action == "save");
+				if (!isSave) {
+					// Validate the save exists rather than silently queueing a no-op load
+					// (a bare {queued:true} on a bad name is a cold-start trap for agents).
+					const fs::path saveDir = ResolveSaveDir(a_args);
+					const auto saves = EnumerateSaves(saveDir);
+					const bool exists = std::any_of(saves.begin(), saves.end(),
+						[&](const SaveEntry& s) { return s.name == name; });
+					if (!exists)
+						throw ToolError(404, std::format("save '{}' not found in {} — use action='list' for valid names", name, saveDir.string()));
+				}
 				task->AddTask([name, isSave]() {
 					auto* m = RE::BGSSaveLoadManager::GetSingleton();
 					if (!m)
@@ -148,13 +189,15 @@ namespace dvb
 					if (isSave)
 						m->Save(name.c_str());
 					else
-						// checkForMods=false: skip the "content no longer present" mismatch
-						// confirmation modal so an automated load doesn't strand on it.
-						m->Load(name.c_str(), false);
+						m->Load(name.c_str(), false);  // checkForMods=false skips the mod-mismatch modal
 				});
-				return json{ { "queued", true }, { "action", action }, { "name", name } };
+				logs::info("devbench: game {} '{}'", action, name);
+				json out{ { "queued", true }, { "action", action }, { "name", name } };
+				if (!isSave)
+					out["note"] = kLoadNote;
+				return out;
 			}
-			throw ToolError(400, std::format("unknown action '{}' (save|load|loadLast)", action));
+			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast)", action));
 		}
 
 		// menu: detect open menus / blocking modals, tracked live from MenuOpenCloseEvent

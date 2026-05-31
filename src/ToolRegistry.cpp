@@ -63,13 +63,20 @@ namespace dvb
 			handler = it->second.handler;
 		}
 
+		// Per-invocation trace (debug) + failures (warn) — set logLevel=debug in
+		// config.json to see the full client/agent call stream for diagnosis.
+		logs::debug("tool '{}' invoked", a_name);
 		try {
-			return ToolResult::Success(handler(a_args, a_ctx));
+			auto result = ToolResult::Success(handler(a_args, a_ctx));
+			return result;
 		} catch (const ToolError& e) {
+			logs::warn("tool '{}' failed [{}]: {}", a_name, e.code, e.what());
 			return ToolResult::Failure(e.code, e.what());
 		} catch (const std::exception& e) {
+			logs::warn("tool '{}' threw: {}", a_name, e.what());
 			return ToolResult::Failure(500, e.what());
 		} catch (...) {
+			logs::warn("tool '{}' threw unknown", a_name);
 			return ToolResult::Failure(500, "unknown error in tool handler");
 		}
 	}
