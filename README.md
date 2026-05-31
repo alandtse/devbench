@@ -59,16 +59,126 @@ xmake
 
 Headless config (no in-game menu yet) at `Data/SKSE/Plugins/devbench/config.json` — read
 once at `kPostLoad` (before any consumer's `kDataLoaded`), then the server starts.
-Missing/invalid → defaults. See `config.example.json`:
+Missing → auto-created with defaults. Invalid → defaults (logged). All keys are optional.
 
-```json
-{ "enabled": true, "port": 8920 }
+```jsonc
+{
+  "enabled": true, // start the MCP/REST server at all (default true)
+  "port": 8920, // localhost port; auto-iterates if busy (default 8920)
+  "logLevel": "info", // trace|debug|info|warn|error (default "info")
+
+  // In-game hotkeys (DXScanCode integers; 0 = disabled). Ignored while the console is open.
+  "recordHotkey": 0, // toggle record start/stop
+  "recordHotkeyShift": false, // require Shift held with recordHotkey
+  "replayHotkey": 0, // replay a recording
+  "replayHotkeyShift": false, // require Shift held with replayHotkey
+  "replayPath": "", // recording to replay; empty = most recent
+  "replayRestoreScene": true, // hotkey replay re-establishes the recorded scene
+
+  // Autorun: replay a recording once on the first load of the session (unattended benchmark).
+  "autoRunPath": "", // recording to replay on first postLoadGame; empty = off
+  "autoRunRestoreScene": true, // autorun loads the recording's entry save first
+
+  // Settle delay (ms) after a restore-load before the replayed trajectory runs.
+  // Hardware-dependent; not baked into the portable recording file.
+  "loadSettleMs": 3000,
+}
 ```
 
 `enabled: false` skips starting the server entirely. Bind address is fixed to `127.0.0.1`.
-`port` is the _starting_ port: if it's busy (a second instance, etc.) devbench auto-iterates
-to the next free port and writes the bound port to `Data/SKSE/Plugins/devbench/runtime.json`
-(`{ "port": N }`) so fixed-URL clients can discover it.
+`port` is the _starting_ port: if it's busy devbench auto-iterates to the next free port and
+writes the bound port to `Data/SKSE/Plugins/devbench/runtime.json` (`{ "port": N }`) so
+fixed-URL clients can discover it.
+
+## Built-in tools
+
+All tools are reachable over both MCP (`tools/call`) and REST (`POST /api/tool/<name>`).
+
+| Tool       | What it does                                                                                                                                                                                                                                                                                                  |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ping`     | Self-test. Returns `{ "ok": true }`.                                                                                                                                                                                                                                                                          |
+| `console`  | Run a Skyrim console command. `action='exec'` queues `command` on the main thread. With `capture=true`, fences it between marker commands; `action='read'` then slices ConsoleLog's buffer between the markers and returns `{ markersFound, lines:[…] }`. Useful for `getav`, `getpos`, `help`, etc.          |
+| `inspect`  | Read live game/plugin state. Runs on the main thread and returns synchronously. `kind='state'` → `{ plugin, version, vr, playerLoaded, frame }`.                                                                                                                                                              |
+| `game`     | Save/load and list saves. `action='list'` enumerates the saves directory. `'loadLast'` loads the most recent save (a settled real-game state — avoids `coc`'s heavy new-game init). `'load'`/`'save'` take a `'name'`. All mutating actions are fire-and-forget; watch `lifecycle` events for completion.     |
+| `menu`     | Inspect, answer, or dismiss menus. `'list'` → `{ openMenus, messageBoxOpen }`. `'describe'` → active `MessageBoxMenu` body + buttons. `'accept'` → answer a `MessageBoxMenu` by button index (runs its callback; this is how you clear a Yes/No modal). `'close'` → hide a menu by name via the UI queue.     |
+| `scenario` | Run a timed sequence of steps server-side and return a per-step transcript. Steps: `tool` (dispatch any registered tool), `wait` (fixed ms), `waitFor` (block on a Skyrim event), `waitUntil` (poll live state). Optional: `repeat` (≤1000), `continueOnError`. See [Scripted tests](#scripted-tests) below.  |
+| `record`   | Capture a manual play-through as a replayable scenario. `'start'` samples the player pose every `intervalMs` and captures a scene manifest. `'stop'` writes the trajectory to `Data/SKSE/Plugins/devbench/recordings/recording_<stamp>.json`. `'status'` reports progress. `'replay'` plays a recording back. |
+
+Other mods add their own tools via the C ABI (see [Use devbench from your mod](#use-devbench-from-your-mod)).
+
+## Record, replay, and autorun
+
+The `record` tool captures a manual play-through as a replayable scenario file:
+
+1. Load a save or `coc` to the scene you want to record.
+2. Call `record` with `action='start'` (or press the `recordHotkey`). devbench samples the
+   player pose every `intervalMs` ms (default 1000, min 100) on a background thread and notes
+   the entry point (the save loaded or cell `coc`'d to).
+3. Play through the scene, then call `record` with `action='stop'` (or press the hotkey
+   again). The trajectory is written to
+   `Data/SKSE/Plugins/devbench/recordings/recording_<stamp>.json` and the path is returned.
+4. Replay with `record action='replay' path='<file>'`. With `restoreScene=true` (default for
+   hotkey replay), devbench first re-establishes the entry point (loads the save / `coc`s the
+   cell) and waits for the player before running the trajectory.
+
+**In-game hotkeys** (configured in `config.json`, opt-in, both default to disabled):
+
+- `recordHotkey` — DXScanCode integer; toggles record start/stop. Ignored while the console is
+  open. Optionally require Shift with `recordHotkeyShift: true`.
+- `replayHotkey` — replays the recording at `replayPath` (or the most recent recording if
+  empty). Optionally require Shift with `replayHotkeyShift: true`. `replayRestoreScene`
+  controls whether the scene is re-established first.
+
+**Autorun** (`autoRunPath`) replays a recording once on the first `postLoadGame` of the session
+with no client connected and no keypress — a fully unattended benchmark. Set
+`autoRunRestoreScene: true` (default) to have devbench load the recorded entry save first.
+
+HUD notifications confirm hotkey actions (record started, record stopped, replay started).
+
+## Scripted tests
+
+The **`scenario`** tool runs a timed step list server-side and returns a per-step transcript —
+one call replaces hand-chained requests with frame-accurate timing. Each step is a `tool`
+dispatch (any registered tool), a fixed `wait`, an event-driven **`waitFor`**, or a state-poll
+`waitUntil`. **Prefer `waitFor`** — it keys off the _actual_ Skyrim event (a load is done when
+`lifecycle:postLoadGame` fires) rather than a guessed sleep. This is a validated battery — load,
+wait for the load event, settle, rotate in place, then free the camera:
+
+```jsonc
+POST /api/tool/scenario          // MCP: tools/call name=scenario — identical body
+{
+  "steps": [
+    { "tool": "game",    "args": { "action": "load", "name": "Save215" } },
+    { "waitFor": "postLoadGame", "timeoutMs": 60000 },   // EVENT, not a guessed sleep
+    { "waitUntil": "playerLoaded" },                     // belt-and-suspenders state poll
+    { "tool": "console", "args": { "command": "player.setangle z 0" } },
+    { "wait": 3000 },                                    // pacing with no event → fixed wait
+    { "tool": "console", "args": { "command": "player.setangle z 90" } },
+    { "wait": 3000 },
+    { "tool": "console", "args": { "command": "player.setangle z 180" } },
+    { "wait": 3000 },
+    { "tool": "console", "args": { "command": "player.setangle z 270" } },
+    { "tool": "console", "args": { "command": "tfc" } }  // free cam for a screenshot sweep
+  ]
+}
+// -> { "ok": true, "stepsRun": 11, "elapsedMs": 14213,
+//      "results": [ { "index": 0, "kind": "tool", "ok": true, ... },
+//                   { "index": 1, "kind": "waitFor", "satisfied": true, "elapsedMs": 4870 }, ... ] }
+```
+
+`waitFor` shorthands: lifecycle (`postLoadGame`/`saveGame`/`newGame`/`preLoadGame`/
+`dataLoaded`/`deleteGame`), or `menuClosed`/`menuOpened` with a `name` (e.g. wait for
+`LoadingMenu` to close, or dismiss a modal then wait for it gone); the general form is
+`{ "topic": "...", "match": { ... } }`. Add `repeat` (≤1000) to loop the list and
+`continueOnError` to keep going past a failed step.
+
+`waitUntil` conditions: `playerLoaded`, `noModal`, `noMenu`.
+
+**Steps dispatch any registered tool — including tools other mods add over the C ABI.** A
+consumer mod such as Open Shaders (a fork of
+[Community Shaders](https://www.nexusmods.com/skyrimspecialedition/mods/180419)) can register
+a `feature` tool so `{ "tool": "feature", "args": { "action": "toggle", "shortName": "..." } }`
+becomes a valid scenario step — letting a test flip a feature mid-run.
 
 ## Use devbench from your mod
 
@@ -79,12 +189,14 @@ fits your project:
 - **Copy the overlay port** (recommended) — drop `cmake/ports/devbench-api/` into your repo's
   vcpkg overlay and you're done; the portfile fetches the MIT API source (no source copied into
   your tree). This works out of the box — it's exactly what consumers do today:
+
   ```cmake
   find_package(devbench-api CONFIG REQUIRED)
   target_link_libraries(YourPlugin PRIVATE DevBench::API)
   ```
-- **Copy the two API files directly** — `DevBenchAPI.h` + `DevBenchAPI.cpp` into your plugin and
-  build them; no vcpkg involved. Simplest bootstrap, fully MIT.
+
+- **Copy the two API files directly** — `DevBenchAPI.h` + `DevBenchAPI.cpp` into your plugin
+  and build them; no vcpkg involved. Simplest bootstrap, fully MIT.
 
 After SKSE sends your plugin `kPostLoad`:
 
@@ -109,15 +221,15 @@ just an ack. Match that when you register, so an agent gets a coherent bench rat
 one-off verbs:
 
 - **Return data, not "ok."** A read should answer the question (`{ "loaded": true, "fps": 58 }`),
-  not `{ "queued": true }`. Run on the main thread via SKSE's `TaskInterface` and return the result
-  synchronously (devbench's own `inspect` does this).
+  not `{ "queued": true }`. Run on the main thread via SKSE's `TaskInterface` and return the
+  result synchronously (devbench's own `inspect` does this).
 - **Few powerful tools over many narrow ones.** Prefer one `shadercache` tool with an `action`
-  enum to four verbs. A general primitive (an `eval`-style entry into your subsystem) beats a tool
-  per operation.
-- **Self-describe.** Put a real `inputSchema` and a clear `description` on every tool — that _is_
-  the MCP schema and the REST docs; it's how an agent discovers what you offer cold.
-- **Make failure legible.** Validate inputs and return an actionable error (what was wrong + how to
-  list valid values), rather than silently succeeding.
+  enum to four verbs. A general primitive (an `eval`-style entry into your subsystem) beats a
+  tool per operation.
+- **Self-describe.** Put a real `inputSchema` and a clear `description` on every tool — that
+  _is_ the MCP schema and the REST docs; it's how an agent discovers what you offer cold.
+- **Make failure legible.** Validate inputs and return an actionable error (what was wrong + how
+  to list valid values), rather than silently succeeding.
 
 ### Events
 
@@ -127,68 +239,21 @@ devbench's built-in `menu`/`lifecycle` events. devbench can't tell which mod emi
 interface is shared), so **namespace your topics** the way you namespace tool names —
 `yourmod.somethingHappened` — to make the origin clear and avoid collisions with other mods.
 
-## Built-in tools
+## Performance data
 
-`console` (run/capture commands, fenced), `inspect` (live state), `game` (save/load/loadLast/list),
-`menu` (list open menus / close a blocking modal), `scenario` (timed sequence runner, below), plus
-a `ping` self-test. Other mods add theirs via the C ABI above.
-
-## Scripted tests & benchmarking
-
-The **`scenario`** tool runs a timed step list server-side and returns a per-step transcript — one
-call replaces hand-chained requests with frame-accurate timing. Each step is a `tool` dispatch
-(any registered tool), a fixed `wait`, an event-driven **`waitFor`**, or a state-poll `waitUntil`.
-**Prefer `waitFor`** — it keys off the _actual_ Skyrim event (a load is done when
-`lifecycle:postLoadGame` fires) rather than a guessed sleep. This is the validated battery — load,
-wait for the load event, settle, rotate in place, then free the camera:
-
-```jsonc
-POST /api/tool/scenario          // MCP: tools/call name=scenario — identical body
-{
-  "steps": [
-    { "tool": "game",    "args": { "action": "load", "name": "Save215" } },
-    { "waitFor": "postLoadGame", "timeoutMs": 60000 },   // EVENT, not a guessed sleep
-    { "waitUntil": "playerLoaded" },                     // belt-and-suspenders state poll
-    { "tool": "console", "args": { "command": "player.setangle z 0" } },
-    { "wait": 3000 },                                    // pacing has no event → fixed wait
-    { "tool": "console", "args": { "command": "player.setangle z 90" } },
-    { "wait": 3000 },
-    { "tool": "console", "args": { "command": "player.setangle z 180" } },
-    { "wait": 3000 },
-    { "tool": "console", "args": { "command": "player.setangle z 270" } },
-    { "tool": "console", "args": { "command": "tfc" } }  // free cam for a screenshot sweep
-  ]
-}
-// -> { "ok": true, "stepsRun": 11, "elapsedMs": 14213,
-//      "results": [ { "index": 0, "kind": "tool", "ok": true, ... },
-//                   { "index": 1, "kind": "waitFor", "satisfied": true, "elapsedMs": 4870 }, ... ] }
-```
-
-`waitFor` shorthands: lifecycle (`postLoadGame`/`saveGame`/`newGame`/`preLoadGame`/`dataLoaded`),
-or `menuClosed`/`menuOpened` with a `name` (e.g. wait for `LoadingMenu` to close, or dismiss a
-modal then wait for it gone); the general form is `{ "topic": "...", "match": { ... } }`. Add
-`repeat` (≤1000) to loop the list and `continueOnError` to keep going past a failed step.
-
-**Steps dispatch any registered tool — including tools other mods add over the C ABI.** Open
-Shaders (a fork of [Community Shaders](https://www.nexusmods.com/skyrimspecialedition/mods/180419))
-is a worked consumer — its
-[`src/DevBenchBridge.cpp`](https://github.com/alandtse/open-shaders/blob/dev/src/DevBenchBridge.cpp)
-registers a `feature` tool, so `{ "tool": "feature", "args": { "action": "toggle", "shortName":
-"..." } }` becomes a valid scenario step — letting a benchmark flip an Open Shaders feature
-mid-run. (`console` also still returns only its own command's output via the hook-side
-fence, so `getangle`/`getpos` reads stay reliable under log spam.)
-
-Still to come (see [ROADMAP](ROADMAP.md)): a `measure` primitive (frametime over a window),
-`waitSettled`, a `camera` tool, and **record→replay** (capture a manual run as a scenario file).
+devbench emits semantic **`EventBus` events** at scenario step boundaries (begin/end) so a
+client can align a capture to them — but it does not collect or serve profiling data itself.
+Frametime and GPU metrics are left to dedicated clients: pair devbench with a Tracy-instrumented
+mod (using the `tracy` MCP) or any other profiler to annotate captures with what the bench was
+doing. See [ROADMAP](ROADMAP.md) for the planned `measure` primitive.
 
 ## License
 
-The **devbench plugin** is **GPL-3.0** (`COPYING`) with the standard Skyrim \*\*Modding Exception
-
-- GPL-3.0 §7 linking exception** (`EXCEPTIONS`) — the same grant Community Shaders and other SKSE
-  mods carry. It lets the plugin link against the proprietary game code it modifies ("Modded Code")
-  and against the **Modding Libraries** it builds on — **CommonLibSSE-NG** and **cpp-mcp\*\* (both
-  MIT) — without those linked parts becoming GPL-covered.
+The **devbench plugin** is **GPL-3.0** (`COPYING`) with the standard Skyrim
+**Modding Exception — GPL-3.0 §7 linking exception** (`EXCEPTIONS`) — the same grant
+Community Shaders and other SKSE mods carry. It lets the plugin link against the proprietary
+game code it modifies ("Modded Code") and against the **Modding Libraries** it builds on —
+**CommonLibSSE-NG** and **cpp-mcp** (both MIT) — without those linked parts becoming GPL-covered.
 
 The cross-plugin **API glue is separately MIT** and **carries no copyleft effect**:
 `include/DevBenchAPI.h`, `DevBenchAPI.cpp`, and `DevBenchAPI.LICENSE.txt`. **Any** SKSE plugin —
