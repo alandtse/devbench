@@ -25,8 +25,8 @@ namespace dvb::Recording
 		using namespace std::chrono;
 		namespace fs = std::filesystem;
 
-		constexpr long   kDefaultIntervalMs = 250;  // 4 Hz — captures rotation-in-place + motion; min 100 (10 Hz)
-		constexpr long   kMinIntervalMs = 100;
+		constexpr long   kDefaultIntervalMs = 10;
+		constexpr long   kMinIntervalMs = 10;
 		constexpr double kRadToDeg = 57.295779513082323;  // 180/pi — console setangle is degrees, data.angle is radians
 
 		// Last entry point devbench brokered into the current scene (a save load or a coc),
