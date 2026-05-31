@@ -29,6 +29,14 @@ namespace
 		spdlog::set_pattern("[%H:%M:%S.%e] [%^%L%$] %v");
 	}
 
+	// Listener for messages from ANY plugin (registered with a nullptr sender). The
+	// default OnMessage listener only receives SKSE-sender messages, so a consumer mod's
+	// interface request would never reach us without this. Only acts on the request.
+	void OnInterfaceMessage(SKSE::MessagingInterface::Message* a_msg)
+	{
+		dvb::HostApi::OnInterfaceRequest(a_msg);
+	}
+
 	void OnMessage(SKSE::MessagingInterface::Message* a_msg)
 	{
 		if (!a_msg)
@@ -53,11 +61,15 @@ namespace
 				dvb::HostApi::Init(g_server->Tools(), g_server->Events());
 				g_server->Start();
 				dvb::InstallGameEvents(g_server->Events());
+
+				// Receive cross-plugin interface requests from ANY plugin (nullptr sender),
+				// so consumer mods' dispatches reach us (mirrors MergeMapper). Registered
+				// at kPostLoad, before consumers request at their kDataLoaded.
+				if (auto* m = SKSE::GetMessagingInterface())
+					m->RegisterListener(nullptr, OnInterfaceMessage);
 			}
 		}
 		if (g_server) {
-			// Cross-plugin interface handshake (no-op unless it's the request message).
-			dvb::HostApi::OnInterfaceRequest(a_msg);
 			// Publish lifecycle events (dataLoaded and later load/save/new-game).
 			dvb::OnSKSEMessage(a_msg->type);
 		}
