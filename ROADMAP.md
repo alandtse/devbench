@@ -118,6 +118,29 @@ reposition-along-heading (`player.setpos` from `getpos`+`getangle`), free camera
   the `measure` window. Cheapest first cut needs no new engine hooks — poll the existing pose reads
   on a timer and emit a scenario.
 
+### Modal handling — read/answer a blocking MessageBoxMenu (deferred; RCA below)
+
+Loading a save whose content no longer matches the load order pops a Yes/No
+`MessageBoxMenu` (`LoadGameUnrecognizedContentCallBack`) that gates the load. `menu` can detect it
+(`messageBoxOpen`) but **cannot read its text or select a button** — `kHide` does not dismiss a
+message box; a button callback must run. For automated benchmarks, **prefer saves compatible with
+the current load order** (no modal); this is the edge-case follow-up.
+
+**Do NOT detour `MessageBoxMenu::QueueMessage` at the function entry.** Ghidra-verified on
+1.6.1170: that function (AE `0x94b720`, id 52271) is an MSVC `__try`/SEH function with a registered
+unwind handler (`UNW_FLAG_UHANDLER`). A `write_branch<5>` relocates its SEH-frame prologue into a
+trampoline with no `.pdata`, so the x64 unwinder fails on the exception-guarded load path →
+guaranteed CTD (the id and branch alignment are both correct; branch size is irrelevant). This is
+why `ConsoleLog::VPrint` hooks fine (no unwind handler) but this one does not.
+
+Safe implementation paths:
+- **`GetCurrentMessageBoxMenu()`** (AE id `406361`; absent on SE 1.5.97) off the existing
+  `MenuOpenCloseEvent` sink — read the *shown* box with no detour. (The pending-queue `BSTArray` is
+  popped when the box is displayed, so polling it races.)
+- **Callsite hook** (`stl::write_thunk_call`) at the load flow's call to `QueueMessage` — captures
+  the `MessageBoxData*` (→ `bodyText`, `buttonText`, `callback->Run(index)`) without touching the
+  SEH'd function body or its `.pdata`.
+
 ### Tracy / profiler integration — emit *markers*, leave *data* to clients
 
 devbench should **not** hard-depend on Tracy or try to be a profiler data source — mods that are
