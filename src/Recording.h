@@ -28,6 +28,10 @@ namespace dvb::Recording
 	/// a replay call's settleMs arg overrides it.
 	void SetLoadSettleMs(int a_ms);
 
+	/// Show a corner HUD message (marshaled to the main thread). Used for hotkey feedback
+	/// (record start/stop, replay) since devbench is otherwise headless. No-op if no task interface.
+	void Notify(const std::string& a_msg);
+
 	/// Build the step list for action=replay from a recording file (a_args.path). With
 	/// a_args.restoreScene=true, prepend the entry point (load the save / coc the cell) +
 	/// waitUntil playerLoaded so the trajectory runs in the recorded scene. Throws ToolError

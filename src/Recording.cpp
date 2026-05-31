@@ -222,6 +222,7 @@ namespace dvb::Recording
 			rec.worker = std::thread([&rec] { rec.Sample(); });
 
 			a_events.Publish("record.started", json{ { "intervalMs", interval } });
+			Notify("devbench: recording started");
 			return json{ { "action", "start" }, { "recording", true }, { "intervalMs", interval } };
 		}
 
@@ -238,6 +239,7 @@ namespace dvb::Recording
 			const fs::path path = WriteScenarioFile(scenario);
 
 			a_events.Publish("record.stopped", json{ { "sampleCount", rec.samples.size() }, { "path", path.string() } });
+			Notify(std::format("devbench: recording stopped — {} samples", rec.samples.size()));
 			return json{
 				{ "action", "stop" },
 				{ "sampleCount", rec.samples.size() },
@@ -257,6 +259,14 @@ namespace dvb::Recording
 		}
 
 		return json{ { "error", "unknown action (start|stop|status)" }, { "action", action } };
+	}
+
+	void Notify(const std::string& a_msg)
+	{
+		// Corner HUD message; marshal to the main thread (touches UI). The hotkey path runs on
+		// a detached thread, so this is the on-screen feedback for an otherwise headless bench.
+		if (auto* task = SKSE::GetTaskInterface())
+			task->AddTask([a_msg]() { RE::SendHUDMessage::ShowHUDMessage(a_msg.c_str()); });
 	}
 
 	void NoteLoadEntry(const std::string& a_saveName)
