@@ -103,9 +103,10 @@ anything touching game state. See `include/DevBenchAPI.h` and `cmake/ports/devbe
 
 ### Design your tools the agentic-renderdoc way
 
-devbench follows the **agentic-renderdoc** model: a *thin but powerful* surface an agent can drive,
-where a call **returns the value**, not just an ack. Match that when you register, so an agent gets
-a coherent bench rather than a pile of one-off verbs:
+devbench follows the **[agentic-renderdoc](https://github.com/EdenLabs/agentic-renderdoc#why-this-design)**
+model: a *thin but powerful* surface an agent can drive, where a call **returns the value**, not
+just an ack. Match that when you register, so an agent gets a coherent bench rather than a pile of
+one-off verbs:
 
 - **Return data, not "ok."** A read should answer the question (`{ "loaded": true, "fps": 58 }`),
   not `{ "queued": true }`. Run on the main thread via SKSE's `TaskInterface` and return the result
