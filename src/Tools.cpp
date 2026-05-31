@@ -309,6 +309,54 @@ namespace dvb
 			});
 		}
 
+		// camera: read or set the player camera point of view, so a recording can capture the
+		// POV (first/third/vanity) and a replay restore it — what's rendered differs by POV.
+		// action='get' returns the live POV synchronously; 'setPov' queues the switch onto the
+		// main thread (PlayerCamera state changes must run there). Uses CommonLib's runtime-
+		// correct helpers, not the raw CameraState enum (which shifts between SE and VR).
+		json CameraHandler(const json& a_args, const ToolContext&)
+		{
+			const std::string action = a_args.value("action", std::string("get"));
+
+			if (action == "get") {
+				return MainThread::RunAndWait([]() -> json {
+					auto* cam = RE::PlayerCamera::GetSingleton();
+					if (!cam)
+						return json{ { "pov", nullptr } };
+					std::string pov = "other";
+					if (cam->IsInFirstPerson())
+						pov = "first";
+					else if (cam->IsInThirdPerson())
+						pov = "third";
+					else if (cam->currentState && cam->currentState->id == RE::CameraState::kAutoVanity)
+						pov = "vanity";  // kAutoVanity=1 is identical in SE/VR layouts
+					return json{ { "pov", pov } };
+				});
+			}
+			if (action != "setPov")
+				throw ToolError(400, std::format("unknown action '{}' (get|setPov)", action));
+
+			const std::string pov = a_args.value("pov", std::string{});
+			if (pov != "first" && pov != "third" && pov != "vanity")
+				throw ToolError(400, std::format("invalid pov '{}' (first|third|vanity)", pov));
+
+			auto* task = SKSE::GetTaskInterface();
+			if (!task)
+				throw ToolError(500, "SKSE TaskInterface unavailable");
+			task->AddTask([pov]() {
+				auto* cam = RE::PlayerCamera::GetSingleton();
+				if (!cam)
+					return;
+				if (pov == "first")
+					cam->ForceFirstPerson();
+				else if (pov == "third")
+					cam->ForceThirdPerson();
+				else  // vanity has no Force* helper; push the state by its (runtime-mapped) enum
+					cam->PushCameraState(RE::CameraState::kAutoVanity);
+			});
+			return json{ { "queued", true }, { "action", "setPov" }, { "pov", pov } };
+		}
+
 		// ---- scenario: server-side timed replay of a step list -------------------
 		// Runs on the listener thread, so it may sleep/poll directly and marshal each
 		// action to the main thread. Steps are one of: { "tool", "args" } (dispatch a
@@ -570,6 +618,23 @@ namespace dvb
 		};
 		a_registry.Register(std::move(game), &GameHandler);
 
+		ToolDescriptor camera;
+		camera.name = "camera";
+		camera.description =
+			"Read or set the player camera point of view. action='get' returns { pov } where pov "
+			"is first | third | vanity | other, read live on the main thread. action='setPov' "
+			"queues a switch (param 'pov': first | third | vanity) onto the main thread "
+			"(fire-and-forget). Recordings capture the POV per sample and replay restores it via "
+			"this tool, since what is rendered (and benchmarked) differs by POV.";
+		camera.inputSchema = json{
+			{ "type", "object" },
+			{ "properties", json{
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "get", "setPov" }) }, { "description", "get (default) | setPov" } } },
+								{ "pov", json{ { "type", "string" }, { "enum", json::array({ "first", "third", "vanity" }) }, { "description", "setPov: target point of view" } } },
+							} },
+		};
+		a_registry.Register(std::move(camera), &CameraHandler);
+
 		ToolDescriptor inspect;
 		inspect.name = "inspect";
 		inspect.description =
@@ -637,7 +702,7 @@ namespace dvb
 		record.name = "record";
 		record.description =
 			"Capture a manual play-through as a replayable scenario. action='start' begins "
-			"sampling the player pose (x/y/z/angleZ/angleX + camera pos + game frame) every "
+			"sampling the player pose (x/y/z/angleZ/angleX + camera pos + POV + game frame) every "
 			"intervalMs (default from config recordIntervalMs, min 10) on a background thread "
 			"and captures a one-time scene manifest "
 			"(worldspace/cell, time of day, weather, anchor pose, and the entryPoint — the save "

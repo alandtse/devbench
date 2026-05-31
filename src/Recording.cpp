@@ -66,14 +66,26 @@ namespace dvb::Recording
 					  { "angleX", pc->GetAngleX() },  // pitch (radians) — look up/down (sky vs ground)
 					  { "frame", game::CurrentFrame() },
 			};
-			// Camera world position — what's actually rendered. Differs from the player in 3rd
-			// person / VR / free cam. Captured for analysis + a future camera-tool replay (the
-			// player-teleport replay can't drive the camera independently yet).
-			if (auto* cam = RE::PlayerCamera::GetSingleton(); cam && cam->cameraRoot) {
-				const auto& t = cam->cameraRoot->world.translate;
-				s["camX"] = t.x;
-				s["camY"] = t.y;
-				s["camZ"] = t.z;
+			if (auto* cam = RE::PlayerCamera::GetSingleton(); cam) {
+				// Point of view, normalized to the three states the camera tool can restore.
+				// IsInFirstPerson/IsInThirdPerson are runtime-correct (the raw CameraState enum
+				// shifts between SE and VR), so store the string, not the id. Other states
+				// (VATS/free/furniture) are left unset — replay won't force a POV it can't drive.
+				if (cam->IsInFirstPerson())
+					s["pov"] = "first";
+				else if (cam->IsInThirdPerson())
+					s["pov"] = "third";
+				else if (cam->currentState && cam->currentState->id == RE::CameraState::kAutoVanity)
+					s["pov"] = "vanity";  // kAutoVanity=1 is identical in SE/VR layouts
+
+				// Camera world position — what's actually rendered. Differs from the player in 3rd
+				// person / VR / free cam. Captured for analysis + the camera-tool replay path.
+				if (cam->cameraRoot) {
+					const auto& t = cam->cameraRoot->world.translate;
+					s["camX"] = t.x;
+					s["camY"] = t.y;
+					s["camZ"] = t.z;
+				}
 			}
 			return s;
 		}
@@ -165,9 +177,17 @@ namespace dvb::Recording
 			const auto consoleStep = [](const std::string& a_cmd) {
 				return json{ { "tool", "console" }, { "args", json{ { "action", "exec" }, { "command", a_cmd } } } };
 			};
+			const auto cameraStep = [](const std::string& a_pov) {
+				return json{ { "tool", "camera" }, { "args", json{ { "action", "setPov" }, { "pov", a_pov } } } };
+			};
 
-			json steps = json::array();
+			json        steps = json::array();
+			std::string lastPov;  // emit a camera step only when the POV changes
 			for (const auto& s : a_rec.samples) {
+				if (const auto pov = s.value("pov", std::string{}); !pov.empty() && pov != lastPov) {
+					steps.push_back(cameraStep(pov));
+					lastPov = pov;
+				}
 				steps.push_back(consoleStep(std::format("player.setpos x {:.2f}", s.value("x", 0.0))));
 				steps.push_back(consoleStep(std::format("player.setpos y {:.2f}", s.value("y", 0.0))));
 				steps.push_back(consoleStep(std::format("player.setpos z {:.2f}", s.value("z", 0.0))));
