@@ -200,10 +200,11 @@ namespace dvb
 			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast)", action));
 		}
 
-		// menu: detect open menus / blocking modals, tracked live from MenuOpenCloseEvent
-		// (no UI access on the listener thread). 'close' hides a menu by name (kHide).
-		// Reading/answering a MessageBoxMenu (body, buttons, button-select) needs a safe
-		// capture path (see ROADMAP) — the QueueMessage function-entry detour CTDs.
+		// menu: detect/answer menus. 'list' = open menus + messageBoxOpen (tracked live from
+		// MenuOpenCloseEvent); 'describe' = the active MessageBoxMenu's body + buttons; 'accept'
+		// = select a button by index (answers + dismisses); 'close' = hide a menu by name
+		// (kHide). describe/accept use CommonLib's RE'd MessageBoxMenu accessors
+		// (GetCurrentMessageBoxData / SelectOption) on the main thread — no detour.
 		json MenuHandler(const json& a_args, const ToolContext&)
 		{
 			const std::string action = a_args.value("action", std::string("list"));
@@ -236,7 +237,37 @@ namespace dvb
 				return json{ { "queued", true }, { "action", "close" }, { "name", name } };
 			}
 
-			throw ToolError(400, std::format("unknown action '{}' (list|close)", action));
+			if (action == "describe") {
+				// Read the active MessageBoxMenu (body + buttons) via CommonLib's RE'd
+				// GetCurrentMessageBoxData() — on the main thread (touches the live UI queue).
+				return MainThread::RunAndWait([]() -> json {
+					auto* data = RE::MessageBoxMenu::GetCurrentMessageBoxData();
+					if (!data)
+						return json{ { "messageBoxOpen", false } };
+					json buttons = json::array();
+					for (const auto& b : data->buttonText)
+						buttons.push_back(b.c_str() ? std::string(b.c_str()) : std::string{});
+					return json{
+						{ "messageBoxOpen", true },
+						{ "bodyText", data->bodyText.c_str() ? std::string(data->bodyText.c_str()) : std::string{} },
+						{ "buttons", std::move(buttons) },
+						{ "cancelIndex", data->cancelOptionIndex },
+					};
+				});
+			}
+
+			if (action == "accept") {
+				// Answer the active MessageBoxMenu by button index (default 0) via CommonLib's
+				// SelectOption() — runs the modal's callback and dismisses it; no detour.
+				const int index = a_args.value("index", 0);
+				auto* task = SKSE::GetTaskInterface();
+				if (!task)
+					throw ToolError(500, "SKSE TaskInterface unavailable");
+				task->AddTask([index]() { RE::MessageBoxMenu::SelectOption(index); });
+				return json{ { "queued", true }, { "action", "accept" }, { "index", index } };
+			}
+
+			throw ToolError(400, std::format("unknown action '{}' (list|close|describe|accept)", action));
 		}
 
 		// inspect: read live game state. Demonstrates the value-returning primitive —
@@ -486,10 +517,11 @@ namespace dvb
 		ToolDescriptor console;
 		console.name = "console";
 		console.description =
-			"Run a Skyrim console command. Fire-and-forget by default (queued onto the "
-			"main thread, runs next tick). With capture=true the command is fenced between "
-			"marker commands so action='read' returns ONLY its output (markersFound=true), "
-			"surviving heavy ConsoleLog spam. Useful for printing commands (getav, getgs, help).";
+			"Run a Skyrim console command, queued onto the main thread (runs next tick). "
+			"NOTE: output capture is temporarily DISABLED — the VPrint hook it relied on CTDs "
+			"when the console is opened (VPrint is SEH-framed). So capture=true and action='read' "
+			"currently return no lines (markersFound=false); exec is unaffected. To read a value, "
+			"verify via inspect / game state instead until capture is reworked off the detour.";
 		console.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
@@ -535,15 +567,19 @@ namespace dvb
 		ToolDescriptor menu;
 		menu.name = "menu";
 		menu.description =
-			"Inspect/dismiss menus. action='list' returns { openMenus, messageBoxOpen } tracked "
-			"live from menu open/close events; action='close' hides a menu by 'name' via the UI "
-			"message queue (kHide). (Reading/answering a MessageBoxMenu's text/buttons is not yet "
-			"supported — kHide does not dismiss a Yes/No modal; see ROADMAP.)";
+			"Inspect, answer, or dismiss menus. action='list' returns { openMenus, messageBoxOpen } "
+			"tracked live from menu open/close events. 'describe' returns the active MessageBoxMenu "
+			"as { messageBoxOpen, bodyText, buttons:[…], cancelIndex } (read the buttons, then pick "
+			"one). 'accept' answers a MessageBoxMenu by button 'index' (default 0) — runs its "
+			"callback and dismisses it (this is how you clear a Yes/No modal, e.g. the "
+			"content-mismatch dialog gating a load; kHide does NOT). 'close' hides a menu by 'name' "
+			"via the UI queue (kHide).";
 		menu.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-									 { "action", json{ { "type", "string" }, { "enum", json::array({ "list", "close" }) }, { "description", "list → { openMenus, messageBoxOpen }; close → hide a menu" } } },
+									 { "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "close" }) }, { "description", "list | describe | accept | close" } } },
 									 { "name", json{ { "type", "string" }, { "description", "menu name to hide (required for close), e.g. MessageBoxMenu" } } },
+									 { "index", json{ { "type", "integer" }, { "description", "accept: 0-based button index to select (default 0). See describe's buttons/cancelIndex." } } },
 								 } },
 		};
 		a_registry.Register(std::move(menu), &MenuHandler);

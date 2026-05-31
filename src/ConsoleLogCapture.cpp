@@ -75,16 +75,16 @@ namespace dvb::ConsoleLogCapture
 {
 	void Install()
 	{
-		static std::once_flag once;
-		std::call_once(once, []() {
-			// Detour ConsoleLog::VPrint via CommonLibSSE-NG's trampoline (no external
-			// Detours dependency). RelocationID covers SE/AE and maps to VR via the
-			// address library; write_branch returns the address of the original.
-			REL::Relocation<std::uintptr_t> target{ REL::RelocationID(50180, 51110) };
-			auto& trampoline = SKSE::GetTrampoline();
-			VPrintHook::func = trampoline.write_branch<5>(target.address(), &VPrintHook::thunk);
-			logs::info("ConsoleLogCapture: hooked ConsoleLog::VPrint (gated, fenced)");
-		});
+		// HOOK DISABLED — do not write_branch ConsoleLog::VPrint. It is an MSVC __try/SEH
+		// function (UNWIND_INFO UNW_FLAG_UHANDLER, verified on 1.6.1170), so a 5-byte branch
+		// relocates its SEH-frame prologue into a trampoline with no .pdata; the x64 unwinder
+		// then faults when the console-open path (which is exception-guarded) unwinds through
+		// it — a guaranteed CTD on opening the console. (Programmatic ExecuteCommand prints
+		// don't unwind through VPrint, which is why capture appeared to work.) Same trap as
+		// MessageBoxMenu::QueueMessage. Until capture is reworked off a function-entry detour
+		// (read ConsoleLog's buffer, or hook a non-UHANDLER sink), this is a no-op: the console
+		// tool's exec still works; capture/read return empty rather than crashing.
+		logs::warn("ConsoleLogCapture: VPrint capture disabled (UHANDLER detour CTDs console open)");
 	}
 
 	void BeginCapture()
