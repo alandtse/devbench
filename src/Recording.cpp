@@ -138,6 +138,7 @@ namespace dvb::Recording
 			std::thread              worker;
 			std::mutex               mtx;
 			std::vector<json>        samples;
+			std::vector<json>        commands;  // console commands seen mid-recording: { command, frame }
 			json                     manifest;
 			long                     intervalMs = kDefaultIntervalMs;
 			steady_clock::time_point startTick;
@@ -182,8 +183,15 @@ namespace dvb::Recording
 			};
 
 			json        steps = json::array();
-			std::string lastPov;  // emit a camera step only when the POV changes
+			std::string lastPov;     // emit a camera step only when the POV changes
+			size_t      cmdIdx = 0;  // drain console commands captured up to each sample's frame
 			for (const auto& s : a_rec.samples) {
+				// Replay console commands the user/agent ran during recording at the point in the
+				// trajectory they were issued (ordered by frame), so value-setting is reproduced.
+				const auto frame = s.value("frame", 0u);
+				for (; cmdIdx < a_rec.commands.size() && a_rec.commands[cmdIdx].value("frame", 0u) <= frame; ++cmdIdx)
+					steps.push_back(consoleStep(a_rec.commands[cmdIdx].value("command", std::string{})));
+
 				if (const auto pov = s.value("pov", std::string{}); !pov.empty() && pov != lastPov) {
 					steps.push_back(cameraStep(pov));
 					lastPov = pov;
@@ -195,11 +203,15 @@ namespace dvb::Recording
 				steps.push_back(consoleStep(std::format("player.setangle x {:.2f}", s.value("angleX", 0.0) * kRadToDeg)));  // pitch
 				steps.push_back(json{ { "wait", a_rec.intervalMs } });
 			}
+			// Trailing commands issued after the final pose sample.
+			for (; cmdIdx < a_rec.commands.size(); ++cmdIdx)
+				steps.push_back(consoleStep(a_rec.commands[cmdIdx].value("command", std::string{})));
 
 			json meta = a_rec.manifest;
 			meta["format"] = "devbench-recording-1";
 			meta["intervalMs"] = a_rec.intervalMs;
 			meta["sampleCount"] = a_rec.samples.size();
+			meta["commandCount"] = a_rec.commands.size();
 			meta["recordedMs"] = a_recordedMs;
 			return json{ { "meta", std::move(meta) }, { "steps", std::move(steps) } };
 		}
@@ -256,6 +268,7 @@ namespace dvb::Recording
 			{
 				std::lock_guard lock(rec.mtx);
 				rec.samples.clear();
+				rec.commands.clear();
 				rec.manifest = std::move(manifest);
 				rec.intervalMs = interval;
 			}
@@ -323,6 +336,15 @@ namespace dvb::Recording
 	{
 		std::lock_guard lock(g_entryMtx);
 		g_entry = EntryPoint{ "coc", a_cellId };
+	}
+
+	void NoteConsoleCommand(const std::string& a_command)
+	{
+		auto& rec = Get();
+		if (!rec.running.load(std::memory_order_relaxed))
+			return;  // only capture while a recording is active
+		std::lock_guard lock(rec.mtx);
+		rec.commands.push_back(json{ { "command", a_command }, { "frame", game::CurrentFrame() } });
 	}
 
 	void SetLoadSettleMs(int a_ms)

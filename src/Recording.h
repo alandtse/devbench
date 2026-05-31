@@ -23,6 +23,11 @@ namespace dvb::Recording
 	void NoteLoadEntry(const std::string& a_saveName);
 	void NoteCocEntry(const std::string& a_cellId);
 
+	/// Record a console command observed mid-recording (from the console hook), stamped with the
+	/// current frame so BuildScenario replays it at the point in the trajectory it was issued.
+	/// No-op unless a recording is active. Called on the main thread (the hook runs there).
+	void NoteConsoleCommand(const std::string& a_command);
+
 	/// Default settle delay (ms) inserted after a restore-load before the trajectory, so the
 	/// game settles before the player is teleported. Local/per-machine (set from config);
 	/// a replay call's settleMs arg overrides it.

@@ -1,5 +1,6 @@
 #include "Autorun.h"
 #include "Config.h"
+#include "ConsoleHook.h"
 #include "GameEvents.h"
 #include "GameState.h"
 #include "HostApi.h"
@@ -81,6 +82,7 @@ namespace
 				dvb::HostApi::Init(g_server->Tools(), g_server->Events());
 				g_server->Start();
 				dvb::InstallGameEvents(g_server->Events());
+				dvb::ConsoleHook::Install(g_server->Events());  // observe console commands as events / for recording
 
 				// Receive cross-plugin interface requests from ANY plugin (nullptr sender),
 				// so consumer mods' dispatches reach us (mirrors MergeMapper). Registered
