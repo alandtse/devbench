@@ -56,17 +56,25 @@ Mapping of CS `RemoteControl` tools → devbench:
 | --- | --- | --- |
 | `console` (exec/read) | generic | **Done** in devbench — with the better hook-side fence. |
 | `inspect(state)` | generic | **Done** (extend fields toward CS's as needed). |
-| `inspect(shadercache)` | CS-domain | CS registers via C-ABI. |
-| `feature` (list/toggle/set/reset) | CS-domain | CS registers via C-ABI. |
-| `capture` (renderdoc/screenshot) | CS-domain | CS registers via C-ABI. |
-| `abtest` (status/start/stop/clear/diff) | CS-domain | CS registers via C-ABI. |
-| shader-recompile events | CS-domain | CS publishes into devbench's `EventBus` via C-ABI. |
+| `feature` (list/toggle) | CS-domain | **Done** — registered as `openshaders.feature` (namespaced, reversible toggle, exception-contained); validated live over MCP/REST. |
+| `feature` (set/reset) | CS-domain | TODO — add to the bridge handler. |
+| `shadercache` (read + save/load/default/clear) | CS-domain | TODO — CS registers via C-ABI. Read (`inspect(shadercache)`) **and** the management actions (save/load/default/clear the compiled cache) — bench-relevant for cold-compile benchmarks / repro. |
+| `capture` (renderdoc/screenshot) | CS-domain | TODO — CS registers via C-ABI. |
+| `abtest` (status/start/stop/clear/diff) | CS-domain | TODO — CS registers via C-ABI. |
+| shader-recompile events | CS-domain | TODO — publish via `EmitEvent`. The pattern is proven: the bridge already emits `openshaders.feature.changed`; add `openshaders.shaderRecompiled` the same way. |
 
-Steps: (1) ship the C-ABI in devbench + a small consumer header; (2) add a devbench-registrant
-module in CS that registers the CS-domain tools/events; (3) gate CS's built-in server behind a
-deprecation flag (default to devbench when present); (4) remove CS's in-process server once
-devbench is the established path. Keep tool names/inputSchemas matching CS so existing clients
-are unaffected.
+Steps: (1) C-ABI in devbench + consumer header — **done**; (2) devbench-registrant module in CS
+(`DevBenchBridge`) registering CS-domain tools/events — **`feature` + `openshaders.feature.changed`
+done**, rest TODO; (3) gate CS's built-in server behind a deprecation flag (default to devbench
+when present); (4) remove CS's in-process server once devbench is the established path.
+
+**Settings & UI disposition (not yet captured elsewhere):**
+- **Migrate CS's MCP transport settings** (server enable + port, currently per-runtime in CS's
+  `SettingsUser.json`) **out of CS** — devbench owns transport now (its `config.json`). CS keeps
+  only a per-runtime "use devbench bridge" toggle if anything.
+- **Repurpose CS's in-game `RemoteControl` menu into a bridge-status panel** — show "devbench
+  present (build N)", the tools CS registered, and the bound port; drop the server enable/port
+  controls. Keep tool names/inputSchemas stable so existing clients are unaffected.
 
 ## Configuration
 
@@ -89,8 +97,10 @@ how CS gates its server per-runtime, and lets users turn the bench on/off withou
   MergeMapper idiom) so consumer dispatches arrive. **Clients VENDOR the API via the
   `devbench-api` vcpkg port (`DevBench::API`) — never copy the source** (MIT glue; plugin GPL-3.0).
 - **`EventBus` SSE stream** — `GET /api/events/stream` alongside the `?since=N` poll.
-- **Back-port the hook-side fence to Community Shaders' `RemoteControl`** (CS-side) — its shipping
-  `ConsoleLogCapture` still uses the read-time slice that we proved breaks on spam.
+
+(Note: an earlier idea to back-port the hook-side capture fence into CS's `RemoteControl` is
+**dropped** — devbench owns console capture, and CS's embedded server is being deprecated, so its
+read-time-slice capture goes away with the server rather than getting fixed in place.)
 
 ## Benchmarking & structured tests
 
