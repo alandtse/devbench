@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 //
-// This interface header and its companion DevBenchAPI.cpp are licensed MIT (see
-// DevBenchAPI.LICENSE.txt) so ANY SKSE plugin — including proprietary/non-GPL mods —
-// may vendor them to talk to devbench. This is independent of the devbench *plugin*,
-// which is GPL-3.0. Matches the MergeMapper / SkyrimVRESL convention.
+// This interface header and its companion DevBenchAPI.cpp are MIT-licensed (see
+// DevBenchAPI.LICENSE.txt) so ANY SKSE plugin — including proprietary/closed-source —
+// may vendor them to talk to devbench, independent of the devbench plugin's GPL-3.0.
+// They are self-contained: drop both files into your plugin (or consume the
+// devbench-api vcpkg port) and build — no other devbench source is needed.
 #pragma once
 
 #include <cstdint>
@@ -12,15 +13,14 @@
 #include <SKSE/SKSE.h>
 
 // devbench cross-plugin API — lets another SKSE plugin register MCP/REST tools and
-// emit events into the running devbench host. Mechanism follows MergeMapper /
-// SkyrimVRESL (HIGGS-derived): after SKSE sends your plugin kPostLoad, request the
-// interface via a messaging dispatch, then call through a versioned abstract
-// interface. Copy this header AND DevBenchAPI.cpp into your plugin.
+// emit events into the running devbench host. Usage: after SKSE sends your plugin
+// kPostLoad, request the interface via an SKSE messaging dispatch, then call through
+// the versioned abstract interface below.
 //
-// Why the shape differs from MergeMapper's fixed getters: tools are dynamic and the
-// call direction is reversed — you hand devbench a handler it calls back. So the
-// payloads are JSON strings and the handler is a plain C function pointer + void* ctx
-// (never std::function / C++ objects across the DLL boundary).
+// The call direction is reversed from a typical query API: you hand devbench a handler
+// that it calls back when a tool is invoked. So payloads are JSON strings and the
+// handler is a plain C function pointer + void* ctx — never std::function or other C++
+// objects across the DLL boundary.
 namespace DevBenchAPI
 {
 	constexpr const auto DevBenchPluginName = "devbench";
@@ -36,8 +36,7 @@ namespace DevBenchAPI
 	// MUST be a plain C function / captureless lambda.
 	using ToolFn = void (*)(void* a_ctx, const char* a_argsJson, void* a_sink, WriteFn a_write);
 
-	// Message used to fetch the interface (randomly chosen, collision-free with
-	// MergeMapper 0xe6cb8b59 / SkyrimVRESL 0xeacb2bef).
+	// Message used to fetch the interface (a fixed, randomly chosen id).
 	struct DevBenchMessage
 	{
 		enum : std::uint32_t

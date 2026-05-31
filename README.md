@@ -73,13 +73,18 @@ to the next free port and writes the bound port to `Data/SKSE/Plugins/devbench/r
 ## Use devbench from your mod
 
 Register your own MCP/REST tools (and emit events) into the running host over a small C ABI.
-Don't copy the API files — vendor the `devbench-api` vcpkg port (the portfile fetches the
-MIT-licensed API source from this repo):
+The integration glue (`include/DevBenchAPI.h` + `DevBenchAPI.cpp`) is **MIT** — pick whichever
+fits your project:
 
-```cmake
-find_package(devbench-api CONFIG REQUIRED)
-target_link_libraries(YourPlugin PRIVATE DevBench::API)
-```
+- **Copy the overlay port** (recommended) — drop `cmake/ports/devbench-api/` into your repo's
+  vcpkg overlay and you're done; the portfile fetches the MIT API source (no source copied into
+  your tree). This works out of the box — it's exactly what consumers do today:
+  ```cmake
+  find_package(devbench-api CONFIG REQUIRED)
+  target_link_libraries(YourPlugin PRIVATE DevBench::API)
+  ```
+- **Copy the two API files directly** — `DevBenchAPI.h` + `DevBenchAPI.cpp` into your plugin and
+  build them; no vcpkg involved. Simplest bootstrap, fully MIT.
 
 After SKSE sends your plugin `kPostLoad`:
 

@@ -3,8 +3,7 @@
 // plugin itself is GPL-3.0. Compile this in YOUR plugin only (not in devbench).
 #include "DevBenchAPI.h"
 
-// Consumer-side helper — compile this in YOUR plugin (devbench itself does not build
-// this file). Mirrors MergeMapper's GetMergeMapperInterface001().
+// Consumer-side helper — compile this in YOUR plugin (devbench itself does not build it).
 DevBenchAPI::IDevBenchInterface001* g_devBenchInterface = nullptr;
 
 namespace DevBenchAPI

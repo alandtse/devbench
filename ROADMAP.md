@@ -138,6 +138,24 @@ When releases are turned on (semantic-release is disabled while iterating; first
 1.0.0), port Open Shaders' `nexus-upload.yaml` workflow and wire this mod id so the built archive
 auto-uploads. Until then, releases are manual.
 
+- **Release CI bumps the port pin** — on each release, auto-update `cmake/ports/devbench-api`'s
+  `REF`/`SHA512` to the new tag (the SkyrimVRESL convention: a CI that updates client port files
+  with the latest release hash). Consumers who vendored the port then pull a one-line bump.
+
+## Introspection / control surface
+
+Expose devbench's own state over the same MCP/REST surface (most also belongs in the future UI,
+but it's cheap and useful to an agent):
+- **`config` tool** (build first) — `get` returns `{enabled, configuredPort, boundPort, logLevel}`;
+  `set` applies `logLevel` live (bump to debug, reproduce, read the log) and persists
+  `enabled`/`port` to config.json flagged restart-required. High value, low cost.
+- **Registrant list** (build next) — record each consumer plugin that requested the C-ABI (sender
+  name + reported build + time) in `HostApi` and surface it (e.g. `inspect kind=registrants`):
+  "Open Shaders vX registered N tools." Per-tool→mod attribution needs an API rev (002) — defer.
+- **Connected clients** (UI-leaning, defer) — REST is stateless and only MCP sessions are
+  "connected"; listing/kicking other clients is a human/UI concern, low value to the agent that is
+  itself the client. Expose a basic active-session count later if cheap.
+
 ## Scope guard — keep `scenario` thin; don't grow a scripting language
 
 `scenario` is a **thin sequencer** (dispatch a tool · `wait` · `waitFor` · `waitUntil` · `repeat`),
