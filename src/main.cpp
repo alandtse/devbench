@@ -1,4 +1,5 @@
 #include "ConsoleLogCapture.h"
+#include "GameEvents.h"
 #include "Server.h"
 #include "Tools.h"
 #include "Version.h"
@@ -28,14 +29,20 @@ namespace
 	{
 		// The server is started after data load so game state is queryable. Wiring
 		// (ToolRegistry + MCP/REST adapters over cpp-mcp's httplib) lands next.
-		if (a_msg && a_msg->type == SKSE::MessagingInterface::kDataLoaded) {
+		if (!a_msg)
+			return;
+		if (a_msg->type == SKSE::MessagingInterface::kDataLoaded) {
 			// Start after data load so game state is queryable. Install the console
 			// detour and register built-in tools before Start() so they appear on both
-			// transports from the first request.
+			// transports from the first request, then attach game-event sources.
 			dvb::ConsoleLogCapture::Install();
 			dvb::RegisterCoreTools(g_server.Tools());
 			g_server.Start();
+			dvb::InstallGameEvents(g_server.Events());
 		}
+		// Publish lifecycle events (dataLoaded and later load/save/new-game). No-op
+		// until InstallGameEvents has run, so the kDataLoaded above is published too.
+		dvb::OnSKSEMessage(a_msg->type);
 	}
 }
 
