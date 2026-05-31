@@ -31,11 +31,14 @@ namespace
 
 	void OnMessage(SKSE::MessagingInterface::Message* a_msg)
 	{
-		// The server is started after data load so game state is queryable. Wiring
-		// (ToolRegistry + MCP/REST adapters over cpp-mcp's httplib) lands next.
 		if (!a_msg)
 			return;
-		if (a_msg->type == SKSE::MessagingInterface::kDataLoaded) {
+		// Init at kPostLoad, not kDataLoaded: SKSE runs ALL plugins' kPostLoad before any
+		// kDataLoaded, so the cross-plugin interface is ready when consumer mods request it
+		// at their kDataLoaded (otherwise plugin order can make us answer too late — a
+		// consumer would see "devbench not present"). The HTTP server only listens here;
+		// tool handlers query game state lazily when invoked (by then the game is loaded).
+		if (a_msg->type == SKSE::MessagingInterface::kPostLoad) {
 			const dvb::Config cfg = dvb::LoadConfig();
 			if (!cfg.enabled) {
 				logs::info("devbench: server disabled via config; not starting");
