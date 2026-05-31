@@ -12,6 +12,14 @@ namespace dvb
 		bool        enabled = true;     ///< start the MCP/REST server at all
 		int         port = 8920;        ///< localhost port for /mcp and /api
 		std::string logLevel = "info";  ///< trace|debug|info|warn|error (spdlog level)
+
+		// In-game hotkeys (DXScanCode; 0 = disabled). Let recording/replay run with no
+		// MCP/REST client connected — the standalone-benchmark path. Ignored while the
+		// console is open so they don't fire on keystrokes typed into it.
+		int         recordHotkey = 0;           ///< toggle record start/stop
+		int         replayHotkey = 0;           ///< replay a recording (see replayPath)
+		std::string replayPath = "";            ///< replay target; empty = most recent recording
+		bool        replayRestoreScene = true;  ///< replay hotkey re-establishes the recorded scene
 	};
 
 	// Load Data/SKSE/Plugins/devbench/config.json. If the file is missing it is

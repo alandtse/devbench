@@ -24,6 +24,10 @@ namespace dvb
 				{ "enabled", a_cfg.enabled },
 				{ "port", a_cfg.port },
 				{ "logLevel", a_cfg.logLevel },
+				{ "recordHotkey", a_cfg.recordHotkey },
+				{ "replayHotkey", a_cfg.replayHotkey },
+				{ "replayPath", a_cfg.replayPath },
+				{ "replayRestoreScene", a_cfg.replayRestoreScene },
 			};
 			out << j.dump(2) << '\n';
 		}
@@ -47,6 +51,10 @@ namespace dvb
 			cfg.enabled = j.value("enabled", cfg.enabled);
 			cfg.port = j.value("port", cfg.port);
 			cfg.logLevel = j.value("logLevel", cfg.logLevel);
+			cfg.recordHotkey = j.value("recordHotkey", cfg.recordHotkey);
+			cfg.replayHotkey = j.value("replayHotkey", cfg.replayHotkey);
+			cfg.replayPath = j.value("replayPath", cfg.replayPath);
+			cfg.replayRestoreScene = j.value("replayRestoreScene", cfg.replayRestoreScene);
 		} catch (const std::exception& e) {
 			logs::warn("devbench: bad config ({}) — using defaults", e.what());
 			return Config{};

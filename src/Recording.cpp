@@ -186,8 +186,10 @@ namespace dvb::Recording
 
 	json Handle(const json& a_args, EventBus& a_events)
 	{
-		const std::string action = a_args.value("action", std::string("status"));
-		auto&             rec = Get();
+		std::string action = a_args.value("action", std::string("status"));
+		auto&       rec = Get();
+		if (action == "toggle")  // hotkey-friendly: start if idle, stop if recording
+			action = rec.running.load() ? "stop" : "start";
 
 		if (action == "start") {
 			if (rec.running.load())
@@ -270,9 +272,27 @@ namespace dvb::Recording
 
 	json BuildReplaySteps(const json& a_args)
 	{
-		const std::string path = a_args.value("path", std::string{});
-		if (path.empty())
-			throw ToolError(400, "replay requires 'path' (a recording file)");
+		std::string path = a_args.value("path", std::string{});
+		if (path.empty()) {
+			// No path → replay the most recent recording (convenient for the replay hotkey
+			// and quick API calls).
+			const fs::path     dir = "Data/SKSE/Plugins/devbench/recordings";
+			std::error_code    ec;
+			fs::path           newest;
+			fs::file_time_type best{};
+			for (const auto& e : fs::directory_iterator(dir, ec)) {
+				if (e.path().extension() != ".json")
+					continue;
+				const auto t = e.last_write_time(ec);
+				if (newest.empty() || t > best) {
+					best = t;
+					newest = e.path();
+				}
+			}
+			if (newest.empty())
+				throw ToolError(404, "no 'path' given and no recordings found");
+			path = newest.string();
+		}
 		std::ifstream in(path);
 		if (!in)
 			throw ToolError(404, std::format("recording not found: {}", path));
@@ -296,9 +316,12 @@ namespace dvb::Recording
 			const std::string kind = entry.value("kind", std::string{});
 			const std::string value = entry.value("value", std::string{});
 			if (kind == "save" && !value.empty()) {
-				// game load (by name) skips the content-mismatch modal.
+				// game load (by name) skips the content-mismatch modal. Wait on the
+				// postLoadGame lifecycle EVENT, not waitUntil playerLoaded: when reloading the
+				// save we're already in, playerLoaded reads true before the reload cycles, so it
+				// would short-circuit; postLoadGame fires only when the load actually completes.
 				steps.push_back(json{ { "tool", "game" }, { "args", json{ { "action", "load" }, { "name", value } } } });
-				steps.push_back(json{ { "waitUntil", "playerLoaded" }, { "timeoutMs", 60000 } });
+				steps.push_back(json{ { "waitFor", "postLoadGame" }, { "timeoutMs", 60000 } });
 			} else if (kind == "coc" && !value.empty()) {
 				steps.push_back(json{ { "tool", "console" }, { "args", json{ { "action", "exec" }, { "command", "coc " + value } } } });
 				steps.push_back(json{ { "waitUntil", "playerLoaded" }, { "timeoutMs", 60000 } });

@@ -2,6 +2,7 @@
 #include "GameEvents.h"
 #include "GameState.h"
 #include "HostApi.h"
+#include "InputHotkeys.h"
 #include "Server.h"
 #include "Tools.h"
 #include "Version.h"
@@ -70,6 +71,7 @@ namespace
 				g_server = std::make_unique<dvb::Server>("127.0.0.1", cfg.port);
 				g_server->Events().SetFrameProvider(&dvb::game::CurrentFrame);
 				dvb::RegisterCoreTools(g_server->Tools(), g_server->Events());
+				dvb::InstallInputHotkeys(g_server->Tools(), cfg);  // standalone record/replay (no client)
 				dvb::HostApi::Init(g_server->Tools(), g_server->Events());
 				g_server->Start();
 				dvb::InstallGameEvents(g_server->Events());
