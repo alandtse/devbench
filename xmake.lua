@@ -65,6 +65,10 @@ add_rules("commonlibsse-ng.plugin", {
 add_files("src/**.cpp")
 add_headerfiles("src/**.h")
 add_includedirs("src")
+-- Public C-ABI consumer header (DevBenchAPI.h). The companion DevBenchAPI.cpp is
+-- consumer-only and intentionally NOT globbed into this target.
+add_includedirs("include")
+add_headerfiles("include/*.h")
 set_pcxxheader("src/pch.h")
 add_configfiles("src/Version.h.in")
 -- Version.h is generated into the build config-files dir; put it on the include

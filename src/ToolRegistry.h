@@ -84,6 +84,12 @@ namespace dvb
 		/// into a ToolResult. Returns a 404 ToolResult for an unknown tool. Never throws.
 		ToolResult Invoke(std::string_view a_name, const json& a_args, const ToolContext& a_ctx) const;
 
+		/// Called (outside the lock) after each Register, with the new descriptor. Lets
+		/// an adapter expose tools registered after wiring (e.g. cross-plugin consumers
+		/// at kPostLoad). Set once during adapter setup.
+		using RegistrationListener = std::function<void(const ToolDescriptor&)>;
+		void SetRegistrationListener(RegistrationListener a_listener);
+
 	private:
 		struct Entry
 		{
@@ -93,5 +99,6 @@ namespace dvb
 
 		mutable std::mutex m_mutex;
 		std::unordered_map<std::string, Entry> m_tools;
+		RegistrationListener m_onRegister;
 	};
 }

@@ -1,5 +1,6 @@
 #include "ConsoleLogCapture.h"
 #include "GameEvents.h"
+#include "HostApi.h"
 #include "Server.h"
 #include "Tools.h"
 #include "Version.h"
@@ -33,13 +34,17 @@ namespace
 			return;
 		if (a_msg->type == SKSE::MessagingInterface::kDataLoaded) {
 			// Start after data load so game state is queryable. Install the console
-			// detour and register built-in tools before Start() so they appear on both
-			// transports from the first request, then attach game-event sources.
+			// detour, register built-in tools, and wire the cross-plugin host API (which
+			// registers its self-test tool) all BEFORE Start() so they appear on both
+			// transports from the first request; then attach game-event sources.
 			dvb::ConsoleLogCapture::Install();
 			dvb::RegisterCoreTools(g_server.Tools());
+			dvb::HostApi::Init(g_server.Tools(), g_server.Events());
 			g_server.Start();
 			dvb::InstallGameEvents(g_server.Events());
 		}
+		// Cross-plugin interface handshake (no-op unless it's the request message).
+		dvb::HostApi::OnInterfaceRequest(a_msg);
 		// Publish lifecycle events (dataLoaded and later load/save/new-game). No-op
 		// until InstallGameEvents has run, so the kDataLoaded above is published too.
 		dvb::OnSKSEMessage(a_msg->type);

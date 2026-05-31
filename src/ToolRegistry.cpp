@@ -4,11 +4,25 @@ namespace dvb
 {
 	bool ToolRegistry::Register(ToolDescriptor a_desc, ToolHandler a_handler)
 	{
-		std::lock_guard lock(m_mutex);
-		const bool replaced = m_tools.contains(a_desc.name);
-		const std::string name = a_desc.name;
-		m_tools[name] = Entry{ std::move(a_desc), std::move(a_handler) };
+		const ToolDescriptor descCopy = a_desc;  // for the listener (notified post-insert)
+		RegistrationListener listener;
+		bool replaced;
+		{
+			std::lock_guard lock(m_mutex);
+			replaced = m_tools.contains(a_desc.name);
+			const std::string name = a_desc.name;
+			m_tools[name] = Entry{ std::move(a_desc), std::move(a_handler) };
+			listener = m_onRegister;
+		}
+		if (listener)
+			listener(descCopy);  // outside the lock — listener may re-enter / block
 		return !replaced;
+	}
+
+	void ToolRegistry::SetRegistrationListener(RegistrationListener a_listener)
+	{
+		std::lock_guard lock(m_mutex);
+		m_onRegister = std::move(a_listener);
 	}
 
 	bool ToolRegistry::Has(std::string_view a_name) const

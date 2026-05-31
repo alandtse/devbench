@@ -14,15 +14,16 @@ namespace dvb
 
 	void McpAdapter::Wire()
 	{
-		// Register every current tool. The handler is generic — it forwards to the
-		// registry by name, so no tool-specific code lives in the adapter.
-		for (const auto& desc : m_registry.List()) {
+		// Generic registration — forwards to the registry by name, so no tool-specific
+		// code lives in the adapter. Used for both existing tools and (via the registry's
+		// registration listener) tools added later by cross-plugin consumers at kPostLoad.
+		auto registerOne = [this](const ToolDescriptor& a_desc) {
 			mcp::tool t;
-			t.name = desc.name;
-			t.description = desc.description;
-			t.parameters_schema = desc.inputSchema;
+			t.name = a_desc.name;
+			t.description = a_desc.description;
+			t.parameters_schema = a_desc.inputSchema;
 
-			m_server.register_tool(t, [this, name = desc.name](const json& a_args, const std::string& a_session) -> json {
+			m_server.register_tool(t, [this, name = a_desc.name](const json& a_args, const std::string& a_session) -> json {
 				const ToolResult r = m_registry.Invoke(name, a_args, ToolContext{ a_session });
 				if (r.ok)
 					return r.value;
@@ -33,7 +34,15 @@ namespace dvb
 					{ "content", json::array({ json{ { "type", "text" }, { "text", r.errorMessage } } }) },
 				};
 			});
-		}
+		};
+
+		for (const auto& desc : m_registry.List())
+			registerOne(desc);
+
+		// Expose tools registered after wiring (cross-plugin consumers). Note: this can
+		// call register_tool from the main/message thread post-start; safe in practice
+		// because consumers register at kPostLoad, before any MCP client connects.
+		m_registry.SetRegistrationListener(registerOne);
 
 		// Forward bus events to connected MCP clients as notifications.
 		m_sub = m_events.Subscribe([this](const EventBus::Event& a_ev) {
