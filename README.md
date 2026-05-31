@@ -102,6 +102,47 @@ anything touching game state. See `include/DevBenchAPI.h` and `cmake/ports/devbe
 `menu` (list open menus / close a blocking modal), plus a `ping` self-test. Other mods add theirs
 via the C ABI above.
 
+## Scripted tests & benchmarking
+
+The bench is enough to drive **reproducible, scripted test sequences** today by chaining tool
+calls from any client (here over REST; the MCP `tools/call` equivalents are identical). This is
+the exact battery used to validate the action primitives — load a save, settle, rotate in place,
+walk, and free the camera:
+
+```jsonc
+// 1. Load by name — checkForMods=false skips the "depends on missing mods" modal
+POST /api/tool/game     {"action":"load","name":"Save215"}
+// 2. Wait until in-world before acting
+poll GET /api/tool/inspect   until .playerLoaded == true        // ~5s
+// 3. Rotate 90° x4, 3s apart, verifying each step
+for z in [0, 90, 180, 270]:
+  POST /api/tool/console {"cmd":"player.setangle z " + z}
+  POST /api/tool/console {"cmd":"player.getangle z"}            // -> "GetAngle: Z >> 90.00"
+  sleep 3
+// 4. Walk forward 300u along the current heading z:
+//    read pos, then setpos to (x + d*sin z, y + d*cos z)
+POST /api/tool/console  {"cmd":"player.setpos x " + (x + 300*sin(z))}
+POST /api/tool/console  {"cmd":"player.setpos y " + (y + 300*cos(z))}
+// 5. Free camera for a screenshot/benchmark sweep
+POST /api/tool/console  {"cmd":"tfc"}
+```
+
+`console` returns only the lines its own command produced (a hook-side capture fence), so the
+`getangle`/`getpos` reads are reliable even under log spam. Client-driven chaining like this
+works now for ad-hoc tests; a server-side **`scenario` runner** and **record→replay** mode (see
+[ROADMAP](ROADMAP.md)) will make these one call with frame-accurate timing.
+
 ## License
 
-GPL-3.0 (see `COPYING`/`EXCEPTIONS`). Dependencies (CommonLibSSE-NG, cpp-mcp) are MIT.
+The **devbench plugin** is **GPL-3.0** (`COPYING`) with the standard Skyrim **Modding Exception
++ GPL-3.0 §7 linking exception** (`EXCEPTIONS`) — the same grant Community Shaders and other SKSE
+mods carry. It lets the plugin link against the proprietary game code it modifies ("Modded Code")
+and against the **Modding Libraries** it builds on — **CommonLibSSE-NG** and **cpp-mcp** (both
+MIT) — without those linked parts becoming GPL-covered.
+
+The cross-plugin **API glue is separately MIT** and **carries no copyleft effect**:
+`include/DevBenchAPI.h`, `DevBenchAPI.cpp`, and `DevBenchAPI.LICENSE.txt`. **Any** SKSE plugin —
+*including closed-source / non-GPL mods* — may vendor those files (via the `devbench-api` vcpkg
+port) to talk to devbench with **zero GPL obligation**. This mirrors the **MergeMapper /
+SkyrimVRESL** convention: the integration header is permissively licensed precisely so the whole
+modding community can depend on it regardless of their own license.

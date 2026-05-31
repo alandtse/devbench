@@ -107,6 +107,12 @@ that need dedicated tooling:
   jitter → reproducible benchmarks.
 - **`measure` primitive** — sample frametime over a window → min/avg/p95/p99 (the benchmark
   output), and/or correlate with **Tracy** zones around each window.
+- **Record → replay** — a recording mode that samples player pose (`getpos`/`getangle` + camera
+  state) at a fixed cadence (≈1 s) while the user plays *manually*, persists the trajectory as a
+  scenario, then replays it (`setpos`/`setangle`/`camera` per step) so a hand-driven run becomes a
+  reproducible benchmark path. Cadence + interpolation tunable; the captured path doubles as the
+  `measure` window. Cheapest first cut needs no new engine hooks — just poll the existing console
+  pose reads on a timer and emit a scenario file.
 
 Client-driven sequencing (issue command, poll inspect/events, sleep, repeat) works today for
 ad-hoc tests (validated: load → rotate ×4 with verify); the above is for repeatable,
