@@ -7,6 +7,47 @@
 #include <httplib.h>
 #include <mcp_server.h>
 
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+#include <filesystem>
+#include <fstream>
+
+namespace
+{
+	// True if 127.0.0.1:port can be bound (i.e. it's free). WSAStartup is ref-counted,
+	// so pairing it with WSACleanup here is safe whether or not winsock is already up.
+	bool PortAvailable(const std::string& a_host, int a_port)
+	{
+		WSADATA wsa;
+		const bool started = ::WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+		bool available = true;
+		const SOCKET s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		if (s != INVALID_SOCKET) {
+			sockaddr_in addr{};
+			addr.sin_family = AF_INET;
+			addr.sin_port = ::htons(static_cast<u_short>(a_port));
+			::inet_pton(AF_INET, a_host.c_str(), &addr.sin_addr);
+			available = ::bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0;
+			::closesocket(s);
+		}
+		if (started)
+			::WSACleanup();
+		return available;
+	}
+
+	// Publish the actually-bound port so fixed-URL clients can discover a non-default
+	// choice (when auto-iteration moved off the configured port).
+	void WriteRuntimeInfo(int a_port)
+	{
+		std::error_code ec;
+		std::filesystem::create_directories("Data/SKSE/Plugins/devbench", ec);
+		std::ofstream f("Data/SKSE/Plugins/devbench/runtime.json", std::ios::trunc);
+		if (f)
+			f << "{\"port\":" << a_port << "}\n";
+	}
+}
+
 namespace dvb
 {
 	Server::Server(std::string a_host, int a_port) :
@@ -23,11 +64,23 @@ namespace dvb
 		if (m_mcp)
 			return true;
 
+		// Find a free port starting at the configured one (a second instance or an
+		// occupied port just moves to the next). The bound port is written to
+		// runtime.json so fixed-URL clients can discover a non-default choice.
+		constexpr int kMaxTries = 16;
+		int chosen = m_port;
+		for (int i = 0; i < kMaxTries; ++i) {
+			if (PortAvailable(m_host, m_port + i)) {
+				chosen = m_port + i;
+				break;
+			}
+		}
+
 		// This cpp-mcp revision takes a configuration struct (host/port are no
 		// longer positional ctor args).
 		mcp::server::configuration cfg;
 		cfg.host = m_host;
-		cfg.port = m_port;
+		cfg.port = chosen;
 		cfg.name = "devbench";
 		cfg.version = DEVBENCH_VERSION_STRING;
 
@@ -48,7 +101,12 @@ namespace dvb
 			logs::warn("devbench: cpp-mcp http() returned null; REST facade unavailable");
 
 		const bool ok = m_mcp->start(false);  // non-blocking; spawns the listener thread
-		logs::info("devbench: server on {}:{} — {}", m_host, m_port, ok ? "listening (mcp + rest)" : "FAILED to start");
+		if (ok) {
+			WriteRuntimeInfo(chosen);
+			if (chosen != m_port)
+				logs::info("devbench: configured port {} busy → bound {}", m_port, chosen);
+		}
+		logs::info("devbench: server on {}:{} — {}", m_host, chosen, ok ? "listening (mcp + rest)" : "FAILED to start");
 		return ok;
 	}
 
