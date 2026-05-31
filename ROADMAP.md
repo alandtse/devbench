@@ -92,28 +92,41 @@ how CS gates its server per-runtime, and lets users turn the bench on/off withou
 - **Back-port the hook-side fence to Community Shaders' `RemoteControl`** (CS-side) — its shipping
   `ConsoleLogCapture` still uses the read-time slice that we proved breaks on spam.
 
-## Benchmarking & structured tests (planned)
+## Benchmarking & structured tests
 
 Console primitives are validated for scripted tests over MCP/REST: turn (`player.setangle z`),
-reposition-along-heading (`player.setpos` from `getpos`+`getangle`), free camera (`tfc`). Gaps
-that need dedicated tooling:
+reposition-along-heading (`player.setpos` from `getpos`+`getangle`), free camera (`tfc`).
 
+- **`scenario` runner — DONE.** One `scenario` call runs a step list server-side and returns a
+  per-step transcript. Steps: `tool` (dispatch any registered tool, incl. consumer-registered
+  ones), `wait` (fixed ms), **`waitFor`** (block on a Skyrim *event* from the `EventBus` —
+  lifecycle `postLoadGame`/`saveGame`/… or `menuOpened`/`menuClosed`, or a generic `{topic,
+  match}`), and `waitUntil` (poll live state: `playerLoaded`/`noModal`/`noMenu`). `repeat` +
+  `continueOnError` top-level. Runs on the listener thread, so it sleeps/polls directly and
+  marshals each action to the main thread. Prefer `waitFor` over fixed `wait` — keys off the real
+  signal, no guessed sleeps. Avoids client-side HTTP jitter → reproducible.
 - **`camera` tool** (`RE::PlayerCamera`) — force 1st/3rd person, set FOV, and drive the
   **auto-vanity orbit** (camera circling the player). The orbit auto-sweeps every view angle, so
   it's the ideal benchmark camera; console can only nudge `fAutoVanityModeDelay` (idle-triggered).
-- **`scenario` runner** — one call runs a typed step list in-process with frame-accurate timing:
-  `load`/`coc`, `waitUntil` (playerLoaded / menu-closed) and `waitSettled` (frametime variance
-  under threshold — "coc in, wait till settled"), `repeat`, `measure`. Avoids client-side HTTP
-  jitter → reproducible benchmarks.
 - **`measure` primitive** — sample frametime over a window → min/avg/p95/p99 (the benchmark
-  output), and/or correlate with **Tracy** zones around each window.
+  output). Pairs with a `scenario` step (measure during a defined segment).
+- **`waitSettled`** — a `scenario` wait that blocks until frametime variance drops under a
+  threshold ("coc in, wait till settled"); builds on the same frametime sampling as `measure`.
 - **Record → replay** — a recording mode that samples player pose (`getpos`/`getangle` + camera
   state) at a fixed cadence (≈1 s) while the user plays *manually*, persists the trajectory as a
-  scenario, then replays it (`setpos`/`setangle`/`camera` per step) so a hand-driven run becomes a
-  reproducible benchmark path. Cadence + interpolation tunable; the captured path doubles as the
-  `measure` window. Cheapest first cut needs no new engine hooks — just poll the existing console
-  pose reads on a timer and emit a scenario file.
+  `scenario` file, then replays it. Cadence + interpolation tunable; the captured path doubles as
+  the `measure` window. Cheapest first cut needs no new engine hooks — poll the existing pose reads
+  on a timer and emit a scenario.
 
-Client-driven sequencing (issue command, poll inspect/events, sleep, repeat) works today for
-ad-hoc tests (validated: load → rotate ×4 with verify); the above is for repeatable,
-timing-precise benchmarks.
+### Tracy / profiler integration — emit *markers*, leave *data* to clients
+
+devbench should **not** hard-depend on Tracy or try to be a profiler data source — mods that are
+Tracy-instrumented (Community Shaders) own their zones, and a client can already pull frametime
+from a live Tracy connection (the `tracy` MCP) or from the game's own timing. What devbench *is*
+uniquely positioned to add is **semantic markers**: it knows when a scenario step starts/ends and
+when a `measure` window opens. So:
+- Always emit these as **`EventBus` events** (`scenario.step` begin/end, `measure.window`) — free,
+  no new dep, and any client (incl. a Tracy-side tool) can align a capture to them.
+- **Optionally**, behind a compile flag (mirroring CS's `TRACY_SUPPORT`), mirror those markers as
+  Tracy frame-marks / messages so a `.tracy` capture is annotated with what the bench was doing —
+  without devbench collecting or serving any profiling data itself.

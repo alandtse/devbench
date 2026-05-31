@@ -99,38 +99,54 @@ anything touching game state. See `include/DevBenchAPI.h` and `cmake/ports/devbe
 ## Built-in tools
 
 `console` (run/capture commands, fenced), `inspect` (live state), `game` (save/load/loadLast/list),
-`menu` (list open menus / close a blocking modal), plus a `ping` self-test. Other mods add theirs
-via the C ABI above.
+`menu` (list open menus / close a blocking modal), `scenario` (timed sequence runner, below), plus
+a `ping` self-test. Other mods add theirs via the C ABI above.
 
 ## Scripted tests & benchmarking
 
-The bench is enough to drive **reproducible, scripted test sequences** today by chaining tool
-calls from any client (here over REST; the MCP `tools/call` equivalents are identical). This is
-the exact battery used to validate the action primitives — load a save, settle, rotate in place,
-walk, and free the camera:
+The **`scenario`** tool runs a timed step list server-side and returns a per-step transcript — one
+call replaces hand-chained requests with frame-accurate timing. Each step is a `tool` dispatch
+(any registered tool), a fixed `wait`, an event-driven **`waitFor`**, or a state-poll `waitUntil`.
+**Prefer `waitFor`** — it keys off the *actual* Skyrim event (a load is done when
+`lifecycle:postLoadGame` fires) rather than a guessed sleep. This is the validated battery — load,
+wait for the load event, settle, rotate in place, then free the camera:
 
 ```jsonc
-// 1. Load by name — checkForMods=false skips the "depends on missing mods" modal
-POST /api/tool/game     {"action":"load","name":"Save215"}
-// 2. Wait until in-world before acting
-poll GET /api/tool/inspect   until .playerLoaded == true        // ~5s
-// 3. Rotate 90° x4, 3s apart, verifying each step
-for z in [0, 90, 180, 270]:
-  POST /api/tool/console {"cmd":"player.setangle z " + z}
-  POST /api/tool/console {"cmd":"player.getangle z"}            // -> "GetAngle: Z >> 90.00"
-  sleep 3
-// 4. Walk forward 300u along the current heading z:
-//    read pos, then setpos to (x + d*sin z, y + d*cos z)
-POST /api/tool/console  {"cmd":"player.setpos x " + (x + 300*sin(z))}
-POST /api/tool/console  {"cmd":"player.setpos y " + (y + 300*cos(z))}
-// 5. Free camera for a screenshot/benchmark sweep
-POST /api/tool/console  {"cmd":"tfc"}
+POST /api/tool/scenario          // MCP: tools/call name=scenario — identical body
+{
+  "steps": [
+    { "tool": "game",    "args": { "action": "load", "name": "Save215" } },
+    { "waitFor": "postLoadGame", "timeoutMs": 60000 },   // EVENT, not a guessed sleep
+    { "waitUntil": "playerLoaded" },                     // belt-and-suspenders state poll
+    { "tool": "console", "args": { "command": "player.setangle z 0" } },
+    { "wait": 3000 },                                    // pacing has no event → fixed wait
+    { "tool": "console", "args": { "command": "player.setangle z 90" } },
+    { "wait": 3000 },
+    { "tool": "console", "args": { "command": "player.setangle z 180" } },
+    { "wait": 3000 },
+    { "tool": "console", "args": { "command": "player.setangle z 270" } },
+    { "tool": "console", "args": { "command": "tfc" } }  // free cam for a screenshot sweep
+  ]
+}
+// -> { "ok": true, "stepsRun": 11, "elapsedMs": 14213,
+//      "results": [ { "index": 0, "kind": "tool", "ok": true, ... },
+//                   { "index": 1, "kind": "waitFor", "satisfied": true, "elapsedMs": 4870 }, ... ] }
 ```
 
-`console` returns only the lines its own command produced (a hook-side capture fence), so the
-`getangle`/`getpos` reads are reliable even under log spam. Client-driven chaining like this
-works now for ad-hoc tests; a server-side **`scenario` runner** and **record→replay** mode (see
-[ROADMAP](ROADMAP.md)) will make these one call with frame-accurate timing.
+`waitFor` shorthands: lifecycle (`postLoadGame`/`saveGame`/`newGame`/`preLoadGame`/`dataLoaded`),
+or `menuClosed`/`menuOpened` with a `name` (e.g. wait for `LoadingMenu` to close, or dismiss a
+modal then wait for it gone); the general form is `{ "topic": "...", "match": { ... } }`. Add
+`repeat` (≤1000) to loop the list and `continueOnError` to keep going past a failed step.
+
+**Steps dispatch any registered tool — including tools other mods add over the C ABI.** Community
+Shaders' [`src/DevBenchBridge.cpp`](https://github.com/alandtse/open-shaders/blob/dev/src/DevBenchBridge.cpp)
+is a worked consumer: it registers a `feature` tool, so `{ "tool": "feature", "args": { "action":
+"toggle", "shortName": "..." } }` becomes a valid scenario step — letting a benchmark flip a CS
+feature mid-run. (`console` also still returns only its own command's output via the hook-side
+fence, so `getangle`/`getpos` reads stay reliable under log spam.)
+
+Still to come (see [ROADMAP](ROADMAP.md)): a `measure` primitive (frametime over a window),
+`waitSettled`, a `camera` tool, and **record→replay** (capture a manual run as a scenario file).
 
 ## License
 

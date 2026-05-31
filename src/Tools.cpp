@@ -1,13 +1,16 @@
 #include "Tools.h"
 
 #include "ConsoleLogCapture.h"
+#include "EventBus.h"
 #include "GameEvents.h"
 #include "Json.h"
 #include "MainThread.h"
 #include "ToolRegistry.h"
 #include "Version.h"
 
+#include <chrono>
 #include <filesystem>
+#include <thread>
 
 namespace dvb
 {
@@ -213,9 +216,230 @@ namespace dvb
 				};
 			});
 		}
+
+		// ---- scenario: server-side timed replay of a step list -------------------
+		// Runs on the listener thread, so it may sleep/poll directly and marshal each
+		// action to the main thread. Steps are one of: { "tool", "args" } (dispatch a
+		// registered tool — so any tool, incl. consumer-registered ones, is replayable),
+		// { "wait": ms } (fixed pacing), { "waitFor": ... } (block on a Skyrim EVENT),
+		// or { "waitUntil": cond } (poll live state). Prefer waitFor over wait: it keys
+		// off the real signal (e.g. a load is done when lifecycle:postLoadGame fires).
+
+		using namespace std::chrono;
+
+		bool IsLifecycleName(const std::string& a_s)
+		{
+			return a_s == "dataLoaded" || a_s == "newGame" || a_s == "preLoadGame" ||
+			       a_s == "postLoadGame" || a_s == "saveGame" || a_s == "deleteGame";
+		}
+
+		// Every key/value in `a_match` present and equal in `a_payload` (subset match).
+		bool PayloadMatches(const json& a_payload, const json& a_match)
+		{
+			if (!a_match.is_object())
+				return true;
+			for (const auto& [k, v] : a_match.items()) {
+				if (!a_payload.contains(k) || a_payload[k] != v)
+					return false;
+			}
+			return true;
+		}
+
+		struct WaitForSpec
+		{
+			std::string topic;
+			json match;
+		};
+
+		// Normalize a step's "waitFor" into {topic, match}. String shorthands: a
+		// lifecycle event name → {lifecycle,{event}}; "menuOpened"/"menuClosed" (with the
+		// step's "name") → {menu,{name,opening}}. An object is {topic, match} verbatim.
+		WaitForSpec ParseWaitFor(const json& a_step)
+		{
+			const json& wf = a_step["waitFor"];
+			WaitForSpec spec;
+			if (wf.is_string()) {
+				const std::string s = wf.get<std::string>();
+				if (IsLifecycleName(s)) {
+					spec.topic = "lifecycle";
+					spec.match = json{ { "event", s } };
+				} else if (s == "menuOpened" || s == "menuClosed") {
+					spec.topic = "menu";
+					spec.match = json{ { "name", a_step.value("name", std::string{}) }, { "opening", s == "menuOpened" } };
+				} else {
+					throw ToolError(400, std::format("unknown waitFor shorthand '{}'", s));
+				}
+			} else if (wf.is_object()) {
+				spec.topic = wf.value("topic", std::string{});
+				spec.match = wf.value("match", json::object());
+				if (spec.topic.empty())
+					throw ToolError(400, "waitFor object requires a 'topic'");
+			} else {
+				throw ToolError(400, "waitFor must be a string shorthand or {topic, match}");
+			}
+			return spec;
+		}
+
+		// Live-state conditions for waitUntil. playerLoaded marshals to the main thread;
+		// a mid-load stall (RunAndWait 504) just means "not yet" → keep polling. Menu
+		// conditions read the thread-safe tracked set (no marshal).
+		bool CheckState(const std::string& a_cond)
+		{
+			if (a_cond == "playerLoaded") {
+				try {
+					const json r = MainThread::RunAndWait([]() -> json {
+						auto* pc = RE::PlayerCharacter::GetSingleton();
+						return pc && pc->Get3D() != nullptr;
+					},
+						milliseconds(2000));
+					return r.get<bool>();
+				} catch (const ToolError&) {
+					return false;  // main thread stalled mid-load — condition not met yet
+				}
+			}
+			if (a_cond == "noModal") {
+				for (const auto& m : GetOpenMenus())
+					if (m == RE::MessageBoxMenu::MENU_NAME)
+						return false;
+				return true;
+			}
+			if (a_cond == "noMenu")
+				return GetOpenMenus().empty();
+			throw ToolError(400, std::format("unknown waitUntil condition '{}' (playerLoaded|noModal|noMenu)", a_cond));
+		}
+
+		json ScenarioHandler(const json& a_args, const ToolContext& a_ctx,
+			const ToolRegistry& a_registry, const EventBus& a_events)
+		{
+			if (!a_args.contains("steps") || !a_args["steps"].is_array())
+				throw ToolError(400, "scenario requires a 'steps' array");
+			const json& steps = a_args["steps"];
+
+			int repeat = a_args.value("repeat", 1);
+			if (repeat < 1)
+				repeat = 1;
+			if (repeat > 1000)
+				throw ToolError(400, "repeat capped at 1000");
+			const bool continueOnError = a_args.value("continueOnError", false);
+
+			json results = json::array();
+			const auto t0 = steady_clock::now();
+			bool anyFailure = false;
+			bool aborted = false;
+
+			for (int rep = 0; rep < repeat && !aborted; ++rep) {
+				for (size_t i = 0; i < steps.size() && !aborted; ++i) {
+					const json& step = steps[i];
+					json r{ { "index", i } };
+					if (repeat > 1)
+						r["repeat"] = rep;
+					const auto stepStart = steady_clock::now();
+					bool stepFailed = false;
+
+					try {
+						if (step.contains("wait")) {
+							const long ms = step["wait"].get<long>();
+							r["kind"] = "wait";
+							r["ms"] = ms;
+							std::this_thread::sleep_for(milliseconds(ms));
+						} else if (step.contains("waitFor")) {
+							const WaitForSpec spec = ParseWaitFor(step);
+							const long timeoutMs = step.value("timeoutMs", static_cast<long>(60000));
+							const long pollMs = step.value("pollMs", static_cast<long>(100));
+							r["kind"] = "waitFor";
+							r["topic"] = spec.topic;
+							r["match"] = spec.match;
+							// Only events published after this step begins count.
+							uint64_t since = a_events.HeadSeq();
+							bool satisfied = false;
+							const auto deadline = steady_clock::now() + milliseconds(timeoutMs);
+							while (steady_clock::now() < deadline) {
+								for (const auto& ev : a_events.Since(since)) {
+									since = ev.seq;
+									if (ev.topic == spec.topic && PayloadMatches(ev.payload, spec.match)) {
+										satisfied = true;
+										break;
+									}
+								}
+								if (satisfied)
+									break;
+								std::this_thread::sleep_for(milliseconds(pollMs));
+							}
+							r["satisfied"] = satisfied;
+							if (!satisfied) {
+								r["timedOut"] = true;
+								stepFailed = true;
+							}
+						} else if (step.contains("waitUntil")) {
+							const std::string cond = step["waitUntil"].get<std::string>();
+							const long timeoutMs = step.value("timeoutMs", static_cast<long>(30000));
+							const long pollMs = step.value("pollMs", static_cast<long>(250));
+							r["kind"] = "waitUntil";
+							r["cond"] = cond;
+							bool satisfied = false;
+							const auto deadline = steady_clock::now() + milliseconds(timeoutMs);
+							do {
+								if (CheckState(cond)) {
+									satisfied = true;
+									break;
+								}
+								std::this_thread::sleep_for(milliseconds(pollMs));
+							} while (steady_clock::now() < deadline);
+							r["satisfied"] = satisfied;
+							if (!satisfied) {
+								r["timedOut"] = true;
+								stepFailed = true;
+							}
+						} else if (step.contains("tool")) {
+							const std::string tool = step["tool"].get<std::string>();
+							const json args = step.value("args", json::object());
+							r["kind"] = "tool";
+							r["tool"] = tool;
+							if (step.contains("label"))
+								r["label"] = step["label"];
+							const ToolResult tr = a_registry.Invoke(tool, args, a_ctx);
+							r["ok"] = tr.ok;
+							if (tr.ok) {
+								r["result"] = tr.value;
+							} else {
+								r["errorCode"] = tr.errorCode;
+								r["error"] = tr.errorMessage;
+								stepFailed = true;
+							}
+						} else {
+							throw ToolError(400, std::format("step {} has none of wait/waitFor/waitUntil/tool", i));
+						}
+					} catch (const ToolError& e) {
+						if (!r.contains("kind"))
+							r["kind"] = "error";
+						r["ok"] = false;
+						r["errorCode"] = e.code;
+						r["error"] = e.what();
+						stepFailed = true;
+					}
+
+					r["elapsedMs"] = duration_cast<milliseconds>(steady_clock::now() - stepStart).count();
+					results.push_back(std::move(r));
+
+					if (stepFailed) {
+						anyFailure = true;
+						if (!continueOnError)
+							aborted = true;
+					}
+				}
+			}
+
+			return json{
+				{ "ok", !anyFailure },
+				{ "aborted", aborted },
+				{ "stepsRun", results.size() },
+				{ "elapsedMs", duration_cast<milliseconds>(steady_clock::now() - t0).count() },
+				{ "results", std::move(results) },
+			};
+		}
 	}
 
-	void RegisterCoreTools(ToolRegistry& a_registry)
+	void RegisterCoreTools(ToolRegistry& a_registry, EventBus& a_events)
 	{
 		ToolDescriptor console;
 		console.name = "console";
@@ -282,5 +506,34 @@ namespace dvb
 								 } },
 		};
 		a_registry.Register(std::move(menu), &MenuHandler);
+
+		ToolDescriptor scenario;
+		scenario.name = "scenario";
+		scenario.description =
+			"Run a timed sequence of steps server-side (reproducible tests/benchmarks) and "
+			"return a per-step transcript. Each step is one of: "
+			"{\"tool\":\"<name>\",\"args\":{…}} dispatch any registered tool (e.g. console, game); "
+			"{\"wait\":<ms>} fixed pacing; "
+			"{\"waitFor\":<event>,…} block on a Skyrim EVENT — string shorthand "
+			"(\"postLoadGame\"/\"saveGame\"/\"newGame\"/\"preLoadGame\"/\"dataLoaded\"/\"deleteGame\", or "
+			"\"menuOpened\"/\"menuClosed\" with a \"name\"), or {\"topic\":\"…\",\"match\":{…}}; "
+			"{\"waitUntil\":\"playerLoaded\"|\"noModal\"|\"noMenu\"} poll live state. "
+			"PREFER waitFor over a fixed wait — e.g. wait for postLoadGame to know a load truly "
+			"finished. Optional top-level: repeat (≤1000), continueOnError. waitFor/waitUntil take "
+			"timeoutMs + pollMs. Blocks the request for the run's duration (seconds); keep "
+			"per-step timeouts sane.";
+		scenario.inputSchema = json{
+			{ "type", "object" },
+			{ "required", json::array({ "steps" }) },
+			{ "properties", json{
+									 { "steps", json{ { "type", "array" }, { "description", "ordered steps; each is one of tool/wait/waitFor/waitUntil (see description)" }, { "items", json{ { "type", "object" } } } } },
+									 { "repeat", json{ { "type", "integer" }, { "description", "run the whole step list N times (default 1, max 1000)" } } },
+									 { "continueOnError", json{ { "type", "boolean" }, { "description", "keep going after a failed/timed-out step instead of aborting (default false)" } } },
+								 } },
+		};
+		a_registry.Register(std::move(scenario),
+			[&a_registry, &a_events](const json& a_args, const ToolContext& a_ctx) {
+				return ScenarioHandler(a_args, a_ctx, a_registry, a_events);
+			});
 	}
 }

@@ -57,7 +57,7 @@ namespace
 				// attach game-event sources.
 				dvb::ConsoleLogCapture::Install();
 				g_server = std::make_unique<dvb::Server>("127.0.0.1", cfg.port);
-				dvb::RegisterCoreTools(g_server->Tools());
+				dvb::RegisterCoreTools(g_server->Tools(), g_server->Events());
 				dvb::HostApi::Init(g_server->Tools(), g_server->Events());
 				g_server->Start();
 				dvb::InstallGameEvents(g_server->Events());
