@@ -77,9 +77,12 @@ namespace dvb::ConsoleLogCapture
 	{
 		static std::once_flag once;
 		std::call_once(once, []() {
-			// Same address CommonLibSSE-NG resolves for ConsoleLog::VPrint; the
-			// RelocationID covers SE/AE and maps to VR via the address library.
-			stl::detour_thunk<VPrintHook>(REL::RelocationID(50180, 51110));
+			// Detour ConsoleLog::VPrint via CommonLibSSE-NG's trampoline (no external
+			// Detours dependency). RelocationID covers SE/AE and maps to VR via the
+			// address library; write_branch returns the address of the original.
+			REL::Relocation<std::uintptr_t> target{ REL::RelocationID(50180, 51110) };
+			auto& trampoline = SKSE::GetTrampoline();
+			VPrintHook::func = trampoline.write_branch<5>(target.address(), &VPrintHook::thunk);
 			logs::info("ConsoleLogCapture: hooked ConsoleLog::VPrint (gated, fenced)");
 		});
 	}
