@@ -162,16 +162,36 @@ namespace dvb
 		json MenuHandler(const json& a_args, const ToolContext&)
 		{
 			const std::string action = a_args.value("action", std::string("list"));
-			if (action != "list")
-				throw ToolError(400, std::format("unknown action '{}' (list)", action));
-			json open = json::array();
-			bool messageBox = false;
-			for (const auto& m : GetOpenMenus()) {
-				if (m == RE::MessageBoxMenu::MENU_NAME)
-					messageBox = true;
-				open.push_back(m);
+
+			if (action == "list") {
+				json open = json::array();
+				bool messageBox = false;
+				for (const auto& m : GetOpenMenus()) {
+					if (m == RE::MessageBoxMenu::MENU_NAME)
+						messageBox = true;
+					open.push_back(m);
+				}
+				return json{ { "openMenus", std::move(open) }, { "messageBoxOpen", messageBox } };
 			}
-			return json{ { "openMenus", std::move(open) }, { "messageBoxOpen", messageBox } };
+
+			if (action == "close") {
+				// Dismiss a menu by name via the UI message queue (kHide). For a modal
+				// MessageBoxMenu this cancels/closes it — unblocking automated flows (e.g.
+				// new-game popups). Marshalled to the main thread.
+				const std::string name = a_args.value("name", std::string{});
+				if (name.empty())
+					throw ToolError(400, "action 'close' requires a 'name' (menu to hide)");
+				auto* task = SKSE::GetTaskInterface();
+				if (!task)
+					throw ToolError(500, "SKSE TaskInterface unavailable");
+				task->AddTask([name]() {
+					if (auto* q = RE::UIMessageQueue::GetSingleton())
+						q->AddMessage(name.c_str(), RE::UI_MESSAGE_TYPE::kHide, nullptr);
+				});
+				return json{ { "queued", true }, { "action", "close" }, { "name", name } };
+			}
+
+			throw ToolError(400, std::format("unknown action '{}' (list|close)", action));
 		}
 
 		// inspect: read live game state. Demonstrates the value-returning primitive —
@@ -249,14 +269,16 @@ namespace dvb
 		ToolDescriptor menu;
 		menu.name = "menu";
 		menu.description =
-			"Detect open menus / blocking modals. action='list' returns { openMenus, "
-			"messageBoxOpen } tracked live from menu open/close events. (Reading a message "
-			"box's text/buttons and accept/close are planned.)";
-		menu.readOnly = true;
+			"Inspect/dismiss menus. action='list' returns { openMenus, messageBoxOpen } "
+			"tracked live from menu open/close events; action='close' hides a menu by "
+			"'name' via the UI message queue (kHide) — for a MessageBoxMenu this cancels "
+			"the blocking modal, unblocking automated new-game flows. (Reading a message "
+			"box's text/buttons is still planned.)";
 		menu.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-									 { "action", json{ { "type", "string" }, { "enum", json::array({ "list" }) }, { "description", "list → { openMenus, messageBoxOpen }" } } },
+									 { "action", json{ { "type", "string" }, { "enum", json::array({ "list", "close" }) }, { "description", "list → { openMenus, messageBoxOpen }; close → hide a menu" } } },
+									 { "name", json{ { "type", "string" }, { "description", "menu name to hide (required for close), e.g. MessageBoxMenu" } } },
 								 } },
 		};
 		a_registry.Register(std::move(menu), &MenuHandler);
