@@ -152,6 +152,11 @@ but it's cheap and useful to an agent):
 - **Registrant list** (build next) — record each consumer plugin that requested the C-ABI (sender
   name + reported build + time) in `HostApi` and surface it (e.g. `inspect kind=registrants`):
   "Open Shaders vX registered N tools." Per-tool→mod attribution needs an API rev (002) — defer.
+- **Event source tagging** (API rev 002) — consumer `EmitEvent`s currently can't be attributed
+  (the interface is a shared singleton), so origin relies on the namespaced-topic convention
+  (`yourmod.x`). A rev-002 interface could carry caller identity (or hand each consumer a
+  per-plugin interface instance) so devbench stamps a structured `source` into the event envelope
+  — robust origin without relying on topic discipline.
 - **Connected clients** (UI-leaning, defer) — REST is stateless and only MCP sessions are
   "connected"; listing/kicking other clients is a human/UI concern, low value to the agent that is
   itself the client. Expose a basic active-session count later if cheap.

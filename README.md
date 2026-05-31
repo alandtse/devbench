@@ -101,6 +101,31 @@ Your tool then appears on both `/mcp` (`tools/list`/`tools/call`) and `/api/tool
 Handlers run on the server thread — marshal to the main game thread (SKSE `TaskInterface`) for
 anything touching game state. See `include/DevBenchAPI.h` and `cmake/ports/devbench-api/README.md`.
 
+### Design your tools the agentic-renderdoc way
+
+devbench follows the **agentic-renderdoc** model: a *thin but powerful* surface an agent can drive,
+where a call **returns the value**, not just an ack. Match that when you register, so an agent gets
+a coherent bench rather than a pile of one-off verbs:
+
+- **Return data, not "ok."** A read should answer the question (`{ "loaded": true, "fps": 58 }`),
+  not `{ "queued": true }`. Run on the main thread via SKSE's `TaskInterface` and return the result
+  synchronously (devbench's own `inspect` does this).
+- **Few powerful tools over many narrow ones.** Prefer one `shadercache` tool with an `action`
+  enum to four verbs. A general primitive (an `eval`-style entry into your subsystem) beats a tool
+  per operation.
+- **Self-describe.** Put a real `inputSchema` and a clear `description` on every tool — that *is*
+  the MCP schema and the REST docs; it's how an agent discovers what you offer cold.
+- **Make failure legible.** Validate inputs and return an actionable error (what was wrong + how to
+  list valid values), rather than silently succeeding.
+
+### Events
+
+`EmitEvent(topic, payload)` publishes to the **same bus** every listener already reads (MCP
+notifications + REST `/api/events?since=N`) — your events are first-class, delivered exactly like
+devbench's built-in `menu`/`lifecycle` events. devbench can't tell which mod emitted an event (the
+interface is shared), so **namespace your topics** the way you namespace tool names —
+`yourmod.somethingHappened` — to make the origin clear and avoid collisions with other mods.
+
 ## Built-in tools
 
 `console` (run/capture commands, fenced), `inspect` (live state), `game` (save/load/loadLast/list),
