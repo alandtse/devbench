@@ -25,7 +25,7 @@ namespace dvb::Recording
 		using namespace std::chrono;
 		namespace fs = std::filesystem;
 
-		constexpr long   kDefaultIntervalMs = 1000;
+		constexpr long   kDefaultIntervalMs = 250;  // 4 Hz — captures rotation-in-place + motion; min 100 (10 Hz)
 		constexpr long   kMinIntervalMs = 100;
 		constexpr double kRadToDeg = 57.295779513082323;  // 180/pi — console setangle is degrees, data.angle is radians
 
@@ -57,13 +57,24 @@ namespace dvb::Recording
 			if (!pc || !pc->Get3D())
 				return json(nullptr);
 			const auto pos = pc->GetPosition();
-			return json{
-				{ "x", pos.x },
-				{ "y", pos.y },
-				{ "z", pos.z },
-				{ "angleZ", pc->GetAngleZ() },  // radians
-				{ "frame", game::CurrentFrame() },
+			json       s{
+					  { "x", pos.x },
+					  { "y", pos.y },
+					  { "z", pos.z },
+					  { "angleZ", pc->GetAngleZ() },  // yaw (radians) — captures rotation-in-place
+					  { "angleX", pc->GetAngleX() },  // pitch (radians) — look up/down (sky vs ground)
+					  { "frame", game::CurrentFrame() },
 			};
+			// Camera world position — what's actually rendered. Differs from the player in 3rd
+			// person / VR / free cam. Captured for analysis + a future camera-tool replay (the
+			// player-teleport replay can't drive the camera independently yet).
+			if (auto* cam = RE::PlayerCamera::GetSingleton(); cam && cam->cameraRoot) {
+				const auto& t = cam->cameraRoot->world.translate;
+				s["camX"] = t.x;
+				s["camY"] = t.y;
+				s["camZ"] = t.z;
+			}
+			return s;
 		}
 
 		// One-time scene manifest captured at start: the location and lighting state a
@@ -160,6 +171,7 @@ namespace dvb::Recording
 				steps.push_back(consoleStep(std::format("player.setpos y {:.2f}", s.value("y", 0.0))));
 				steps.push_back(consoleStep(std::format("player.setpos z {:.2f}", s.value("z", 0.0))));
 				steps.push_back(consoleStep(std::format("player.setangle z {:.2f}", s.value("angleZ", 0.0) * kRadToDeg)));
+				steps.push_back(consoleStep(std::format("player.setangle x {:.2f}", s.value("angleX", 0.0) * kRadToDeg)));  // pitch
 				steps.push_back(json{ { "wait", a_rec.intervalMs } });
 			}
 
@@ -215,6 +227,10 @@ namespace dvb::Recording
 				Notify("devbench: can't record — load a game first");
 				return json{ { "error", "player not loaded — load a game before recording" } };
 			}
+			if (manifest.value("entryPoint", json::object()).value("kind", std::string{}) == "unknown")
+				logs::info(
+					"devbench: recording with UNKNOWN entry point — replay won't restore the "
+					"scene (load via the game tool or `coc` so devbench can capture it)");
 
 			{
 				std::lock_guard lock(rec.mtx);

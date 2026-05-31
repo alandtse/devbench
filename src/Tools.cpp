@@ -664,7 +664,10 @@ namespace dvb
 				if (a_args.value("action", std::string{}) == "replay") {
 					const json steps = Recording::BuildReplaySteps(a_args);
 					Recording::Notify("devbench: replaying recording");
-					return ScenarioHandler(json{ { "steps", steps } }, a_ctx, a_registry, a_events);
+					const json result = ScenarioHandler(json{ { "steps", steps } }, a_ctx, a_registry, a_events);
+					logs::info("devbench: replay finished — {} steps, ok={}",
+						result.value("stepsRun", 0), result.value("ok", false));
+					return result;
 				}
 				return Recording::Handle(a_args, a_events);
 			});
