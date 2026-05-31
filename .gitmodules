@@ -2,3 +2,6 @@
 	path = lib/commonlibsse-ng
 	url = https://github.com/alandtse/CommonLibVR.git
 	branch = ng
+[submodule "lib/cpp-mcp"]
+	path = lib/cpp-mcp
+	url = https://github.com/hkr04/cpp-mcp.git

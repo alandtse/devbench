@@ -42,8 +42,12 @@ network-reachable address, and `eval`-class tools are gated behind an explicit e
 
 ## Build
 
-xmake, C++23, CommonLibSSE-NG (submodule). cpp-mcp is vendored as a patched local xmake
-package (the patch exposes its `httplib` server so the REST facade can share the port).
+xmake, C++23, CommonLibSSE-NG (submodule). cpp-mcp is vendored as the `lib/cpp-mcp`
+submodule and built in-tree as a static-lib target (`xmake/cpp-mcp.lua`, mirroring
+Community Shaders' `cmake/cpp-mcp.cmake`): only its four server TUs are compiled, and a
+build-tree header mirror applies two edits — pointing `mcp_message.h` at our
+`nlohmann/json.hpp` (single ABI) and adding a public `http()` getter to `mcp_server.h` so
+the REST facade can share the MCP port.
 
 ```
 git submodule update --init --recursive

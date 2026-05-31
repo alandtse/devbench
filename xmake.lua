@@ -8,6 +8,7 @@ set_config("rex_ini", true)
 
 -- includes
 includes("lib/commonlibsse-ng")
+includes("xmake/cpp-mcp.lua")
 
 -- project
 set_project("devbench")
@@ -29,17 +30,13 @@ add_rules("mode.debug", "mode.releasedbg")
 set_defaultmode("releasedbg")
 add_rules("plugin.vsxmake.autoupdate")
 
--- local package repo carrying our vendored, patched cpp-mcp definition
-add_repositories("devbench-local xmake")
-
 -- packages
 add_requires("nlohmann_json")
-add_requires("cpp-mcp")
 
 -- target
 target("devbench")
-add_deps("commonlibsse-ng")
-add_packages("nlohmann_json", "cpp-mcp")
+add_deps("commonlibsse-ng", "cpp-mcp")
+add_packages("nlohmann_json")
 
 -- DLL output name
 set_basename("devbench")
@@ -70,6 +67,10 @@ add_headerfiles("src/**.h")
 add_includedirs("src")
 set_pcxxheader("src/pch.h")
 add_configfiles("src/Version.h.in")
+-- Version.h is generated into the build config-files dir; put it on the include
+-- path so sources (main.cpp, Server.cpp) can #include "Version.h".
+set_configdir("$(builddir)/.gens/devbench/$(plat)/$(arch)/$(mode)")
+add_includedirs("$(builddir)/.gens/devbench/$(plat)/$(arch)/$(mode)")
 
 -- auto deploy: set SkyrimPluginTargets to one or more game Data paths separated by ';'
 after_build(function(target)
