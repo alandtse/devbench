@@ -5,6 +5,7 @@
 #include "GameEvents.h"
 #include "Json.h"
 #include "MainThread.h"
+#include "Recording.h"
 #include "ToolRegistry.h"
 #include "Version.h"
 
@@ -611,6 +612,30 @@ namespace dvb
 		a_registry.Register(std::move(scenario),
 			[&a_registry, &a_events](const json& a_args, const ToolContext& a_ctx) {
 				return ScenarioHandler(a_args, a_ctx, a_registry, a_events);
+			});
+
+		ToolDescriptor record;
+		record.name = "record";
+		record.description =
+			"Capture a manual play-through as a replayable scenario. action='start' begins "
+			"sampling the player pose every intervalMs (default 1000, min 100) on a background "
+			"thread and captures a one-time scene manifest (worldspace/cell, time of day, "
+			"weather, anchor pose) — the state a shader benchmark must reproduce; a game must be "
+			"loaded. 'stop' writes the trajectory to "
+			"Data/SKSE/Plugins/devbench/recordings/recording_<stamp>.json (a scenario the "
+			"'scenario' tool can replay — player-teleport steps + waits) and returns its path + "
+			"meta. 'status' reports recording/sampleCount/intervalMs. Emits "
+			"record.started / record.stopped events as scenario markers.";
+		record.inputSchema = json{
+			{ "type", "object" },
+			{ "properties", json{
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "start", "stop", "status" }) }, { "description", "start | stop | status" } } },
+								{ "intervalMs", json{ { "type", "integer" }, { "description", "start: pose sample period in ms (default 1000, min 100)" } } },
+							} },
+		};
+		a_registry.Register(std::move(record),
+			[&a_events](const json& a_args, const ToolContext&) {
+				return Recording::Handle(a_args, a_events);
 			});
 	}
 }
