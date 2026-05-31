@@ -1,0 +1,15 @@
+{
+  "_recipe": "A/B-over-path benchmark — Open Shaders example. Runs a recorded camera path TWICE, once per A/B variant, so both variants are measured at the SAME positions (vs. the timer rotation that flips mid-path). POST this body to /api/tool/scenario (the scenario runner dispatches each step). Requires a consumer that registered an 'openshaders.abtest' tool (Open Shaders) with a TEST config authored in its Performance Overlay, and a recording from record/stop. Replace <RECORDING> with that file path. Read the 'results' step's output for the per-draw-call A/B timing.",
+  "_notes": "pass-A restores the scene (loads the recording's entry save, then the local settle delay); pass-B does NOT restore (stays in the same scene so positions match). The abtest switch between passes is manual so swaps align to whole passes. 'clear' resets any prior aggregation; 'stop' restores the TEST config.",
+  "steps": [
+    { "tool": "openshaders.abtest", "args": { "action": "clear" } },
+    { "tool": "openshaders.abtest", "args": { "action": "start", "manual": true } },
+    { "wait": 500 },
+    { "tool": "record", "args": { "action": "replay", "path": "<RECORDING>", "restoreScene": true }, "label": "pass-A" },
+    { "tool": "openshaders.abtest", "args": { "action": "switch" } },
+    { "wait": 500 },
+    { "tool": "record", "args": { "action": "replay", "path": "<RECORDING>", "restoreScene": false }, "label": "pass-B" },
+    { "tool": "openshaders.abtest", "args": { "action": "results" }, "label": "benchmark" },
+    { "tool": "openshaders.abtest", "args": { "action": "stop" } }
+  ]
+}
