@@ -206,10 +206,15 @@ namespace dvb::Recording
 			try {
 				manifest = MainThread::RunAndWait(&ReadManifest, milliseconds(3000));
 			} catch (const std::exception& e) {
+				logs::warn("devbench: record start failed — scene read timed out ({})", e.what());
+				Notify("devbench: can't record — load a game first");
 				return json{ { "error", "could not read scene — is a game loaded?" }, { "detail", e.what() } };
 			}
-			if (!manifest.contains("anchor"))
+			if (!manifest.contains("anchor")) {
+				logs::warn("devbench: record start failed — player not loaded");
+				Notify("devbench: can't record — load a game first");
 				return json{ { "error", "player not loaded — load a game before recording" } };
+			}
 
 			{
 				std::lock_guard lock(rec.mtx);
@@ -223,6 +228,7 @@ namespace dvb::Recording
 
 			a_events.Publish("record.started", json{ { "intervalMs", interval } });
 			Notify("devbench: recording started");
+			logs::info("devbench: recording started (interval {}ms)", interval);
 			return json{ { "action", "start" }, { "recording", true }, { "intervalMs", interval } };
 		}
 
@@ -240,6 +246,7 @@ namespace dvb::Recording
 
 			a_events.Publish("record.stopped", json{ { "sampleCount", rec.samples.size() }, { "path", path.string() } });
 			Notify(std::format("devbench: recording stopped — {} samples", rec.samples.size()));
+			logs::info("devbench: recording stopped — {} samples -> {}", rec.samples.size(), path.string());
 			return json{
 				{ "action", "stop" },
 				{ "sampleCount", rec.samples.size() },

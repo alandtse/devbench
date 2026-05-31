@@ -72,10 +72,15 @@ namespace dvb
 						continue;
 					if (ConsoleOpen())  // don't fire on keystrokes typed into the console
 						continue;
-					if (g_recordKey && code == g_recordKey && (!g_recordShift || g_shiftDown))
+					if (g_recordKey && code == g_recordKey && (!g_recordShift || g_shiftDown)) {
+						logs::info("devbench: record hotkey fired (key={}, shiftHeld={})", code, g_shiftDown);
 						FireAsync(json{ { "action", "toggle" } });
-					else if (g_replayKey && code == g_replayKey && (!g_replayShift || g_shiftDown))
+					} else if (g_replayKey && code == g_replayKey && (!g_replayShift || g_shiftDown)) {
+						logs::info("devbench: replay hotkey fired (key={}, shiftHeld={})", code, g_shiftDown);
 						FireAsync(json{ { "action", "replay" }, { "path", g_replayPath }, { "restoreScene", g_replayRestore } });
+					} else if (g_recordKey && code == g_recordKey) {
+						logs::debug("devbench: record key pressed without Shift — ignored");
+					}
 				}
 				return RE::BSEventNotifyControl::kContinue;
 			}
