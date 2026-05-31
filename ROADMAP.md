@@ -130,3 +130,24 @@ when a `measure` window opens. So:
 - **Optionally**, behind a compile flag (mirroring CS's `TRACY_SUPPORT`), mirror those markers as
   Tracy frame-marks / messages so a `.tracy` capture is annotated with what the bench was doing —
   without devbench collecting or serving any profiling data itself.
+
+## Distribution
+
+Nexus page is live: **[Skyrim SE mod 181326](https://www.nexusmods.com/games/skyrimspecialedition/mods/181326)**.
+When releases are turned on (semantic-release is disabled while iterating; first tag will be
+1.0.0), port Open Shaders' `nexus-upload.yaml` workflow and wire this mod id so the built archive
+auto-uploads. Until then, releases are manual.
+
+## Scope guard — keep `scenario` thin; don't grow a scripting language
+
+`scenario` is a **thin sequencer** (dispatch a tool · `wait` · `waitFor` · `waitUntil` · `repeat`),
+deliberately *not* a DSL. The wheel we must not reinvent is JavaScript: do **not** add expressions,
+variables, arithmetic (e.g. the `setpos = x + d·sin θ` math), branching, or loops-with-conditions
+to the JSON step list. Two escape hatches cover logic-heavy needs instead:
+- **client-side composition** — the agent computes values and emits concrete steps (it already has
+  a real language); and
+- the planned **`eval` primitive** — one powerful "run a script against live RE state" tool (the
+  agentic-renderdoc model), which is the right home for computation, not a bespoke step grammar.
+
+Adding *primitives* (a `camera` tool, `measure`, `waitSettled`, record→replay emitting a step
+file) is in-scope; adding *control flow* to the step list is not.

@@ -138,11 +138,13 @@ or `menuClosed`/`menuOpened` with a `name` (e.g. wait for `LoadingMenu` to close
 modal then wait for it gone); the general form is `{ "topic": "...", "match": { ... } }`. Add
 `repeat` (≤1000) to loop the list and `continueOnError` to keep going past a failed step.
 
-**Steps dispatch any registered tool — including tools other mods add over the C ABI.** Community
-Shaders' [`src/DevBenchBridge.cpp`](https://github.com/alandtse/open-shaders/blob/dev/src/DevBenchBridge.cpp)
-is a worked consumer: it registers a `feature` tool, so `{ "tool": "feature", "args": { "action":
-"toggle", "shortName": "..." } }` becomes a valid scenario step — letting a benchmark flip a CS
-feature mid-run. (`console` also still returns only its own command's output via the hook-side
+**Steps dispatch any registered tool — including tools other mods add over the C ABI.** Open
+Shaders (a fork of [Community Shaders](https://www.nexusmods.com/skyrimspecialedition/mods/180419))
+is a worked consumer — its
+[`src/DevBenchBridge.cpp`](https://github.com/alandtse/open-shaders/blob/dev/src/DevBenchBridge.cpp)
+registers a `feature` tool, so `{ "tool": "feature", "args": { "action": "toggle", "shortName":
+"..." } }` becomes a valid scenario step — letting a benchmark flip an Open Shaders feature
+mid-run. (`console` also still returns only its own command's output via the hook-side
 fence, so `getangle`/`getpos` reads stay reliable under log spam.)
 
 Still to come (see [ROADMAP](ROADMAP.md)): a `measure` primitive (frametime over a window),
