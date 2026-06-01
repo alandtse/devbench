@@ -9,6 +9,37 @@ and REST adapters _reflect_ it, so a tool registered once is reachable over both
 automatically. Other SKSE mods register their own tools through a small C ABI, turning
 devbench into a shared bench rather than a per-mod server.
 
+## What devbench does for developers
+
+devbench lets an **AI agent, a test script, or CI drive and measure a running Skyrim** — no
+alt-tabbing, no hand-clicking. One local endpoint, MCP for agents and REST for scripts, and a
+shared registry every mod can extend.
+
+- **Automated testing.** Run console commands and read their output, inspect live
+  engine/plugin state, answer menus, load saves — then chain them with the **`scenario`** tool:
+  a timed step list that waits on _real_ events (`waitFor postLoadGame`) instead of guessed
+  sleeps, can `repeat`, and returns a per-step transcript. Steps dispatch **any registered
+  tool** (including ones your mod adds), so a scenario can flip your feature mid-run and assert
+  the result.
+- **Record / replay.** **`record`** captures a manual play-through — trajectory, point-of-view,
+  cell transitions (doors/`coc`), and the console commands you typed — into a portable file you
+  replay deterministically: by hand, on a hotkey, or unattended on load (`autoRun`). The entry
+  point (the save you loaded) is captured too, so a replay re-establishes the scene first.
+- **Performance / A-B testing.** A recorded play-through replays the **same path and conditions
+  every run**, so an A/B shader/feature comparison measures the _change_, not your hands.
+  devbench publishes **semantic `EventBus` events** — `record.started`/`record.stopped`,
+  `scene.cellLoaded`, `menu`, `lifecycle` — so a profiler client can align a capture to those
+  boundaries; pair it with a Tracy-instrumented build (via the `tracy` MCP) to attribute
+  frametime/GPU cost to a specific moment, toggle a feature through its tool, replay the same
+  recipe, and diff the numbers.
+- **Why wire it into your mod.** Register your mod's operations as devbench tools over a tiny
+  **MIT** C-ABI (`RegisterTool` / `EmitEvent`) and they instantly appear on **both** MCP and
+  REST — so AI assistants (Claude, Cursor), test scripts, and CI can toggle your features, read
+  your state, trigger your captures, and benchmark you, all through one shared bench. You write
+  the handler; discovery, JSON-Schema docs, and both transports come for free. Because every mod
+  registers into the **same** server, one agent session can orchestrate across your whole load
+  order. [Open Shaders](https://github.com/alandtse/open-shaders) does this today.
+
 ## Design
 
 ```
@@ -74,6 +105,7 @@ Missing → auto-created with defaults. Invalid → defaults (logged). All keys 
   "replayHotkeyShift": false, // require Shift held with replayHotkey
   "replayPath": "", // recording to replay; empty = most recent
   "replayRestoreScene": true, // hotkey replay re-establishes the recorded scene
+  "recordIntervalMs": 10, // record: pose sample period in ms (min 10); per-call intervalMs overrides
 
   // Autorun: replay a recording once on the first load of the session (unattended benchmark).
   "autoRunPath": "", // recording to replay on first postLoadGame; empty = off
@@ -94,15 +126,16 @@ fixed-URL clients can discover it.
 
 All tools are reachable over both MCP (`tools/call`) and REST (`POST /api/tool/<name>`).
 
-| Tool       | What it does                                                                                                                                                                                                                                                                                                  |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ping`     | Self-test. Returns `{ "ok": true }`.                                                                                                                                                                                                                                                                          |
-| `console`  | Run a Skyrim console command. `action='exec'` queues `command` on the main thread. With `capture=true`, fences it between marker commands; `action='read'` then slices ConsoleLog's buffer between the markers and returns `{ markersFound, lines:[…] }`. Useful for `getav`, `getpos`, `help`, etc.          |
-| `inspect`  | Read live game/plugin state. Runs on the main thread and returns synchronously. `kind='state'` → `{ plugin, version, vr, playerLoaded, frame }`.                                                                                                                                                              |
-| `game`     | Save/load and list saves. `action='list'` enumerates the saves directory. `'loadLast'` loads the most recent save (a settled real-game state — avoids `coc`'s heavy new-game init). `'load'`/`'save'` take a `'name'`. All mutating actions are fire-and-forget; watch `lifecycle` events for completion.     |
-| `menu`     | Inspect, answer, or dismiss menus. `'list'` → `{ openMenus, messageBoxOpen }`. `'describe'` → active `MessageBoxMenu` body + buttons. `'accept'` → answer a `MessageBoxMenu` by button index (runs its callback; this is how you clear a Yes/No modal). `'close'` → hide a menu by name via the UI queue.     |
-| `scenario` | Run a timed sequence of steps server-side and return a per-step transcript. Steps: `tool` (dispatch any registered tool), `wait` (fixed ms), `waitFor` (block on a Skyrim event), `waitUntil` (poll live state). Optional: `repeat` (≤1000), `continueOnError`. See [Scripted tests](#scripted-tests) below.  |
-| `record`   | Capture a manual play-through as a replayable scenario. `'start'` samples the player pose every `intervalMs` and captures a scene manifest. `'stop'` writes the trajectory to `Data/SKSE/Plugins/devbench/recordings/recording_<stamp>.json`. `'status'` reports progress. `'replay'` plays a recording back. |
+| Tool       | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ping`     | Self-test. Returns `{ "ok": true }`.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `console`  | Run a Skyrim console command. `action='exec'` queues `command` on the main thread. With `capture=true`, fences it between marker commands; `action='read'` then slices ConsoleLog's buffer between the markers and returns `{ markersFound, lines:[…] }`. Useful for `getav`, `getpos`, `help`, etc.                                                                                                                                                                                               |
+| `inspect`  | Read live game/plugin state. Runs on the main thread and returns synchronously. `kind='state'` → `{ plugin, version, vr, playerLoaded, frame }`.                                                                                                                                                                                                                                                                                                                                                   |
+| `game`     | Save/load and list saves. `action='list'` enumerates the saves directory. `'loadLast'` loads the most recent save (a settled real-game state — avoids `coc`'s heavy new-game init). `'load'`/`'save'` take a `'name'`. All mutating actions are fire-and-forget; watch `lifecycle` events for completion.                                                                                                                                                                                          |
+| `menu`     | Inspect, answer, or dismiss menus. `'list'` → `{ openMenus, messageBoxOpen }`. `'describe'` → active `MessageBoxMenu` body + buttons. `'accept'` → answer a `MessageBoxMenu` by button index (runs its callback; this is how you clear a Yes/No modal). `'close'` → hide a menu by name via the UI queue.                                                                                                                                                                                          |
+| `scenario` | Run a timed sequence of steps server-side and return a per-step transcript. Steps: `tool` (dispatch any registered tool), `wait` (fixed ms), `waitFor` (block on a Skyrim event), `waitUntil` (poll live state). Optional: `repeat` (≤1000), `continueOnError`. See [Scripted tests](#scripted-tests) below.                                                                                                                                                                                       |
+| `camera`   | Read or set the player camera. `'get'` → `{ pov, freeCam, camX/Y/Z, camPitch/camYaw }`. `'setPov'` → switch first/third/vanity. `'freecam'` `{ on }` → toggle the free camera. `'drive'` `{ x,y,z,pitch,yaw }` → set the free-cam transform (position exact; used for fixed/reproducible benchmark viewpoints).                                                                                                                                                                                    |
+| `record`   | Capture a manual play-through as a replayable scenario. `'start'` samples player pose + POV every `intervalMs` (default from `recordIntervalMs`) and captures a scene manifest; mid-record cell transitions (doors/`coc`) and typed console commands are captured too. `'stop'` writes the trajectory to `Data/SKSE/Plugins/devbench/recordings/recording_<stamp>.json`. `'status'` reports progress. `'replay'` plays a recording back (`restoreScene` re-establishes the entry save/cell first). |
 
 Other mods add their own tools via the C ABI (see [Use devbench from your mod](#use-devbench-from-your-mod)).
 
@@ -112,10 +145,12 @@ The `record` tool captures a manual play-through as a replayable scenario file:
 
 1. Load a save or `coc` to the scene you want to record.
 2. Call `record` with `action='start'` (or press the `recordHotkey`). devbench samples the
-   player pose every `intervalMs` ms (default 1000, min 100) on a background thread and notes
-   the entry point (the save loaded or cell `coc`'d to).
-3. Play through the scene, then call `record` with `action='stop'` (or press the hotkey
-   again). The trajectory is written to
+   player pose + point-of-view every `intervalMs` ms (default from `recordIntervalMs`, min 10)
+   on a background thread, captures a one-time scene manifest, and notes the entry point (the
+   save loaded or cell `coc`'d to — captured even for saves/loads you do through the menu).
+3. Play through the scene — your movement, point-of-view changes, cell transitions
+   (doors/`coc`/`cow`), and any console commands you type are all captured. Then call `record`
+   with `action='stop'` (or press the hotkey again). The trajectory is written to
    `Data/SKSE/Plugins/devbench/recordings/recording_<stamp>.json` and the path is returned.
 4. Replay with `record action='replay' path='<file>'`. With `restoreScene=true` (default for
    hotkey replay), devbench first re-establishes the entry point (loads the save / `coc`s the
@@ -241,8 +276,10 @@ interface is shared), so **namespace your topics** the way you namespace tool na
 
 ## Performance data
 
-devbench emits semantic **`EventBus` events** at scenario step boundaries (begin/end) so a
-client can align a capture to them — but it does not collect or serve profiling data itself.
+devbench publishes semantic **`EventBus` events** — `record.started`/`record.stopped`,
+`scene.cellLoaded`, `menu`, and `lifecycle` — so a client can align a capture to those
+boundaries (and the `scenario` tool returns per-step timings synchronously) — but devbench does
+not collect or serve profiling data itself.
 Frametime and GPU metrics are left to dedicated clients: pair devbench with a Tracy-instrumented
 mod (using the `tracy` MCP) or any other profiler to annotate captures with what the bench was
 doing. See [ROADMAP](ROADMAP.md) for the planned `measure` primitive.
