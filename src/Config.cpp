@@ -2,8 +2,10 @@
 
 #include "Json.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 
 namespace dvb
 {
@@ -52,8 +54,9 @@ namespace dvb
 			return cfg;
 		}
 		try {
-			json j;
-			file >> j;
+			// Allow // comments (the documented jsonc form) so a commented config still
+			// parses instead of silently falling back to defaults.
+			const json j = json::parse(file, nullptr, /*allow_exceptions=*/true, /*ignore_comments=*/true);
 			cfg.enabled = j.value("enabled", cfg.enabled);
 			cfg.port = j.value("port", cfg.port);
 			cfg.logLevel = j.value("logLevel", cfg.logLevel);
@@ -67,6 +70,22 @@ namespace dvb
 			cfg.autoRunPath = j.value("autoRunPath", cfg.autoRunPath);
 			cfg.autoRunRestoreScene = j.value("autoRunRestoreScene", cfg.autoRunRestoreScene);
 			cfg.loadSettleMs = j.value("loadSettleMs", cfg.loadSettleMs);
+
+			// Migrate forward: if the file predates any key (e.g. an install from before
+			// the record hotkeys existed), rewrite it so the new keys appear with their
+			// defaults — otherwise a user never discovers options added in an update. The
+			// values just loaded above are preserved; only absent keys gain defaults.
+			static constexpr const char* kKeys[] = {
+				"enabled", "port", "logLevel", "recordHotkey", "replayHotkey",
+				"recordHotkeyShift", "replayHotkeyShift", "replayPath", "replayRestoreScene",
+				"recordIntervalMs", "autoRunPath", "autoRunRestoreScene", "loadSettleMs"
+			};
+			const bool complete = std::all_of(std::begin(kKeys), std::end(kKeys),
+				[&](const char* k) { return j.contains(k); });
+			if (!complete) {
+				WriteConfig(path, cfg);
+				logs::info("devbench: config migrated — added missing keys with defaults");
+			}
 		} catch (const std::exception& e) {
 			logs::warn("devbench: bad config ({}) — using defaults", e.what());
 			return Config{};
