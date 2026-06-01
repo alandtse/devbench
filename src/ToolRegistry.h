@@ -18,7 +18,8 @@ namespace dvb
 	/// (stateless). Extend with cancellation / logging as needed.
 	struct ToolContext
 	{
-		std::string clientId;  ///< opaque connection/session id ("" for stateless callers)
+		std::string clientId;          ///< opaque connection/session id ("" for stateless callers)
+		bool        internal = false;  ///< scenario/replay-driven call — suppresses per-invoke logging
 	};
 
 	/// Throw from a handler to signal a non-success outcome. `code` is an HTTP-style

@@ -63,9 +63,15 @@ namespace dvb
 			handler = it->second.handler;
 		}
 
-		// Per-invocation trace (debug) + failures (warn) — set logLevel=debug in
-		// config.json to see the full client/agent call stream for diagnosis.
-		logs::debug("tool '{}' invoked", a_name);
+		// Per-invocation debug + failures (warn) — set logLevel=debug in config.json to see the
+		// client/agent call stream. Includes a compact args summary so a one-off call is
+		// diagnosable. Skipped for scenario/replay-driven (internal) calls: a replay issues
+		// hundreds of identical console steps and already logs its own start/finish summary, so
+		// per-step lines were pure noise.
+		if (!a_ctx.internal) {
+			const std::string args = a_args.is_null() ? std::string{} : a_args.dump();
+			logs::debug("tool '{}' invoked {}", a_name, args.size() > 160 ? args.substr(0, 160) + "..." : args);
+		}
 		try {
 			auto result = ToolResult::Success(handler(a_args, a_ctx));
 			return result;

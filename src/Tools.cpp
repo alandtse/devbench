@@ -547,7 +547,9 @@ namespace dvb
 							r["tool"] = tool;
 							if (step.contains("label"))
 								r["label"] = step["label"];
-							const ToolResult tr = a_registry.Invoke(tool, args, a_ctx);
+							ToolContext stepCtx = a_ctx;
+							stepCtx.internal = true;  // scenario-driven — don't log each step (replay logs a summary)
+							const ToolResult tr = a_registry.Invoke(tool, args, stepCtx);
 							r["ok"] = tr.ok;
 							if (tr.ok) {
 								r["result"] = tr.value;
