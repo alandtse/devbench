@@ -20,6 +20,12 @@ namespace dvb
 	public:
 		McpAdapter(ToolRegistry& a_registry, EventBus& a_events, mcp::server& a_server);
 
+		// Unsubscribe from the bus before we're destroyed — the bus worker thread (which outlives
+		// this adapter: Server destroys the adapter before the EventBus) must not call our
+		// subscriber after `this`/the server reference are gone. Unsubscribe barriers on any
+		// in-flight delivery, so this is a clean cutoff.
+		~McpAdapter();
+
 		void Wire();
 
 	private:

@@ -12,6 +12,12 @@ namespace dvb
 		m_registry(a_registry), m_events(a_events), m_server(a_server)
 	{}
 
+	McpAdapter::~McpAdapter()
+	{
+		if (m_sub)
+			m_events.Unsubscribe(m_sub);  // bus worker won't call our callback after this returns
+	}
+
 	void McpAdapter::Wire()
 	{
 		// Generic registration — forwards to the registry by name, so no tool-specific
