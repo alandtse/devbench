@@ -5,6 +5,7 @@ set_xmakever("2.8.2")
 
 -- commonlibsse-ng options
 set_config("rex_ini", true)
+set_config("skse_xbyak", true)
 
 -- includes
 includes("lib/commonlibsse-ng")

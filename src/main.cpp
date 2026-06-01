@@ -110,6 +110,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
 	SKSE::Init(a_skse);
 	InitLogging();
+	SKSE::AllocTrampoline(1 << 10);
 	logs::info("devbench {} loaded", DEVBENCH_VERSION_STRING);
 
 	if (auto* messaging = SKSE::GetMessagingInterface())

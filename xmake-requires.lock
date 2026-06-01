@@ -69,6 +69,14 @@
                 url = "https://gitlab.com/tboox/xmake-repo.git"
             },
             version = "v1.16.0"
+        },
+        ["xbyak v7.06#31fecfc4"] = {
+            repo = {
+                branch = "master",
+                commit = "e81b38d77a76847788811a838c0e7fbdb199221d",
+                url = "https://gitlab.com/tboox/xmake-repo.git"
+            },
+            version = "v7.06"
         }
     }
 }

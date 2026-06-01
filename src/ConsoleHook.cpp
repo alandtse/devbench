@@ -18,15 +18,16 @@ namespace dvb::ConsoleHook
 		bool      g_installed = false;
 
 		// The console command FxDelegate executor — RELOCATION_ID(50157, 51084). Both the in-game
-		// console UI (on Enter) and RE::Console::ExecuteCommand funnel through here, so hooking its
-		// entry observes every command. The command text is the first GFx arg.
-		REL::Relocation<void (*)(RE::FxDelegateArgs*)> _orig;
+		// console UI (on Enter) and RE::Console::ExecuteCommand funnel through here, so a context
+		// hook at its entry observes every command. The command text is the first GFx arg.
+		constexpr int kPatchSize = 8;
 
-		void Detour(RE::FxDelegateArgs* a_args)
+		void Detour(CONTEXT& a_ctx)
 		{
 			// An observer error must never escape into the game's command path, so swallow
 			// everything and always fall through to the original executor.
 			try {
+				const auto* a_args = reinterpret_cast<RE::FxDelegateArgs*>(a_ctx.Rcx);
 				if (a_args && a_args->GetArgCount() >= 1) {
 					const RE::GFxValue& v = (*a_args)[0];
 					if (v.IsString()) {
@@ -44,7 +45,6 @@ namespace dvb::ConsoleHook
 				}
 			} catch (...) {
 			}
-			_orig(a_args);
 		}
 	}
 
@@ -54,9 +54,11 @@ namespace dvb::ConsoleHook
 			return;
 		g_events = &a_events;
 
-		SKSE::AllocTrampoline(64);
 		REL::Relocation<std::uintptr_t> target{ RELOCATION_ID(50157, 51084) };
-		_orig = SKSE::GetTrampoline().write_branch<5>(target.address(), &Detour);
+		if (!SKSE::stl::install_context_hook(target.address(), kPatchSize, &Detour, kPatchSize)) {
+			logs::error("devbench: failed to install console command hook");
+			return;
+		}
 		g_installed = true;
 		logs::info("devbench: console command hook installed");
 	}
