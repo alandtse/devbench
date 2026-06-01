@@ -39,10 +39,10 @@ namespace dvb::ConsoleLogCapture
 		const std::string region = buf.substr(start, stop - start);
 		std::string       line;
 		auto              flush = [&]() {
-            if (!line.empty()) {
-                out.lines.push_back(line);
-                line.clear();
-            }
+			if (!line.empty()) {
+				out.lines.push_back(line);
+				line.clear();
+			}
 		};
 		for (const char c : region) {
 			if (c == '\n' || c == '\r')

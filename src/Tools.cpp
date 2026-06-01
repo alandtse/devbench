@@ -195,7 +195,7 @@ namespace dvb
 					const fs::path saveDir = ResolveSaveDir(a_args);
 					const auto     saves = EnumerateSaves(saveDir);
 					const bool     exists = std::any_of(saves.begin(), saves.end(),
-							[&](const SaveEntry& s) { return s.name == name; });
+						[&](const SaveEntry& s) { return s.name == name; });
 					if (!exists)
 						throw ToolError(404, std::format("save '{}' not found in {} — use action='list' for valid names", name, saveDir.string()));
 					Recording::NoteLoadEntry(name);  // reproducible entry point for a later recording

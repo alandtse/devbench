@@ -72,12 +72,12 @@ namespace dvb::Recording
 				return json(nullptr);
 			const auto pos = pc->GetPosition();
 			json       s{
-					  { "x", pos.x },
-					  { "y", pos.y },
-					  { "z", pos.z },
-					  { "angleZ", pc->GetAngleZ() },  // yaw (radians) — captures rotation-in-place
-					  { "angleX", pc->GetAngleX() },  // pitch (radians) — look up/down (sky vs ground)
-					  { "frame", game::CurrentFrame() },
+				{ "x", pos.x },
+				{ "y", pos.y },
+				{ "z", pos.z },
+				{ "angleZ", pc->GetAngleZ() },  // yaw (radians) — captures rotation-in-place
+				{ "angleX", pc->GetAngleX() },  // pitch (radians) — look up/down (sky vs ground)
+				{ "frame", game::CurrentFrame() },
 			};
 			if (auto* cam = RE::PlayerCamera::GetSingleton(); cam) {
 				// Point of view, normalized to the three states the camera tool can restore.
