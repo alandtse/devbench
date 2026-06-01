@@ -91,13 +91,19 @@ namespace dvb::Recording
 				else if (cam->currentState && cam->currentState->id == RE::CameraState::kAutoVanity)
 					s["pov"] = "vanity";  // kAutoVanity=1 is identical in SE/VR layouts
 
-				// Camera world position — what's actually rendered. Differs from the player in 3rd
-				// person / VR / free cam. Captured for analysis + the camera-tool replay path.
+				// Camera world transform — what's actually rendered. Differs from the player in 3rd
+				// person / VR / free cam. The camera-tool replay drives a free camera along this
+				// path for an exact viewpoint (1st/3rd/free). Pitch/yaw are the world Euler angles;
+				// the free-cam rotation convention is mapped on the drive side.
 				if (cam->cameraRoot) {
 					const auto& t = cam->cameraRoot->world.translate;
 					s["camX"] = t.x;
 					s["camY"] = t.y;
 					s["camZ"] = t.z;
+					if (RE::NiPoint3 euler; cam->cameraRoot->world.rotate.ToEulerAnglesXYZ(euler)) {
+						s["camPitch"] = euler.x;  // world Euler X
+						s["camYaw"] = euler.z;    // world Euler Z (about up)
+					}
 				}
 			}
 			return s;

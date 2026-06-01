@@ -330,19 +330,55 @@ namespace dvb
 						pov = "third";
 					else if (cam->currentState && cam->currentState->id == RE::CameraState::kAutoVanity)
 						pov = "vanity";  // kAutoVanity=1 is identical in SE/VR layouts
-					return json{ { "pov", pov } };
+					json out{ { "pov", pov }, { "freeCam", cam->IsInFreeCameraMode() } };
+					if (cam->cameraRoot) {
+						const auto& t = cam->cameraRoot->world.translate;
+						out["camX"] = t.x;
+						out["camY"] = t.y;
+						out["camZ"] = t.z;
+					}
+					return out;
 				});
 			}
+			auto* task = SKSE::GetTaskInterface();
+			if (!task)
+				throw ToolError(500, "SKSE TaskInterface unavailable");
+
+			// freecam: toggle the free camera. Enter before 'drive' (the state change is deferred a
+			// tick, so issue freecam {on:true} + a short wait before driving).
+			if (action == "freecam") {
+				const bool on = a_args.value("on", true);
+				task->AddTask([on]() {
+					if (auto* cam = RE::PlayerCamera::GetSingleton(); cam && cam->IsInFreeCameraMode() != on)
+						cam->ToggleFreeCameraMode(false);  // false: don't freeze time
+				});
+				return json{ { "queued", true }, { "action", "freecam" }, { "on", on } };
+			}
+
+			// drive: set the free camera's world transform — the exact-viewpoint replay primitive.
+			// Must already be in free cam (see freecam). rotation pitch/yaw use the free-cam
+			// convention; the recording captures world Euler angles which the recipe maps here.
+			if (action == "drive") {
+				const float x = a_args.value("x", 0.0f), y = a_args.value("y", 0.0f), z = a_args.value("z", 0.0f);
+				const float pitch = a_args.value("pitch", 0.0f), yaw = a_args.value("yaw", 0.0f);
+				task->AddTask([x, y, z, pitch, yaw]() {
+					auto* cam = RE::PlayerCamera::GetSingleton();
+					if (!cam || !cam->currentState || cam->currentState->id != RE::CameraState::kFree)
+						return;  // not in free cam — issue camera freecam {on:true} first
+					auto* fc = static_cast<RE::FreeCameraState*>(cam->currentState.get());
+					fc->translation = RE::NiPoint3{ x, y, z };
+					fc->rotation.x = pitch;  // BEST-EFFORT free-cam rotation convention — tune in-game
+					fc->rotation.y = yaw;
+				});
+				return json{ { "queued", true }, { "action", "drive" } };
+			}
+
 			if (action != "setPov")
-				throw ToolError(400, std::format("unknown action '{}' (get|setPov)", action));
+				throw ToolError(400, std::format("unknown action '{}' (get|setPov|freecam|drive)", action));
 
 			const std::string pov = a_args.value("pov", std::string{});
 			if (pov != "first" && pov != "third" && pov != "vanity")
 				throw ToolError(400, std::format("invalid pov '{}' (first|third|vanity)", pov));
-
-			auto* task = SKSE::GetTaskInterface();
-			if (!task)
-				throw ToolError(500, "SKSE TaskInterface unavailable");
 			task->AddTask([pov]() {
 				auto* cam = RE::PlayerCamera::GetSingleton();
 				if (!cam)
