@@ -83,14 +83,17 @@ jobs:
           generate_release_notes: true
           files: devbench-${{ steps.ver.outputs.version }}.7z
 
-  # After a stable tag publishes, report what a Nexus upload would do (never uploads).
-  # Real uploads are manual: dispatch "Nexus: Upload Release" with dry_run=false.
-  nexus-dry-run:
-    name: Nexus upload (dry run)
+  # After a stable tag publishes, run the Nexus step. Default is a dry-run (report
+  # only). Set repository variable NEXUS_AUTO_UPLOAD=true (plus the UNEX_* secrets)
+  # to make a stable tag push upload for real — i.e. the full build → release →
+  # Nexus pipeline from a single `git push` of the tag. Pre-release tags (vX.Y.Z-…)
+  # are skipped either way.
+  nexus:
+    name: Nexus upload
     needs: package
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
     uses: ./.github/workflows/nexus-upload.yaml
     with:
       tag: ${{ github.ref_name }}
-      dry_run: "true"
+      dry_run: ${{ vars.NEXUS_AUTO_UPLOAD == 'true' && 'false' || 'true' }}
     secrets: inherit
