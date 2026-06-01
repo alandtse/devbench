@@ -20,9 +20,9 @@ on:
         required: false
         default: "skyrimspecialedition"
       nexus_mod_id:
-        description: "devbench Nexus mod ID. Required for a real (non-dry-run) upload."
+        description: "devbench Nexus mod ID."
         required: false
-        default: ""
+        default: "181326"
       mod_filename:
         description: "Nexus file name (without extension)."
         required: false
@@ -48,7 +48,7 @@ on:
       nexus_mod_id:
         required: false
         type: string
-        default: ""
+        default: "181326"
       mod_filename:
         required: false
         type: string

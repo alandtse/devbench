@@ -61,17 +61,17 @@ jobs:
         run: |
           set -euo pipefail
           stage="devbench-${{ steps.ver.outputs.version }}"
-          mkdir -p "$stage/SKSE/Plugins/devbench" "$stage/Developer"
+          mkdir -p "$stage/SKSE/Plugins" "$stage/Developer"
           cp bin/devbench.dll bin/devbench.pdb "$stage/SKSE/Plugins/"
-          # Ship the example config as the default the user edits in place.
-          cp config.example.json "$stage/SKSE/Plugins/devbench/config.json"
+          # No config.json: the plugin auto-creates a self-documenting one on first run,
+          # so shipping one would only risk clobbering a user's settings on reinstall.
           # Docs + license for the in-mod folder.
           cp README.md ROADMAP.md COPYING EXCEPTIONS "$stage/"
           # MIT C-ABI glue for developers who want to register their own tools.
           cp include/DevBenchAPI.h include/DevBenchAPI.cpp include/DevBenchAPI.LICENSE.txt "$stage/Developer/"
-          zip -r "${stage}.zip" "$stage"
-          echo "Built ${stage}.zip:"
-          unzip -l "${stage}.zip"
+          7z a -t7z -mx=9 "${stage}.7z" "$stage"
+          echo "Built ${stage}.7z:"
+          7z l "${stage}.7z"
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -81,7 +81,7 @@ jobs:
           draft: ${{ steps.ver.outputs.draft }}
           prerelease: ${{ steps.ver.outputs.prerelease }}
           generate_release_notes: true
-          files: devbench-${{ steps.ver.outputs.version }}.zip
+          files: devbench-${{ steps.ver.outputs.version }}.7z
 
   # After a stable tag publishes, report what a Nexus upload would do (never uploads).
   # Real uploads are manual: dispatch "Nexus: Upload Release" with dry_run=false.
