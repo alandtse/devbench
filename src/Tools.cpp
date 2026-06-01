@@ -467,6 +467,16 @@ namespace dvb
 			bool       anyFailure = false;
 			bool       aborted = false;
 
+			// Mark replaying for the whole run: if a recording is active (composition — recording
+			// a session that plays back a recipe), the pose sampler must not re-capture the
+			// teleported path; the issued setpos commands (seen by the console hook) are the
+			// trajectory. RAII so the flag clears on any return/throw.
+			Recording::SetReplaying(true);
+			struct ReplayGuard
+			{
+				~ReplayGuard() { Recording::SetReplaying(false); }
+			} replayGuard;
+
 			for (int rep = 0; rep < repeat && !aborted; ++rep) {
 				for (size_t i = 0; i < steps.size() && !aborted; ++i) {
 					const json& step = steps[i];

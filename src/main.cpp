@@ -99,6 +99,21 @@ namespace
 		if (g_server) {
 			// Publish lifecycle events (dataLoaded and later load/save/new-game).
 			dvb::OnSKSEMessage(a_msg->type);
+			// Remember the save the player loaded or just wrote, so a recording started
+			// afterward can stamp a reproducible entry point — even when the user loaded via
+			// the in-game menu (devbench didn't broker it). kPreLoadGame / kSaveGame carry the
+			// save's base name in data; it's exactly what the game tool's load takes.
+			if ((a_msg->type == SKSE::MessagingInterface::kPreLoadGame ||
+					a_msg->type == SKSE::MessagingInterface::kSaveGame) &&
+				a_msg->data && a_msg->dataLen > 0) {
+				std::string name(static_cast<const char*>(a_msg->data), a_msg->dataLen);
+				if (const auto nul = name.find('\0'); nul != std::string::npos)
+					name.resize(nul);  // data may be null-padded to dataLen
+				if (name.size() > 4 && name.compare(name.size() - 4, 4, ".ess") == 0)
+					name.resize(name.size() - 4);  // the load tool takes the stem, not the filename
+				if (!name.empty())
+					dvb::Recording::NoteLoadEntry(name);
+			}
 			// Fire the one-shot autorun benchmark once a game has loaded.
 			if (a_msg->type == SKSE::MessagingInterface::kPostLoadGame)
 				dvb::OnPostLoadGame();

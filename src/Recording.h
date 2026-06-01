@@ -26,7 +26,18 @@ namespace dvb::Recording
 	/// Record a console command observed mid-recording (from the console hook), stamped with the
 	/// current frame so BuildScenario replays it at the point in the trajectory it was issued.
 	/// No-op unless a recording is active. Called on the main thread (the hook runs there).
+	/// coc/cow are skipped here — cell transitions are captured via NoteCellChange instead.
 	void NoteConsoleCommand(const std::string& a_command);
+
+	/// Record a mid-recording cell transition (from the cell-load event sink), replayed as
+	/// `coc <cell>` so the destination loads before the trajectory's setpos places the player.
+	/// Single source of truth for transitions (door, coc, fast-travel). No-op unless recording.
+	void NoteCellChange(const std::string& a_cellEditorId);
+
+	/// Mark whether devbench is currently replaying (teleporting the player). While true, the
+	/// pose sampler skips ticks — the replay's own setpos commands (captured via the console
+	/// hook) are the trajectory — so a recording that plays back a recipe embeds it cleanly.
+	void SetReplaying(bool a_replaying);
 
 	/// Default settle delay (ms) inserted after a restore-load before the trajectory, so the
 	/// game settles before the player is teleported. Local/per-machine (set from config);

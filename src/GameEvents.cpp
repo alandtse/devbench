@@ -2,7 +2,9 @@
 
 #include "EventBus.h"
 #include "Json.h"
+#include "Recording.h"
 
+#include <atomic>
 #include <mutex>
 #include <unordered_set>
 
@@ -40,6 +42,44 @@ namespace dvb
 		};
 
 		MenuSink g_menuSink;
+
+		// Player's parent-cell formID, to tell a real cell change from a neighbor preloading.
+		std::atomic<std::uint32_t> g_lastPlayerCell{ 0 };
+
+		// Sink for cell loads — the authoritative "player entered cell X" signal, whether they
+		// walked through a door, typed coc, or fast-travelled. Publishes scene.cellLoaded and
+		// feeds Recording so a transition becomes a reproducible `coc <cell>` step.
+		class CellSink : public RE::BSTEventSink<RE::TESCellFullyLoadedEvent>
+		{
+		public:
+			RE::BSEventNotifyControl ProcessEvent(const RE::TESCellFullyLoadedEvent*,
+				RE::BSTEventSource<RE::TESCellFullyLoadedEvent>*) override
+			{
+				// Use the player's actual parent cell — the event also fires for preloaded
+				// neighbors, which aren't transitions.
+				auto* pc = RE::PlayerCharacter::GetSingleton();
+				auto* cell = pc ? pc->GetParentCell() : nullptr;
+				if (!cell)
+					return RE::BSEventNotifyControl::kContinue;
+				const std::uint32_t id = cell->GetFormID();
+				if (g_lastPlayerCell.exchange(id) == id)
+					return RE::BSEventNotifyControl::kContinue;  // player's cell didn't change
+
+				const char*       eid = cell->GetFormEditorID();
+				const std::string editorId = (eid && *eid) ? eid : std::string{};
+				if (g_bus)
+					g_bus->Publish("scene.cellLoaded", json{ { "cell", editorId }, { "formID", id }, { "interior", cell->IsInteriorCell() } });
+				Recording::NoteCellChange(editorId);  // no-op if not recording / unnamed cell
+				return RE::BSEventNotifyControl::kContinue;
+			}
+		};
+		CellSink g_cellSink;
+
+		// NOTE: do NOT sink TESActivateEvent here. It is one of the engine's chattiest events
+		// (fires for every activation by every actor), and a per-event sink on the main thread
+		// starves the SKSE task queue — observed live as devbench's main-thread reads (record
+		// start, inspect) timing out in a populated cell. A "scene.activate" / faithful door
+		// replay, if ever wanted, needs a lower-frequency or off-main-thread approach, not this.
 	}
 
 	void InstallGameEvents(EventBus& a_bus)
@@ -47,6 +87,8 @@ namespace dvb
 		g_bus = &a_bus;
 		if (auto* ui = RE::UI::GetSingleton())
 			ui->AddEventSink<RE::MenuOpenCloseEvent>(&g_menuSink);
+		if (auto* holder = RE::ScriptEventSourceHolder::GetSingleton())
+			holder->AddEventSink<RE::TESCellFullyLoadedEvent>(&g_cellSink);
 	}
 
 	void OnSKSEMessage(std::uint32_t a_type)

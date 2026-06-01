@@ -7,6 +7,7 @@
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <ctime>
@@ -42,6 +43,18 @@ namespace dvb::Recording
 		EntryPoint g_entry;
 		int        g_loadSettleMs = 3000;                     // set from config via SetLoadSettleMs
 		long       g_defaultIntervalMs = kDefaultIntervalMs;  // set from config via SetDefaultIntervalMs
+
+		// True while devbench is replaying a scenario (teleporting the player). The pose sampler
+		// skips these ticks: the replay's own setpos/setangle commands — captured via the console
+		// hook — already carry the trajectory, so re-sampling would double it. Lets a user record
+		// a session that plays back an existing recipe and embed it cleanly (composition).
+		std::atomic<bool> g_replaying{ false };
+
+		// Set when a coc/cow console command is captured mid-recording (the player COMMANDED a cell
+		// transition). The cell-load that follows consumes it so NoteCellChange doesn't ALSO emit a
+		// coc for the same move — the user's own command already reproduces it. A door issues no
+		// console command, so the flag stays clear and NoteCellChange captures that transition.
+		std::atomic<bool> g_userCocPending{ false };
 
 		EntryPoint CurrentEntry()
 		{
@@ -157,6 +170,9 @@ namespace dvb::Recording
 					}
 					if (pose.is_null())
 						continue;  // player not loaded
+					if (g_replaying.load(std::memory_order_relaxed))
+						continue;  // devbench is teleporting; the replay's setpos commands (captured
+								   // via the console hook) are the trajectory — don't re-sample it
 					std::lock_guard lock(mtx);
 					samples.push_back(std::move(pose));
 				}
@@ -182,9 +198,11 @@ namespace dvb::Recording
 				return json{ { "tool", "camera" }, { "args", json{ { "action", "setPov" }, { "pov", a_pov } } } };
 			};
 
-			json        steps = json::array();
-			std::string lastPov;     // emit a camera step only when the POV changes
-			size_t      cmdIdx = 0;  // drain console commands captured up to each sample's frame
+			json                       steps = json::array();
+			std::string                lastPov;     // emit a camera step only when the POV changes
+			std::array<std::string, 5> lastMove{};  // previous setpos/setangle block
+			bool                       haveMove = false;
+			size_t                     cmdIdx = 0;  // drain console commands captured up to each sample's frame
 			for (const auto& s : a_rec.samples) {
 				// Replay console commands the user/agent ran during recording at the point in the
 				// trajectory they were issued (ordered by frame), so value-setting is reproduced.
@@ -196,11 +214,22 @@ namespace dvb::Recording
 					steps.push_back(cameraStep(pov));
 					lastPov = pov;
 				}
-				steps.push_back(consoleStep(std::format("player.setpos x {:.2f}", s.value("x", 0.0))));
-				steps.push_back(consoleStep(std::format("player.setpos y {:.2f}", s.value("y", 0.0))));
-				steps.push_back(consoleStep(std::format("player.setpos z {:.2f}", s.value("z", 0.0))));
-				steps.push_back(consoleStep(std::format("player.setangle z {:.2f}", s.value("angleZ", 0.0) * kRadToDeg)));
-				steps.push_back(consoleStep(std::format("player.setangle x {:.2f}", s.value("angleX", 0.0) * kRadToDeg)));  // pitch
+				// Collapse: skip the per-axis setpos/setangle block when the rounded pose is
+				// unchanged from the last one emitted (standing still at a 10ms interval is a long
+				// run of identical samples) — just advance time with the wait.
+				const std::array<std::string, 5> move{
+					std::format("player.setpos x {:.2f}", s.value("x", 0.0)),
+					std::format("player.setpos y {:.2f}", s.value("y", 0.0)),
+					std::format("player.setpos z {:.2f}", s.value("z", 0.0)),
+					std::format("player.setangle z {:.2f}", s.value("angleZ", 0.0) * kRadToDeg),
+					std::format("player.setangle x {:.2f}", s.value("angleX", 0.0) * kRadToDeg),  // pitch
+				};
+				if (!haveMove || move != lastMove) {
+					for (const auto& cmd : move)
+						steps.push_back(consoleStep(cmd));
+					lastMove = move;
+					haveMove = true;
+				}
 				steps.push_back(json{ { "wait", a_rec.intervalMs } });
 			}
 			// Trailing commands issued after the final pose sample.
@@ -272,6 +301,7 @@ namespace dvb::Recording
 				rec.manifest = std::move(manifest);
 				rec.intervalMs = interval;
 			}
+			g_userCocPending.store(false, std::memory_order_relaxed);  // don't leak across sessions
 			rec.startTick = steady_clock::now();
 			rec.running.store(true);
 			rec.worker = std::thread([&rec] { rec.Sample(); });
@@ -343,8 +373,37 @@ namespace dvb::Recording
 		auto& rec = Get();
 		if (!rec.running.load(std::memory_order_relaxed))
 			return;  // only capture while a recording is active
+		// coc/cow are real user commands — capture them. But flag that the player just commanded a
+		// transition, so the cell-load that follows (NoteCellChange) won't ALSO emit a coc for the
+		// same move; the user's own command already reproduces it.
+		if (a_command.size() >= 4 && a_command[3] == ' ' &&
+			(a_command[0] | 0x20) == 'c' && (a_command[1] | 0x20) == 'o' &&
+			((a_command[2] | 0x20) == 'c' || (a_command[2] | 0x20) == 'w'))
+			g_userCocPending.store(true, std::memory_order_relaxed);
 		std::lock_guard lock(rec.mtx);
 		rec.commands.push_back(json{ { "command", a_command }, { "frame", game::CurrentFrame() } });
+	}
+
+	void NoteCellChange(const std::string& a_cellEditorId)
+	{
+		auto& rec = Get();
+		if (!rec.running.load(std::memory_order_relaxed) || a_cellEditorId.empty())
+			return;  // only capture while recording; unnamed cells (no editor id) can't be coc'd
+		// If the player commanded this transition (a coc/cow was just captured), their own command
+		// already reproduces it — consume the flag and skip, so we don't double it. A door issues
+		// no console command, so the flag is clear and we capture the transition here.
+		if (g_userCocPending.exchange(false, std::memory_order_relaxed))
+			return;
+		// A mid-recording cell transition with no commanding console input (door / fast-travel).
+		// Replay it as `coc <cell>` to load the destination; the trajectory's setpos then places
+		// the player exactly — so coc only has to land us in the right cell, not the exact spot.
+		std::lock_guard lock(rec.mtx);
+		rec.commands.push_back(json{ { "command", "coc " + a_cellEditorId }, { "frame", game::CurrentFrame() } });
+	}
+
+	void SetReplaying(bool a_replaying)
+	{
+		g_replaying.store(a_replaying, std::memory_order_relaxed);
 	}
 
 	void SetLoadSettleMs(int a_ms)
