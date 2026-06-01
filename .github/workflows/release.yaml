@@ -82,3 +82,15 @@ jobs:
           prerelease: ${{ steps.ver.outputs.prerelease }}
           generate_release_notes: true
           files: devbench-${{ steps.ver.outputs.version }}.zip
+
+  # After a stable tag publishes, report what a Nexus upload would do (never uploads).
+  # Real uploads are manual: dispatch "Nexus: Upload Release" with dry_run=false.
+  nexus-dry-run:
+    name: Nexus upload (dry run)
+    needs: package
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    uses: ./.github/workflows/nexus-upload.yaml
+    with:
+      tag: ${{ github.ref_name }}
+      dry_run: "true"
+    secrets: inherit
