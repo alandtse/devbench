@@ -5,6 +5,8 @@
 #include "Recording.h"
 
 #include <atomic>
+#include <cmath>
+#include <format>
 #include <mutex>
 #include <unordered_set>
 
@@ -65,11 +67,29 @@ namespace dvb
 				if (g_lastPlayerCell.exchange(id) == id)
 					return RE::BSEventNotifyControl::kContinue;  // player's cell didn't change
 
+				const bool        interior = cell->IsInteriorCell();
 				const char*       eid = cell->GetFormEditorID();
 				const std::string editorId = (eid && *eid) ? eid : std::string{};
 				if (g_bus)
-					g_bus->Publish("scene.cellLoaded", json{ { "cell", editorId }, { "formID", id }, { "interior", cell->IsInteriorCell() } });
-				Recording::NoteCellChange(editorId);  // no-op if not recording / unnamed cell
+					g_bus->Publish("scene.cellLoaded", json{ { "cell", editorId }, { "formID", id }, { "interior", interior } });
+
+				// Build the reproducible transition command. Interiors have unique editor ids, so
+				// coc works. Exteriors share generic editor ids ("Wilderness") across worldspaces,
+				// so coc is AMBIGUOUS (it lands in the wrong worldspace — e.g. Soul Cairn) — use
+				// cow <worldspace> <gridX> <gridY> instead; the trajectory's setpos then refines.
+				std::string cmd;
+				if (interior) {
+					if (!editorId.empty())
+						cmd = "coc " + editorId;
+				} else if (auto* ws = pc->GetWorldspace()) {
+					if (const char* wsEid = ws->GetFormEditorID(); wsEid && *wsEid) {
+						const auto pos = pc->GetPosition();
+						cmd = std::format("cow {} {} {}", wsEid,
+							static_cast<int>(std::floor(pos.x / 4096.0f)),
+							static_cast<int>(std::floor(pos.y / 4096.0f)));
+					}
+				}
+				Recording::NoteCellChange(cmd);  // no-op if not recording / cmd empty
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};

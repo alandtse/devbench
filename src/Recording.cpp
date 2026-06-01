@@ -360,6 +360,7 @@ namespace dvb::Recording
 	{
 		std::lock_guard lock(g_entryMtx);
 		g_entry = EntryPoint{ "save", a_saveName };
+		logs::info("devbench: entry point captured — save '{}'", a_saveName);
 	}
 
 	void NoteCocEntry(const std::string& a_cellId)
@@ -384,21 +385,23 @@ namespace dvb::Recording
 		rec.commands.push_back(json{ { "command", a_command }, { "frame", game::CurrentFrame() } });
 	}
 
-	void NoteCellChange(const std::string& a_cellEditorId)
+	void NoteCellChange(const std::string& a_command)
 	{
 		auto& rec = Get();
-		if (!rec.running.load(std::memory_order_relaxed) || a_cellEditorId.empty())
-			return;  // only capture while recording; unnamed cells (no editor id) can't be coc'd
+		if (!rec.running.load(std::memory_order_relaxed) || a_command.empty())
+			return;  // only capture while recording; caller passes "" when it can't build a command
 		// If the player commanded this transition (a coc/cow was just captured), their own command
 		// already reproduces it — consume the flag and skip, so we don't double it. A door issues
 		// no console command, so the flag is clear and we capture the transition here.
 		if (g_userCocPending.exchange(false, std::memory_order_relaxed))
 			return;
 		// A mid-recording cell transition with no commanding console input (door / fast-travel).
-		// Replay it as `coc <cell>` to load the destination; the trajectory's setpos then places
-		// the player exactly — so coc only has to land us in the right cell, not the exact spot.
+		// The caller built the reproducible command — `coc <interior>` (unique editor id) or
+		// `cow <worldspace> <gx> <gy>` for exteriors (whose editor ids are NOT unique across
+		// worldspaces). The trajectory's setpos then refines to the exact spot.
 		std::lock_guard lock(rec.mtx);
-		rec.commands.push_back(json{ { "command", "coc " + a_cellEditorId }, { "frame", game::CurrentFrame() } });
+		rec.commands.push_back(json{ { "command", a_command }, { "frame", game::CurrentFrame() } });
+		logs::info("devbench: recorded cell transition — {}", a_command);
 	}
 
 	void SetReplaying(bool a_replaying)
@@ -482,8 +485,23 @@ namespace dvb::Recording
 				steps.push_back(json{ { "wait", settleMs } });
 		}
 
-		for (const auto& s : rec["steps"])
+		// Copy the trajectory, injecting a load-settle after any captured cell transition (coc/cow):
+		// the destination cell must finish loading before the following setpos teleports the player,
+		// or the replay teleports onto a not-yet-valid ref mid-load and CTDs. Done here (not baked
+		// into the recording) so existing recipes get the fix too.
+		const long txnSettleMs = a_args.value("settleMs", static_cast<long>(g_loadSettleMs));
+		for (const auto& s : rec["steps"]) {
 			steps.push_back(s);
+			if (s.value("tool", std::string{}) == "console") {
+				const std::string c = s.value("args", json::object()).value("command", std::string{});
+				if (c.size() >= 4 && c[3] == ' ' && (c[0] | 0x20) == 'c' && (c[1] | 0x20) == 'o' &&
+					((c[2] | 0x20) == 'c' || (c[2] | 0x20) == 'w')) {
+					steps.push_back(json{ { "waitUntil", "playerLoaded" }, { "timeoutMs", 60000 } });
+					if (txnSettleMs > 0)
+						steps.push_back(json{ { "wait", txnSettleMs } });
+				}
+			}
+		}
 		return steps;
 	}
 }

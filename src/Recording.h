@@ -29,10 +29,12 @@ namespace dvb::Recording
 	/// coc/cow are skipped here — cell transitions are captured via NoteCellChange instead.
 	void NoteConsoleCommand(const std::string& a_command);
 
-	/// Record a mid-recording cell transition (from the cell-load event sink), replayed as
-	/// `coc <cell>` so the destination loads before the trajectory's setpos places the player.
+	/// Record a mid-recording cell transition (from the cell-load event sink). `a_command` is the
+	/// pre-built reproducible command the caller derived from the destination: `coc <interior>`
+	/// (unique editor id) or `cow <worldspace> <gx> <gy>` for exteriors (whose editor ids aren't
+	/// unique across worldspaces, so coc is ambiguous). The trajectory's setpos refines the spot.
 	/// Single source of truth for transitions (door, coc, fast-travel). No-op unless recording.
-	void NoteCellChange(const std::string& a_cellEditorId);
+	void NoteCellChange(const std::string& a_command);
 
 	/// Mark whether devbench is currently replaying (teleporting the player). While true, the
 	/// pose sampler skips ticks — the replay's own setpos commands (captured via the console
