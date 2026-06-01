@@ -1,0 +1,84 @@
+# Release: build the plugin, assemble the mod-archive layout, and publish a GitHub
+# release. Triggered by pushing a vX.Y.Z tag (final release) or run manually
+# (workflow_dispatch → draft pre-release built from the current xmake version).
+#
+# devbench is intentionally light on release machinery: the version lives in
+# xmake.lua and the tag is the source of truth — there is no semantic-release here.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/_build.yaml
+
+  package:
+    name: Package & publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release + tag
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download binaries
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: bin
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            version="${GITHUB_REF#refs/tags/}"
+            prerelease=$([[ "$version" == *-* ]] && echo true || echo false)
+            draft=false
+          else
+            # Manual run → draft pre-release stamped from xmake.lua + run number.
+            base="$(grep -oP 'local version = "\K[0-9.]+' xmake.lua)"
+            version="v${base}-dev.${GITHUB_RUN_NUMBER}"
+            prerelease=true
+            draft=true
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
+          echo "Resolved version=$version prerelease=$prerelease draft=$draft"
+
+      - name: Assemble mod archive
+        run: |
+          set -euo pipefail
+          stage="devbench-${{ steps.ver.outputs.version }}"
+          mkdir -p "$stage/SKSE/Plugins/devbench" "$stage/Developer"
+          cp bin/devbench.dll bin/devbench.pdb "$stage/SKSE/Plugins/"
+          # Ship the example config as the default the user edits in place.
+          cp config.example.json "$stage/SKSE/Plugins/devbench/config.json"
+          # Docs + license for the in-mod folder.
+          cp README.md ROADMAP.md COPYING EXCEPTIONS "$stage/"
+          # MIT C-ABI glue for developers who want to register their own tools.
+          cp include/DevBenchAPI.h include/DevBenchAPI.cpp include/DevBenchAPI.LICENSE.txt "$stage/Developer/"
+          zip -r "${stage}.zip" "$stage"
+          echo "Built ${stage}.zip:"
+          unzip -l "${stage}.zip"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.version }}
+          name: devbench ${{ steps.ver.outputs.version }}
+          draft: ${{ steps.ver.outputs.draft }}
+          prerelease: ${{ steps.ver.outputs.prerelease }}
+          generate_release_notes: true
+          files: devbench-${{ steps.ver.outputs.version }}.zip

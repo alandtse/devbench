@@ -1,0 +1,71 @@
+# Reusable build: compiles devbench.dll with xmake (releasedbg) and uploads the
+# binaries as an artifact. Called by build.yaml (CI) and release.yaml (packaging),
+# so the toolchain is defined in exactly one place.
+name: "_build"
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        description: "Name for the uploaded binaries artifact."
+        type: string
+        default: devbench-binaries
+    outputs:
+      artifact-name:
+        description: "Artifact name the binaries were uploaded under."
+        value: ${{ inputs.artifact-name }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (xmake · releasedbg)
+    runs-on: windows-2025
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: latest
+
+      # CommonLibSSE-NG itself is compiled in-tree (not a cached package), but its
+      # xmake-resolved deps (fmt, spdlog, …) and nlohmann_json are — cache them keyed
+      # on the lockfile so only a dep bump invalidates the cache.
+      - name: Cache xmake packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/.xmake/packages
+            ~/AppData/Local/.xmake/cache
+          key: xmake-${{ runner.os }}-${{ hashFiles('xmake-requires.lock') }}
+          restore-keys: |
+            xmake-${{ runner.os }}-
+
+      - name: Update xmake package repo
+        run: xmake repo --update
+
+      - name: Configure
+        run: xmake config --mode=releasedbg --yes --verbose
+
+      - name: Build
+        run: xmake build --yes devbench
+
+      - name: Stage binaries
+        shell: pwsh
+        run: |
+          $out = "build/windows/x64/releasedbg"
+          New-Item -ItemType Directory -Force -Path staging | Out-Null
+          Copy-Item "$out/devbench.dll" staging/
+          Copy-Item "$out/devbench.pdb" staging/
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: staging/*
+          if-no-files-found: error

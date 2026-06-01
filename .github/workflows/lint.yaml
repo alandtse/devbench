@@ -1,0 +1,31 @@
+# Lint: runs the repo's pre-commit hooks (clang-format, prettier, stylua, the
+# pre-commit-hooks set) in CI so formatting is enforced on PRs, not just locally.
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    name: pre-commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      # clang-format / prettier / stylua are fetched by the hook repos themselves,
+      # so no extra toolchain setup is needed here.
+      - uses: pre-commit/action@v3.0.1

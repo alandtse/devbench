@@ -1,0 +1,23 @@
+# CI build: every push to main and every PR compiles the plugin. Docs-only changes
+# skip the (heavy) CommonLibSSE-NG build.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**/*.md"]
+  pull_request:
+    paths-ignore: ["**/*.md"]
+  workflow_dispatch:
+
+# One in-flight build per ref; a new push cancels the previous run.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/_build.yaml
