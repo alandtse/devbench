@@ -336,6 +336,10 @@ namespace dvb
 						out["camX"] = t.x;
 						out["camY"] = t.y;
 						out["camZ"] = t.z;
+						if (RE::NiPoint3 e; cam->cameraRoot->world.rotate.ToEulerAnglesXYZ(e)) {
+							out["camPitch"] = e.x;
+							out["camYaw"] = e.z;
+						}
 					}
 					return out;
 				});
