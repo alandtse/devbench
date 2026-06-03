@@ -1,3 +1,10 @@
+# pre-commit.ci writes these messages as both the commit subject and the PR
+# title. Keep them Conventional Commits so the "Validate PR title" check passes
+# without manual renaming.
+ci:
+  autoupdate_commit_msg: "ci: pre-commit autoupdate"
+  autofix_commit_msg: "style: auto fixes from pre-commit.com hooks"
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
