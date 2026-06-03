@@ -10,6 +10,10 @@ on:
         description: "Name for the uploaded binaries artifact."
         type: string
         default: devbench-binaries
+      ref:
+        description: "Git ref to build. Empty = the triggering commit (CI default)."
+        type: string
+        default: ""
     outputs:
       artifact-name:
         description: "Artifact name the binaries were uploaded under."
@@ -26,6 +30,7 @@ jobs:
       - name: Checkout (with submodules)
         uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           submodules: recursive
 
       - name: Set up xmake
