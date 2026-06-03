@@ -97,3 +97,24 @@ after_build(function(target)
         end
     end
 end)
+
+-- Host-independent unit tests. Compiles only the pure-logic production TUs
+-- (ToolRegistry) and header-only seams (McpContent) against a no-op `logs` stub
+-- (tests/pch.h), so it builds and runs on CI WITHOUT CommonLibSSE-NG/SKSE or a
+-- running game. Not built by default (`xmake` / `xmake build devbench` skip it);
+-- build with `xmake build devbench-tests`, run with `xmake run devbench-tests`.
+target("devbench-tests")
+set_kind("binary")
+set_default(false)
+set_languages("c++23")
+add_packages("nlohmann_json")
+add_includedirs("src")
+add_files("tests/*.cpp")
+add_files("src/ToolRegistry.cpp") -- exercised directly; pure logic, no game deps
+add_headerfiles("tests/*.h")
+set_pcxxheader("tests/pch.h")
+add_defines("_WINSOCKAPI_")
+-- /EHsc: the suite asserts on thrown exceptions (CHECK_THROWS). /utf-8 matches
+-- the main target so the shared nlohmann_json headers parse identically.
+add_cxflags("/utf-8", "/EHsc", { force = true })
+target_end()
