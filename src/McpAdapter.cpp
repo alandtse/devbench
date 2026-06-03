@@ -1,6 +1,7 @@
 #include "McpAdapter.h"
 
 #include "EventBus.h"
+#include "McpContent.h"
 #include "ToolRegistry.h"
 
 #include <mcp_server.h>
@@ -32,13 +33,12 @@ namespace dvb
 			m_server.register_tool(t, [this, name = a_desc.name](const json& a_args, const std::string& a_session) -> json {
 				const ToolResult r = m_registry.Invoke(name, a_args, ToolContext{ a_session });
 				if (r.ok)
-					return r.value;
-				// Surface a failure as an MCP tool error result (isError + text).
-				return json{
-					{ "isError", true },
-					{ "code", r.errorCode },
-					{ "content", json::array({ json{ { "type", "text" }, { "text", r.errorMessage } } }) },
-				};
+					return ToContentBlocks(r.value);  // must be a content ARRAY — see McpContent.h
+				// Throwing lets cpp-mcp build the canonical error result (isError:true +
+				// text content array); returning an {isError,...} object here would land
+				// inside "content" as a non-array and break the same validation. cpp-mcp
+				// only surfaces what(), so fold the status code into the message.
+				throw std::runtime_error("[" + std::to_string(r.errorCode) + "] " + r.errorMessage);
 			});
 		};
 
