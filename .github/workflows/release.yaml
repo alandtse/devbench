@@ -25,8 +25,10 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Default to read-only; the two jobs that push commits/tags or publish assets
+# opt into contents: write individually.
 permissions:
-  contents: write # semantic-release pushes the bump commit + tag and creates the release
+  contents: read
 
 jobs:
   semantic-release:
@@ -34,6 +36,8 @@ jobs:
     runs-on: ubuntu-latest
     # Source repo only: forks have no release/Nexus credentials.
     if: github.repository_owner == 'alandtse'
+    permissions:
+      contents: write # push the bump commit + tag, create the GitHub Release
     outputs:
       new_release_published: ${{ steps.semantic.outputs.new_release_published }}
       new_release_version: ${{ steps.semantic.outputs.new_release_version }}
@@ -81,6 +85,8 @@ jobs:
     needs: [semantic-release, build]
     if: needs.semantic-release.outputs.new_release_published == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach the .7z asset and promote the draft release
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -112,15 +118,19 @@ jobs:
           echo "Built ${stage}.7z:"
           7z l "${stage}.7z"
 
-      # semantic-release already created the GitHub Release (with the changelog as its
-      # body); this only attaches the .7z asset, leaving the notes untouched.
-      - name: Attach archive to release
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ steps.pkg.outputs.archive }}
-          tag: ${{ needs.semantic-release.outputs.new_release_git_tag }}
-          overwrite: true
+      # semantic-release created the GitHub Release as a draft (with the changelog as
+      # its body). Attach the .7z, then promote the draft to published — but only now
+      # that the asset exists. If build or packaging had failed, the release would stay
+      # a hidden draft instead of shipping a tagged release with no download. Using gh
+      # (not a third-party action) keeps draft handling reliable and trims a dependency.
+      - name: Attach archive and publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.semantic-release.outputs.new_release_git_tag }}
+          ARCHIVE: ${{ steps.pkg.outputs.archive }}
+        run: |
+          gh release upload "$TAG" "$ARCHIVE" --clobber
+          gh release edit "$TAG" --draft=false
 
   # Upload to Nexus, reusing semantic-release's curated notes as the changelog.
   # Default is a dry-run (report only). Set repository variable NEXUS_AUTO_UPLOAD=true
@@ -134,4 +144,7 @@ jobs:
       tag: ${{ needs.semantic-release.outputs.new_release_git_tag }}
       dry_run: ${{ vars.NEXUS_AUTO_UPLOAD == 'true' && 'false' || 'true' }}
       changelog: ${{ needs.semantic-release.outputs.new_release_notes }}
-    secrets: inherit
+    # Pass only the secrets nexus-upload declares, rather than inheriting all of them.
+    secrets:
+      UNEX_NEXUSMODS_SESSION_COOKIE: ${{ secrets.UNEX_NEXUSMODS_SESSION_COOKIE }}
+      UNEX_APIKEY: ${{ secrets.UNEX_APIKEY }}
