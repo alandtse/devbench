@@ -55,6 +55,14 @@ jobs:
       - name: Build
         run: xmake build --yes devbench
 
+      # Host-independent unit tests (ToolRegistry dispatch + MCP content-shape
+      # contract). Builds without CommonLibSSE-NG, so it's cheap and gates both CI
+      # and release packaging on the pure-logic seams.
+      - name: Build & run unit tests
+        run: |
+          xmake build --yes devbench-tests
+          xmake run devbench-tests
+
       - name: Stage binaries
         shell: pwsh
         run: |
