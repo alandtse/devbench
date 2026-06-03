@@ -1,36 +1,97 @@
-# Release: build the plugin, assemble the mod-archive layout, and publish a GitHub
-# release. Triggered by pushing a vX.Y.Z tag (final release) or run manually
-# (workflow_dispatch → draft pre-release built from the current xmake version).
+# Release pipeline. Every push to main runs semantic-release: it reads the
+# Conventional Commit history (squash-merge makes each PR title the commit subject),
+# picks the next version, bumps `local version` in xmake.lua, commits it back to main
+# (with [skip ci] so it doesn't re-trigger), creates the vX.Y.Z tag, and publishes a
+# GitHub Release whose body is the curated changelog. Downstream jobs then build the
+# plugin, attach the .7z mod archive to that release, and — on the source repo —
+# upload to Nexus with the same changelog.
 #
-# devbench is intentionally light on release machinery: the version lives in
-# xmake.lua and the tag is the source of truth — there is no semantic-release here.
+# Single workflow on purpose (mirrors CrashLoggerSSE): because build/package/nexus
+# run in the same run as semantic-release, they read its outputs directly and nothing
+# depends on the tag push re-triggering another workflow. That's why the default
+# GITHUB_TOKEN suffices — no RELEASE_PAT needed (main is unprotected).
+#
+# workflow_dispatch runs the same path: if there are unreleased commits it cuts the
+# release; otherwise semantic-release no-ops and the build/package/nexus jobs skip.
+# (Manual re-upload of an already-published tag to Nexus lives in nexus-upload.yaml.)
 name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Default to read-only; the two jobs that push commits/tags or publish assets
+# opt into contents: write individually.
 permissions:
   contents: read
 
 jobs:
-  build:
-    uses: ./.github/workflows/_build.yaml
-
-  package:
-    name: Package & publish
-    needs: build
+  semantic-release:
+    name: Semantic Release
     runs-on: ubuntu-latest
+    # Source repo only: forks have no release/Nexus credentials.
+    if: github.repository_owner == 'alandtse'
     permissions:
-      contents: write # create the release + tag
+      contents: write # push the bump commit + tag, create the GitHub Release
+    outputs:
+      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
+      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
+      new_release_git_tag: ${{ steps.semantic.outputs.new_release_git_tag }}
+      new_release_notes: ${{ steps.semantic.outputs.new_release_notes }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          # CommonLibSSE-NG isn't needed to compute the version, but the working
+          # tree must be complete for the @semantic-release/git commit to be clean.
+          submodules: recursive
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Semantic Release
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v6
+        with:
+          # Pin for reproducible releases (matches the sibling repos).
+          semantic_version: 24.2.6
+          # commit-analyzer, release-notes-generator, and github ship with the
+          # action; these two do not, so they're installed on the fly.
+          extra_plugins: |
+            @semantic-release/git
+            @google/semantic-release-replace-plugin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    name: Build release binaries
+    needs: semantic-release
+    if: needs.semantic-release.outputs.new_release_published == 'true'
+    uses: ./.github/workflows/_build.yaml
+    with:
+      # Build the exact tagged commit so the compiled-in version matches the tag.
+      ref: ${{ needs.semantic-release.outputs.new_release_git_tag }}
+
+  package:
+    name: Package & publish
+    needs: [semantic-release, build]
+    if: needs.semantic-release.outputs.new_release_published == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach the .7z asset and promote the draft release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.semantic-release.outputs.new_release_git_tag }}
 
       - name: Download binaries
         uses: actions/download-artifact@v7
@@ -38,29 +99,12 @@ jobs:
           name: ${{ needs.build.outputs.artifact-name }}
           path: bin
 
-      - name: Resolve version
-        id: ver
-        run: |
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            version="${GITHUB_REF#refs/tags/}"
-            prerelease=$([[ "$version" == *-* ]] && echo true || echo false)
-            draft=false
-          else
-            # Manual run → draft pre-release stamped from xmake.lua + run number.
-            base="$(grep -oP 'local version = "\K[0-9.]+' xmake.lua)"
-            version="v${base}-dev.${GITHUB_RUN_NUMBER}"
-            prerelease=true
-            draft=true
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-          echo "draft=$draft" >> "$GITHUB_OUTPUT"
-          echo "Resolved version=$version prerelease=$prerelease draft=$draft"
-
       - name: Assemble mod archive
+        id: pkg
         run: |
           set -euo pipefail
-          stage="devbench-${{ steps.ver.outputs.version }}"
+          tag="${{ needs.semantic-release.outputs.new_release_git_tag }}"
+          stage="devbench-${tag}"
           mkdir -p "$stage/SKSE/Plugins" "$stage/Developer"
           cp bin/devbench.dll bin/devbench.pdb "$stage/SKSE/Plugins/"
           # No config.json: the plugin auto-creates a self-documenting one on first run,
@@ -70,30 +114,37 @@ jobs:
           # MIT C-ABI glue for developers who want to register their own tools.
           cp include/DevBenchAPI.h include/DevBenchAPI.cpp include/DevBenchAPI.LICENSE.txt "$stage/Developer/"
           7z a -t7z -mx=9 "${stage}.7z" "$stage"
+          echo "archive=${stage}.7z" >> "$GITHUB_OUTPUT"
           echo "Built ${stage}.7z:"
           7z l "${stage}.7z"
 
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.ver.outputs.version }}
-          name: devbench ${{ steps.ver.outputs.version }}
-          draft: ${{ steps.ver.outputs.draft }}
-          prerelease: ${{ steps.ver.outputs.prerelease }}
-          generate_release_notes: true
-          files: devbench-${{ steps.ver.outputs.version }}.7z
+      # semantic-release created the GitHub Release as a draft (with the changelog as
+      # its body). Attach the .7z, then promote the draft to published — but only now
+      # that the asset exists. If build or packaging had failed, the release would stay
+      # a hidden draft instead of shipping a tagged release with no download. Using gh
+      # (not a third-party action) keeps draft handling reliable and trims a dependency.
+      - name: Attach archive and publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.semantic-release.outputs.new_release_git_tag }}
+          ARCHIVE: ${{ steps.pkg.outputs.archive }}
+        run: |
+          gh release upload "$TAG" "$ARCHIVE" --clobber
+          gh release edit "$TAG" --draft=false
 
-  # After a stable tag publishes, run the Nexus step. Default is a dry-run (report
-  # only). Set repository variable NEXUS_AUTO_UPLOAD=true (plus the UNEX_* secrets)
-  # to make a stable tag push upload for real — i.e. the full build → release →
-  # Nexus pipeline from a single `git push` of the tag. Pre-release tags (vX.Y.Z-…)
-  # are skipped either way.
+  # Upload to Nexus, reusing semantic-release's curated notes as the changelog.
+  # Default is a dry-run (report only). Set repository variable NEXUS_AUTO_UPLOAD=true
+  # (plus the UNEX_* secrets) to make a push-driven release upload for real.
   nexus:
     name: Nexus upload
-    needs: package
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    needs: [semantic-release, build, package]
+    if: needs.semantic-release.outputs.new_release_published == 'true'
     uses: ./.github/workflows/nexus-upload.yaml
     with:
-      tag: ${{ github.ref_name }}
+      tag: ${{ needs.semantic-release.outputs.new_release_git_tag }}
       dry_run: ${{ vars.NEXUS_AUTO_UPLOAD == 'true' && 'false' || 'true' }}
-    secrets: inherit
+      changelog: ${{ needs.semantic-release.outputs.new_release_notes }}
+    # Pass only the secrets nexus-upload declares, rather than inheriting all of them.
+    secrets:
+      UNEX_NEXUSMODS_SESSION_COOKIE: ${{ secrets.UNEX_NEXUSMODS_SESSION_COOKIE }}
+      UNEX_APIKEY: ${{ secrets.UNEX_APIKEY }}
