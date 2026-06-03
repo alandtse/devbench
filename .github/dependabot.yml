@@ -1,0 +1,16 @@
+# Keep GitHub Actions references fresh. devbench pins action versions by major tag
+# rather than commit SHA — a deliberate, repo-wide choice (see PR #8) — so Dependabot
+# proposes version bumps weekly instead of us tracking them by hand. Updates are
+# grouped into a single PR and use a Conventional Commit prefix so the PR-title lint
+# (.github/workflows/pr-lint.yaml) passes.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
