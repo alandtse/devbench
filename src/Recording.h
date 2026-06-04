@@ -50,6 +50,12 @@ namespace dvb::Recording
 	/// hotkey). Local/per-machine via config (recordIntervalMs). Clamped to the 10ms floor.
 	void SetDefaultIntervalMs(int a_ms);
 
+	/// Scene-coupling defaults from config: the age thresholds (ms) that map a recipe's
+	/// entryPoint.ageMs to the anchored/cell/worldspace tier, and the clean-transition policy
+	/// (bounce a coc/cow restore through a neutral cell to force a loading-screen teardown).
+	/// A recipe's meta.coupling block and a replay call's args override these.
+	void SetCoupling(int a_anchorMs, int a_cellMs, bool a_cleanTransition, const std::string& a_transitionCell);
+
 	/// Show a corner HUD message (marshaled to the main thread). Used for hotkey feedback
 	/// (record start/stop, replay) since devbench is otherwise headless. No-op if no task interface.
 	void Notify(const std::string& a_msg);

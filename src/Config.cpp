@@ -36,6 +36,10 @@ namespace dvb
 				{ "autoRunPath", a_cfg.autoRunPath },
 				{ "autoRunRestoreScene", a_cfg.autoRunRestoreScene },
 				{ "loadSettleMs", a_cfg.loadSettleMs },
+				{ "couplingAnchorMs", a_cfg.couplingAnchorMs },
+				{ "couplingCellMs", a_cfg.couplingCellMs },
+				{ "cleanTransition", a_cfg.cleanTransition },
+				{ "cleanTransitionCell", a_cfg.cleanTransitionCell },
 			};
 			out << j.dump(2) << '\n';
 		}
@@ -70,6 +74,10 @@ namespace dvb
 			cfg.autoRunPath = j.value("autoRunPath", cfg.autoRunPath);
 			cfg.autoRunRestoreScene = j.value("autoRunRestoreScene", cfg.autoRunRestoreScene);
 			cfg.loadSettleMs = j.value("loadSettleMs", cfg.loadSettleMs);
+			cfg.couplingAnchorMs = j.value("couplingAnchorMs", cfg.couplingAnchorMs);
+			cfg.couplingCellMs = j.value("couplingCellMs", cfg.couplingCellMs);
+			cfg.cleanTransition = j.value("cleanTransition", cfg.cleanTransition);
+			cfg.cleanTransitionCell = j.value("cleanTransitionCell", cfg.cleanTransitionCell);
 
 			// Migrate forward: if the file predates any key (e.g. an install from before
 			// the record hotkeys existed), rewrite it so the new keys appear with their
@@ -78,7 +86,8 @@ namespace dvb
 			static constexpr const char* kKeys[] = {
 				"enabled", "port", "logLevel", "recordHotkey", "replayHotkey",
 				"recordHotkeyShift", "replayHotkeyShift", "replayPath", "replayRestoreScene",
-				"recordIntervalMs", "autoRunPath", "autoRunRestoreScene", "loadSettleMs"
+				"recordIntervalMs", "autoRunPath", "autoRunRestoreScene", "loadSettleMs",
+				"couplingAnchorMs", "couplingCellMs", "cleanTransition", "cleanTransitionCell"
 			};
 			const bool complete = std::all_of(std::begin(kKeys), std::end(kKeys),
 				[&](const char* k) { return j.contains(k); });

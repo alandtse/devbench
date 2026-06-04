@@ -79,6 +79,7 @@ namespace
 				dvb::RegisterCoreTools(g_server->Tools(), g_server->Events());
 				dvb::Recording::SetLoadSettleMs(cfg.loadSettleMs);
 				dvb::Recording::SetDefaultIntervalMs(cfg.recordIntervalMs);
+				dvb::Recording::SetCoupling(cfg.couplingAnchorMs, cfg.couplingCellMs, cfg.cleanTransition, cfg.cleanTransitionCell);
 				dvb::ArmAutoRun(g_server->Tools(), cfg.autoRunPath, cfg.autoRunRestoreScene);
 				dvb::HostApi::Init(g_server->Tools(), g_server->Events());
 				g_server->Start();
