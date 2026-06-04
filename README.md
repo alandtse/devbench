@@ -177,6 +177,14 @@ The `record` tool captures a manual play-through as a replayable scenario file:
    benchmark the wrong scene. A `coc`/`cow` restore bounces through a neutral cell first
    (`cleanTransition`) to force a loading-screen teardown that some mods need to avoid a CTD.
 
+A recipe can pin or tune its own coupling in the recording file's `meta.coupling` block,
+overriding the global config thresholds:
+
+```jsonc
+"meta": { "coupling": { "tier": "anchored" } }                 // force a tier, or
+"meta": { "coupling": { "anchorMs": 5000, "cellMs": 30000 } }  // tune the age thresholds
+```
+
 **In-game hotkeys** (configured in `config.json`, opt-in, both default to disabled):
 
 - `recordHotkey` — DXScanCode integer; toggles record start/stop. Ignored while the console is
