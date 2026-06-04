@@ -94,7 +94,7 @@ jobs:
           ref: ${{ needs.semantic-release.outputs.new_release_git_tag }}
 
       - name: Download binaries
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: ${{ needs.build.outputs.artifact-name }}
           path: bin

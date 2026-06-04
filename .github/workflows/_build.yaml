@@ -42,7 +42,7 @@ jobs:
       # xmake-resolved deps (fmt, spdlog, …) and nlohmann_json are — cache them keyed
       # on the lockfile so only a dep bump invalidates the cache.
       - name: Cache xmake packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/AppData/Local/.xmake/packages
