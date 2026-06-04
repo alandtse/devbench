@@ -598,8 +598,65 @@ namespace dvb
 								r["error"] = tr.errorMessage;
 								stepFailed = true;
 							}
+						} else if (step.contains("assert")) {
+							const std::string what = step["assert"].get<std::string>();
+							r["kind"] = "assert";
+							r["assert"] = what;
+							if (what != "scene")
+								throw ToolError(400, std::format("unknown assert '{}' (scene)", what));
+							const bool          interior = step.value("interior", false);
+							const std::uint32_t wsWant = step.value("worldspaceFormID", 0u);
+							const std::uint32_t cellWant = step.value("cellFormID", 0u);
+							const long          timeoutMs = step.value("timeoutMs", static_cast<long>(10000));
+							// The scene may still be loading right after a restore — poll until the
+							// player is loaded, read the current worldspace/cell, compare the coarse id.
+							json       check;
+							bool       ready = false;
+							const auto deadline = steady_clock::now() + milliseconds(timeoutMs);
+							do {
+								try {
+									check = MainThread::RunAndWait([interior, wsWant, cellWant]() -> json {
+										auto* pc = RE::PlayerCharacter::GetSingleton();
+										if (!pc || pc->Get3D() == nullptr)
+											return json{ { "ready", false } };
+										std::uint32_t curWs = 0, curCell = 0;
+										if (auto* ws = pc->GetWorldspace())
+											curWs = ws->GetFormID();
+										if (auto* cell = pc->GetParentCell())
+											curCell = cell->GetFormID();
+										const bool ok = interior ? (curCell == cellWant) : (curWs == wsWant);
+										return json{ { "ready", true }, { "ok", ok }, { "worldspaceFormID", curWs }, { "cellFormID", curCell } };
+									},
+										milliseconds(2000));
+								} catch (const ToolError&) {
+									check = json{ { "ready", false } };  // main thread stalled mid-load — keep polling
+								}
+								if (check.value("ready", false)) {
+									ready = true;
+									break;
+								}
+								std::this_thread::sleep_for(milliseconds(250));
+							} while (steady_clock::now() < deadline);
+
+							if (!ready) {
+								r["errorCode"] = 504;
+								r["error"] = "scene assert: player never finished loading";
+								stepFailed = true;
+							} else if (!check.value("ok", false)) {
+								const std::string wantEid = interior ? step.value("cell", std::string{}) : step.value("worldspace", std::string{});
+								r["errorCode"] = 409;
+								r["error"] = std::format("scene mismatch: recorded {} '{}' (0x{:X}), currently in 0x{:X} — aborting replay",
+									interior ? "cell" : "worldspace", wantEid,
+									interior ? cellWant : wsWant,
+									interior ? check.value("cellFormID", 0u) : check.value("worldspaceFormID", 0u));
+								stepFailed = true;
+							} else {
+								r["ok"] = true;
+								r["worldspaceFormID"] = check.value("worldspaceFormID", 0u);
+								r["cellFormID"] = check.value("cellFormID", 0u);
+							}
 						} else {
-							throw ToolError(400, std::format("step {} has none of wait/waitFor/waitUntil/tool", i));
+							throw ToolError(400, std::format("step {} has none of wait/waitFor/waitUntil/tool/assert", i));
 						}
 					} catch (const ToolError& e) {
 						if (!r.contains("kind"))

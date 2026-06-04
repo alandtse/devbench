@@ -36,13 +36,20 @@ namespace dvb::Recording
 		// reads it at start. Empty kind → entry unknown (player walked here).
 		struct EntryPoint
 		{
-			std::string kind;   // "save" | "coc" | ""
-			std::string value;  // save name | cell id
+			std::string              kind;   // "save" | "coc" | ""
+			std::string              value;  // save name | cell id
+			steady_clock::time_point at{};   // when brokered — for the coupling age (default-constructed = unknown)
 		};
 		std::mutex g_entryMtx;
 		EntryPoint g_entry;
 		int        g_loadSettleMs = 3000;                     // set from config via SetLoadSettleMs
 		long       g_defaultIntervalMs = kDefaultIntervalMs;  // set from config via SetDefaultIntervalMs
+
+		// Scene-coupling defaults (set from config via SetCoupling). See Recording.h.
+		long        g_anchorMs = 10000;
+		long        g_cellMs = 60000;
+		bool        g_cleanTransition = true;
+		std::string g_cleanTransitionCell = "QASmoke";
 
 		// True while devbench is replaying a scenario (teleporting the player). The pose sampler
 		// skips these ticks: the replay's own setpos/setangle commands — captured via the console
@@ -141,9 +148,14 @@ namespace dvb::Recording
 
 			// Reproducible entry point (save/coc devbench brokered), or a loud "unknown" so
 			// a replay won't silently pretend it can restore the scene.
-			if (const EntryPoint e = CurrentEntry(); !e.kind.empty())
-				m["entryPoint"] = json{ { "kind", e.kind }, { "value", e.value } };
-			else
+			if (const EntryPoint e = CurrentEntry(); !e.kind.empty()) {
+				json ep{ { "kind", e.kind }, { "value", e.value } };
+				// Age of the entry at record-start: small => the save/coc was staged for this
+				// recording (couple it tightly); large => incidental. Drives the replay tier.
+				if (e.at.time_since_epoch().count() != 0)
+					ep["ageMs"] = duration_cast<milliseconds>(steady_clock::now() - e.at).count();
+				m["entryPoint"] = std::move(ep);
+			} else
 				m["entryPoint"] = json{ { "kind", "unknown" }, { "note", "no save/coc brokered by devbench before recording; replay cannot restore the scene — load from a save and re-record, or set entryPoint manually" } };
 			return m;
 		}
@@ -365,14 +377,14 @@ namespace dvb::Recording
 	void NoteLoadEntry(const std::string& a_saveName)
 	{
 		std::lock_guard lock(g_entryMtx);
-		g_entry = EntryPoint{ "save", a_saveName };
+		g_entry = EntryPoint{ "save", a_saveName, steady_clock::now() };
 		logs::info("devbench: entry point captured — save '{}'", a_saveName);
 	}
 
 	void NoteCocEntry(const std::string& a_cellId)
 	{
 		std::lock_guard lock(g_entryMtx);
-		g_entry = EntryPoint{ "coc", a_cellId };
+		g_entry = EntryPoint{ "coc", a_cellId, steady_clock::now() };
 	}
 
 	void NoteConsoleCommand(const std::string& a_command)
@@ -425,6 +437,14 @@ namespace dvb::Recording
 		g_defaultIntervalMs = (a_ms < kMinIntervalMs) ? kMinIntervalMs : a_ms;
 	}
 
+	void SetCoupling(int a_anchorMs, int a_cellMs, bool a_cleanTransition, const std::string& a_transitionCell)
+	{
+		g_anchorMs = (a_anchorMs < 0) ? 0 : a_anchorMs;
+		g_cellMs = (a_cellMs < a_anchorMs) ? a_anchorMs : a_cellMs;  // cell window must cover the anchor window
+		g_cleanTransition = a_cleanTransition;
+		g_cleanTransitionCell = a_transitionCell;
+	}
+
 	json BuildReplaySteps(const json& a_args)
 	{
 		std::string path = a_args.value("path", std::string{});
@@ -462,33 +482,92 @@ namespace dvb::Recording
 
 		json steps = json::array();
 
-		// restoreScene: re-establish the recorded entry point so the trajectory runs in the
-		// scene it was captured in (loading the save also restores its time/weather). Without
-		// it, replay just teleports along the path in whatever scene is currently loaded.
-		if (a_args.value("restoreScene", false)) {
-			const json        meta = rec.value("meta", json::object());
-			const json        entry = meta.value("entryPoint", json::object());
-			const std::string kind = entry.value("kind", std::string{});
-			const std::string value = entry.value("value", std::string{});
+		const json        meta = rec.value("meta", json::object());
+		const json        entry = meta.value("entryPoint", json::object());
+		const std::string kind = entry.value("kind", std::string{});
+		const std::string value = entry.value("value", std::string{});
+
+		// Recorded scene identity (for the assert + tier). Interiors carry no worldspace.
+		const bool          interior = meta.value("interior", false);
+		const std::uint32_t wsFormID = meta.value("worldspaceFormID", static_cast<std::uint32_t>(0));
+		const std::uint32_t cellFormID = meta.value("cellFormID", static_cast<std::uint32_t>(0));
+		const bool          haveScene = interior ? (cellFormID != 0) : (wsFormID != 0);
+
+		// Coupling tier: a recipe may pin it (or its thresholds) in meta.coupling; otherwise
+		// classify entryPoint.ageMs against the config windows. Unknown age (old recipe / a
+		// walked-in entry) → "cell": restore best-effort and assert the scene.
+		const json  coupling = meta.value("coupling", json::object());
+		const long  anchorMs = coupling.value("anchorMs", g_anchorMs);
+		const long  cellMs = coupling.value("cellMs", g_cellMs);
+		std::string tier = coupling.value("tier", std::string{});
+		if (tier.empty()) {
+			if (entry.contains("ageMs")) {
+				const std::int64_t age = entry.value("ageMs", static_cast<std::int64_t>(0));
+				tier = (age <= anchorMs) ? "anchored" : (age <= cellMs) ? "cell" :
+				                                                          "worldspace";
+			} else {
+				tier = "cell";
+			}
+		}
+
+		const bool restoreScene = a_args.value("restoreScene", false);
+		const long settleMs = a_args.value("settleMs", static_cast<long>(g_loadSettleMs));
+		const bool cleanTransition = a_args.value("cleanTransition", g_cleanTransition);
+
+		// Restore the recorded entry, per tier. "worldspace" treats the entry as incidental and
+		// skips the restore — it only requires landing in the recorded worldspace, which the
+		// assert below enforces (the trajectory's own cow/setpos handle the positioning).
+		bool restored = false;
+		if (restoreScene && tier != "worldspace" && !kind.empty() && kind != "unknown") {
 			if (kind == "save" && !value.empty()) {
-				// game load (by name) skips the content-mismatch modal. Wait on the
-				// postLoadGame lifecycle EVENT, not waitUntil playerLoaded: when reloading the
-				// save we're already in, playerLoaded reads true before the reload cycles, so it
-				// would short-circuit; postLoadGame fires only when the load actually completes.
+				// game load (by name) skips the content-mismatch modal and is a full teardown +
+				// loading screen on its own. Wait on postLoadGame, not playerLoaded: reloading the
+				// save we're already in, playerLoaded reads true before the reload cycles.
 				steps.push_back(json{ { "tool", "game" }, { "args", json{ { "action", "load" }, { "name", value } } } });
 				steps.push_back(json{ { "waitFor", "postLoadGame" }, { "timeoutMs", 60000 } });
+				restored = true;
 			} else if (kind == "coc" && !value.empty()) {
+				// A raw coc can stream without the loading-screen teardown some mods rely on to
+				// free resources (→ CTD). Bounce through a neutral interior first to force a clean
+				// loading screen (save-loads already tear down, so they skip this).
+				if (cleanTransition && !g_cleanTransitionCell.empty() && g_cleanTransitionCell != value) {
+					steps.push_back(json{ { "tool", "console" }, { "args", json{ { "action", "exec" }, { "command", "coc " + g_cleanTransitionCell } } } });
+					steps.push_back(json{ { "waitUntil", "playerLoaded" }, { "timeoutMs", 60000 } });
+					if (settleMs > 0)
+						steps.push_back(json{ { "wait", settleMs } });
+				}
 				steps.push_back(json{ { "tool", "console" }, { "args", json{ { "action", "exec" }, { "command", "coc " + value } } } });
 				steps.push_back(json{ { "waitUntil", "playerLoaded" }, { "timeoutMs", 60000 } });
-			} else {
+				restored = true;
+				// anchored: a save-load would restore time/weather, but a coc doesn't — re-apply
+				// the recorded lighting so the shader benchmark stays comparable.
+				if (tier == "anchored") {
+					if (meta.contains("gameHour"))
+						steps.push_back(json{ { "tool", "console" }, { "args", json{ { "action", "exec" }, { "command", std::format("set gamehour to {}", meta.value("gameHour", 12.0)) } } } });
+					if (meta.contains("weatherFormID"))
+						steps.push_back(json{ { "tool", "console" }, { "args", json{ { "action", "exec" }, { "command", std::format("fw {:X}", meta.value("weatherFormID", static_cast<std::uint32_t>(0))) } } } });
+				}
+			}
+			if (restored && settleMs > 0)
+				steps.push_back(json{ { "wait", settleMs } });
+			if (!restored)
 				logs::warn("devbench record(replay): restoreScene requested but entryPoint is '{}' — running trajectory without scene restore",
 					kind.empty() ? "unknown" : kind);
-			}
-			// Settle after the load before teleporting (local/per-machine; overridable per call).
-			// Only when a load was actually prefixed (steps non-empty) — no load, no settle.
-			const long settleMs = a_args.value("settleMs", static_cast<long>(g_loadSettleMs));
-			if (!steps.empty() && settleMs > 0)
-				steps.push_back(json{ { "wait", settleMs } });
+		}
+
+		// Assert we're in the recorded scene before the trajectory runs, so a wrong worldspace
+		// (e.g. coc ambiguity landing in Soul Cairn) aborts the replay instead of producing a
+		// bogus benchmark. Runs even without a restore — catches an in-place replay in the wrong
+		// scene. Coarse by design: the parent cell (interior) or the worldspace (exterior).
+		if (haveScene) {
+			steps.push_back(json{
+				{ "assert", "scene" },
+				{ "interior", interior },
+				{ "worldspaceFormID", wsFormID },
+				{ "cellFormID", cellFormID },
+				{ "worldspace", meta.value("worldspace", std::string{}) },
+				{ "cell", meta.value("cell", std::string{}) },
+			});
 		}
 
 		// Copy the trajectory, injecting a load-settle after any captured cell transition (coc/cow):

@@ -114,6 +114,21 @@ Missing → auto-created with defaults. Invalid → defaults (logged). All keys 
   // Settle delay (ms) after a restore-load before the replayed trajectory runs.
   // Hardware-dependent; not baked into the portable recording file.
   "loadSettleMs": 3000,
+
+  // Scene coupling: how strictly a replay reproduces the recorded entry, by how long
+  // before record-start the save/coc was brokered (stored per recipe as entryPoint.ageMs).
+  //   age <= couplingAnchorMs : "anchored" — restore the entry + re-apply recorded time/weather
+  //   age <= couplingCellMs   : "cell"     — restore the entry
+  //   else                    : "worldspace" — skip the restore; only assert the worldspace
+  // A recipe may override the tier/thresholds in its meta.coupling block.
+  "couplingAnchorMs": 10000,
+  "couplingCellMs": 60000,
+
+  // A raw coc/cow can stream between scenes without the loading-screen teardown some mods
+  // need to free resources (→ CTD). When true, a coc/cow restore first bounces through
+  // cleanTransitionCell to force a clean loading screen. Save-loads already tear down.
+  "cleanTransition": true,
+  "cleanTransitionCell": "QASmoke",
 }
 ```
 
@@ -154,7 +169,13 @@ The `record` tool captures a manual play-through as a replayable scenario file:
    `Data/SKSE/Plugins/devbench/recordings/recording_<stamp>.json` and the path is returned.
 4. Replay with `record action='replay' path='<file>'`. With `restoreScene=true` (default for
    hotkey replay), devbench first re-establishes the entry point (loads the save / `coc`s the
-   cell) and waits for the player before running the trajectory.
+   cell) and waits for the player before running the trajectory. How tightly it reproduces the
+   entry depends on the **coupling tier** (anchored / cell / worldspace), chosen from how long
+   before recording the entry was set up — see `couplingAnchorMs`/`couplingCellMs`. Before the
+   trajectory runs, devbench **asserts** you're in the recorded worldspace/cell and aborts on a
+   mismatch (e.g. `coc` ambiguity landing you in the wrong worldspace), so a replay can't quietly
+   benchmark the wrong scene. A `coc`/`cow` restore bounces through a neutral cell first
+   (`cleanTransition`) to force a loading-screen teardown that some mods need to avoid a CTD.
 
 **In-game hotkeys** (configured in `config.json`, opt-in, both default to disabled):
 

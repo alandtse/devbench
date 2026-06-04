@@ -34,6 +34,23 @@ namespace dvb
 		// crash-prone. This is LOCAL/per-machine (settle time is hardware-dependent), not baked
 		// into the portable recording. A replay call may override it with a settleMs arg.
 		int loadSettleMs = 3000;
+
+		// Scene coupling: how strictly a replay must reproduce the recorded entry, chosen by
+		// how long before record-start devbench brokered the save/coc (stored per recipe as
+		// entryPoint.ageMs). A save staged seconds before recording was deliberate; one from
+		// minutes ago was incidental. Tiers (a recipe may override in its meta.coupling block):
+		//   age <= anchorMs : "anchored" — restore the entry + re-apply recorded time/weather.
+		//   age <= cellMs    : "cell"     — restore the entry.
+		//   else             : "worldspace" — skip the entry restore; only assert the worldspace.
+		int couplingAnchorMs = 10000;
+		int couplingCellMs = 60000;
+
+		// A raw coc/cow can stream between scenes without the full loading-screen teardown some
+		// mods rely on to free resources, which can CTD. When true, a coc/cow restore first
+		// bounces through couplingTransitionCell (a known-present interior) to force a clean
+		// loading screen. Save-loads already tear down, so they skip the bounce.
+		bool        cleanTransition = true;
+		std::string cleanTransitionCell = "QASmoke";
 	};
 
 	// Load Data/SKSE/Plugins/devbench/config.json. If the file is missing it is
