@@ -64,6 +64,28 @@ returns JSON carrying a `plugin` field (liveness check).
 | `test_inspect.py` | `inspect` state / vm / scene / refs                                                    |
 | `test_papyrus.py` | `papyrus` list / describe / call (globals + members) + error                           |
 | `test_menu.py`    | `menu` list, and the open→list→close round-trip (guarded)                              |
+| `examples/`       | hand-run example recipes (not collected by pytest) — see below                         |
+
+## Examples
+
+`examples/combat_arena.py` is a hand-run recipe (not a CI test — it mutates game
+state heavily and runs ~1 min) that drives, forces, and **resolves** a 3-way
+combat scene through the REST API. It `tgm`s the player, spawns three factions on
+the player, then each tick gathers the survivors onto the player
+(`ObjectReference.MoveTo`) and forces the 3-way (`Actor.StartCombat`), reporting
+live per-team counts until one team is left standing.
+
+```sh
+# with an in-world save already loaded:
+python tests/http/examples/combat_arena.py
+# -> ... WINNER: Stormcloaks (3/5 survived)
+```
+
+Its header documents the Skyrim-engine constraints it works around (high-process
+zone, scatter/de-aggro, unreliable faction hostility, `player.`-only console
+commands). It relies on devbench padding omitted optional args — `MoveTo` and
+`StartCombat` both have optionals and otherwise dispatch-but-no-op. Use it as a
+template for scripting your own combat/AI scenarios.
 
 ## Environment variables
 
