@@ -450,12 +450,19 @@ namespace dvb
 					if (!formId.empty()) {
 						// Explicit 0x.. → FormID; otherwise EditorID first (so an all-hex EditorID
 						// isn't misread as a FormID), then a bare hex FormID fallback.
+						// Whole-string + 32-bit-range hex, so "14G" / overflow don't truncate to a
+						// valid FormID and resolve the wrong form.
 						auto byHex = [](const std::string& s) -> RE::TESForm* {
+							std::size_t        consumed = 0;
+							unsigned long long id = 0;
 							try {
-								return RE::TESForm::LookupByID(static_cast<RE::FormID>(std::stoul(s, nullptr, 16)));
+								id = std::stoull(s, &consumed, 16);
 							} catch (...) {
 								return nullptr;
 							}
+							if (consumed != s.size() || id > 0xFFFFFFFFull)
+								return nullptr;
+							return RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
 						};
 						RE::TESForm* f = nullptr;
 						if (formId.size() > 2 && formId[0] == '0' && (formId[1] == 'x' || formId[1] == 'X'))

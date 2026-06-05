@@ -115,8 +115,8 @@ def test_call_bogus_function_errors(client, papyrus):
         "papyrus",
         {"action": "call", "script": "Utility", "function": "NoSuchFunctionXYZ"},
     )
-    # A non-existent function must fail cleanly with a client error (404 not-found
-    # here), never dispatch into the VM — an unresolved global dispatch is a CTD.
-    assert 400 <= status < 500, (status, body)
+    # A non-existent function must fail cleanly with 404 (deterministic) and never
+    # dispatch into the VM — an unresolved global dispatch is a CTD.
+    assert status == 404, (status, body)
     assert isinstance(body, dict) and "error" in body, body
-    assert body.get("code") == status, body
+    assert body.get("code") == 404, body

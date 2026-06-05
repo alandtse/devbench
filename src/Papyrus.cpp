@@ -97,14 +97,20 @@ namespace dvb::Papyrus
 			return nullptr;  // none — see returnedType
 		}
 
-		// Parse a "0x.."-style hex FormID (after an optional 0x prefix), or nullptr.
+		// Parse a hex FormID, or nullptr. Requires the WHOLE string to be hex and in 32-bit range
+		// — std::stoul would otherwise accept "14G" as 0x14 and silently truncate overflow.
 		RE::TESForm* FormByHex(const std::string& a_hex)
 		{
+			std::size_t        consumed = 0;
+			unsigned long long id = 0;
 			try {
-				return RE::TESForm::LookupByID(static_cast<RE::FormID>(std::stoul(a_hex, nullptr, 16)));
+				id = std::stoull(a_hex, &consumed, 16);
 			} catch (...) {
 				return nullptr;
 			}
+			if (consumed != a_hex.size() || id > 0xFFFFFFFFull)
+				return nullptr;
+			return RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
 		}
 
 		// Resolve a form reference to a TESForm, or nullptr. An explicit `0x..` is a FormID;
@@ -410,14 +416,22 @@ namespace dvb::Papyrus
 				}
 			}
 
-			// Bind to the form's NATIVE script type, not the caller's `script`: BindID's
-			// HandleIsType check is exact, so binding e.g. an Actor handle to a parent class
-			// ("ObjectReference") fails silently. The bound object's hierarchy still satisfies the
-			// function (an Actor has ObjectReference.GetDistance). Fall back to the caller's class.
-			RE::BSFixedString                             bindClass = a_className;
-			RE::BSTSmartPointer<BSScript::ObjectTypeInfo> nativeType;
-			if (a_vm->GetScriptObjectType(static_cast<RE::VMTypeID>(form->GetFormType()), nativeType) && nativeType && nativeType->GetName())
-				bindClass = nativeType->GetName();
+			// Prefer the caller's `script` when the form actually IS that type — an attached
+			// custom script, or the form's exact native type — so a member call on an attached
+			// script resolves there. Only when it isn't (e.g. `script` is a parent class like
+			// "ObjectReference" for an Actor, where BindID's exact HandleIsType would fail silently)
+			// fall back to the form's native type, whose hierarchy still satisfies the function
+			// (an Actor has ObjectReference.GetDistance).
+			RE::BSFixedString bindClass = a_className;
+			auto*             policy = a_vm->GetObjectHandlePolicy();
+			RE::VMTypeID      reqTypeID{};
+			const auto        handle = policy ? policy->GetHandleForObject(static_cast<RE::VMTypeID>(form->GetFormType()), form) : RE::VMHandle{};
+			const bool        isRequestedType = policy && a_vm->GetTypeIDForScriptObject(a_className, reqTypeID) && policy->HandleIsType(reqTypeID, handle);
+			if (!isRequestedType) {
+				RE::BSTSmartPointer<BSScript::ObjectTypeInfo> nativeType;
+				if (a_vm->GetScriptObjectType(static_cast<RE::VMTypeID>(form->GetFormType()), nativeType) && nativeType && nativeType->GetName())
+					bindClass = nativeType->GetName();
+			}
 
 			a_out = BindFormObject(a_vm, form, bindClass.c_str());
 			if (!a_out) {
