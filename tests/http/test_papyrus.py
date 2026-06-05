@@ -109,6 +109,22 @@ def test_call_member_getnumitems(client, papyrus):
     assert returned >= 0, body
 
 
+@pytest.mark.requires_player
+def test_call_async_fire_and_forget(client, papyrus):
+    # A latent function (Utility.Wait yields in the VM) with async=true must return
+    # as soon as the call is ISSUED — { called, async, returned:null } — rather than
+    # blocking on the late callback (which would otherwise risk a 504).
+    require_enum(papyrus, "action", "call")
+    body = client.ok(
+        "papyrus",
+        {"action": "call", "script": "Utility", "function": "Wait",
+         "args": [0.1], "async": True},
+    )
+    assert body.get("called") is True, body
+    assert body.get("async") is True, body
+    assert body.get("returned") is None, body
+
+
 def test_call_bogus_function_errors(client, papyrus):
     require_enum(papyrus, "action", "call")
     status, body = client.call(

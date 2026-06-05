@@ -17,7 +17,8 @@ namespace dvb
 		///                       form (`self`, DispatchMethodCall) and return the value
 		///
 		/// Unlike console `cgf`, 'call' hands the return value back. Scalars, forms, and scalar
-		/// arrays are supported both directions. See Papyrus.cpp.
+		/// arrays are supported both directions. Pass `async`=true for fire-and-forget (returns once
+		/// the call is issued, no value) so latent functions like MoveTo don't 504. See Papyrus.cpp.
 		json Handle(const json& a_args, const ToolContext& a_ctx);
 	}
 }

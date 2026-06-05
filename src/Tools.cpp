@@ -1034,7 +1034,9 @@ namespace dvb
 			"any form, or \"selected\" uses the console/crosshair ref (set via prid); without 'self' "
 			"only global/native functions are callable. args and returns support bool/number/string, "
 			"{ \"form\": … } (a form return resolves to { formId, formType, editorId, name }), and "
-			"arrays of scalars.";
+			"arrays of scalars. Pass 'async':true for fire-and-forget — the call returns as soon as "
+			"it is issued (no value), so latent functions like ObjectReference.MoveTo don't stall the "
+			"request waiting on their late callback.";
 		papyrus.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
@@ -1046,6 +1048,7 @@ namespace dvb
 								{ "filter", json{ { "type", "string" }, { "description", "list: case-insensitive substring to match class names" } } },
 								{ "limit", json{ { "type", "integer" }, { "description", "list: max class names to return (default 200)" } } },
 								{ "timeoutMs", json{ { "type", "integer" }, { "description", "call: ms to wait for the result before 504 (default 3000)" } } },
+								{ "async", json{ { "type", "boolean" }, { "description", "call: fire-and-forget — return once the call is issued, without the value. Use for latent functions (MoveTo, PathToReference) that would otherwise 504." } } },
 							} },
 		};
 		a_registry.Register(std::move(papyrus), &Papyrus::Handle);

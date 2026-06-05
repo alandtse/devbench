@@ -288,9 +288,10 @@ namespace dvb::Papyrus
 		{
 			std::mutex              m;
 			std::condition_variable cv;
-			bool                    done = false;
-			int                     status = 400;  // HTTP status to surface when `error` is set
-			std::string             error;         // non-empty → arg-build / bind / dispatch failed
+			bool                    dispatched = false;  // the call was issued into the VM (result may still be pending)
+			bool                    done = false;        // the result (or a failure) has arrived
+			int                     status = 400;        // HTTP status to surface when `error` is set
+			std::string             error;               // non-empty → arg-build / bind / dispatch failed
 			BSScript::Variable      result;
 		};
 
@@ -448,6 +449,7 @@ namespace dvb::Papyrus
 			if (script.empty() || function.empty())
 				throw ToolError(400, "papyrus call requires 'script' and 'function'");
 			const int  timeoutMs = a_args.value("timeoutMs", 3000);
+			const bool async = a_args.value("async", false);
 			const json argsJson = a_args.contains("args") ? a_args["args"] : json::array();
 			if (!argsJson.is_array())
 				throw ToolError(400, "papyrus call: 'args' must be an array");
@@ -535,12 +537,38 @@ namespace dvb::Papyrus
 
 				RE::BSTSmartPointer<BSScript::IStackCallbackFunctor> cb(new CallFunctor(state));
 				const bool                                           ok = hasSelf ? vm->DispatchMethodCall(selfObj, fn, rawArgs, cb) : vm->DispatchStaticCall(cls, fn, rawArgs, cb);
-				if (!ok)
+				if (!ok) {
 					fail(400, hasSelf ? "method dispatch refused — unknown function, wrong arg count, or not a member of that object's script" : "dispatch refused — unknown function, wrong arg count, or not a global/native function");
+					return;
+				}
+				// The call is now in the VM. Signal `dispatched` so an async caller can return
+				// without waiting for the result (latent functions like MoveTo never call back
+				// until game time advances, which would otherwise stall the request).
+				std::lock_guard<std::mutex> lk(state->m);
+				state->dispatched = true;
+				state->cv.notify_all();
 			});
 
 			std::unique_lock<std::mutex> lk(state->m);
-			const bool                   completed = state->cv.wait_for(lk, std::chrono::milliseconds(timeoutMs),
+
+			// Fire-and-forget: wait only until the call is ISSUED into the VM (or fails to
+			// build/dispatch), then return without the value. Lets latent functions (MoveTo,
+			// PathToReference, …) run without stalling the request on their late callback.
+			if (async) {
+				const bool issued = state->cv.wait_for(lk, std::chrono::milliseconds(timeoutMs),
+					[&] { return state->dispatched || state->done; });
+				if (state->done && !state->error.empty())
+					throw ToolError(state->status, std::format("papyrus call '{}.{}': {}", script, function, state->error));
+				if (!issued)
+					throw ToolError(504, std::format("papyrus call '{}.{}' could not be issued within {}ms (VM stalled?)", script, function, timeoutMs));
+				return json{
+					{ "called", true },
+					{ "async", true },
+					{ "returned", nullptr },
+				};
+			}
+
+			const bool completed = state->cv.wait_for(lk, std::chrono::milliseconds(timeoutMs),
 				[&] { return state->done; });
 			if (!completed)
 				throw ToolError(504, std::format("papyrus call '{}.{}' did not complete within {}ms (latent call or VM stalled?)", script, function, timeoutMs));

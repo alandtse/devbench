@@ -64,6 +64,25 @@ returns JSON carrying a `plugin` field (liveness check).
 | `test_inspect.py` | `inspect` state / vm / scene / refs                                                    |
 | `test_papyrus.py` | `papyrus` list / describe / call (globals + members) + error                           |
 | `test_menu.py`    | `menu` list, and the open→list→close round-trip (guarded)                              |
+| `examples/`       | hand-run example recipes (not collected by pytest) — see below                         |
+
+## Examples
+
+`examples/combat_arena.py` is a hand-run recipe (not a CI test — it mutates game
+state heavily and its outcome is non-deterministic) that drives a **3-way combat
+scene** through the REST API: it `tgm`s the player, spawns three mutually-hostile
+factions on the player, and reports live per-team standings until a team is wiped
+or the window elapses.
+
+```sh
+# with an in-world save already loaded:
+python tests/http/examples/combat_arena.py
+```
+
+Its header documents the Skyrim-engine constraints it works around — spawn in the
+player's high-process zone, only `player.`-prefixed console commands take effect,
+read/measure via papyrus member calls, and use `papyrus async:true` for latent
+functions. Use it as a template for scripting your own combat/AI scenarios.
 
 ## Environment variables
 
