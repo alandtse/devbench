@@ -48,8 +48,9 @@ automated new-game → in-world flows stall on a popup.
 
 - Read: `menu list`/`describe` — currently-open menus via `RE::UI`; `MessageBoxMenu` body +
   buttons read directly off `MessageBoxMenu::GetCurrentMessageBoxData()`, no GFx scrape.
-- Act: `menu accept`/`close` via `MessageBoxMenu::SelectOption(index)` — answers + dismisses with
-  no `QueueMessage` detour. `menu open` is the symmetric `kShow` of `close` — `UIMessageQueue`
+- Act: `menu accept` via `MessageBoxMenu::SelectOption(index)` — answers + dismisses a modal with
+  no `QueueMessage` detour; `menu close` hides any menu by name via `UIMessageQueue` (`kHide`).
+  `menu open` is the symmetric `kShow` of `close` — `UIMessageQueue`
   instantiates a registered menu via its factory, so a plain name opens hub menus (`TweenMenu`,
   `Journal Menu`, `MagicMenu`, …); context menus needing a target ref are out of scope for the
   bare-name path. **Validated live on AE 1.6.1170** (read a "missing content / Continue

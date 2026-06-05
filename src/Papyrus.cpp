@@ -97,66 +97,94 @@ namespace dvb::Papyrus
 			return nullptr;  // none — see returnedType
 		}
 
-		// Resolve a "0x14"-style formId (hex) or EditorID to a form, or nullptr.
+		// Parse a hex FormID, or nullptr. Requires the WHOLE string to be hex and in 32-bit range
+		// — std::stoul would otherwise accept "14G" as 0x14 and silently truncate overflow.
+		RE::TESForm* FormByHex(const std::string& a_hex)
+		{
+			std::size_t        consumed = 0;
+			unsigned long long id = 0;
+			try {
+				id = std::stoull(a_hex, &consumed, 16);
+			} catch (...) {
+				return nullptr;
+			}
+			if (consumed != a_hex.size() || id > 0xFFFFFFFFull)
+				return nullptr;
+			return RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
+		}
+
+		// Resolve a form reference to a TESForm, or nullptr. An explicit `0x..` is a FormID;
+		// otherwise try EditorID first (so an all-hex EditorID isn't misread as a FormID), then
+		// fall back to a bare hex FormID (the `14` shorthand).
 		RE::TESForm* LookupForm(const std::string& a_ref)
 		{
-			RE::TESForm* form = nullptr;
-			try {
-				form = RE::TESForm::LookupByID(static_cast<RE::FormID>(std::stoul(a_ref, nullptr, 16)));
-			} catch (...) {
-			}
-			if (!form)
-				form = RE::TESForm::LookupByEditorID(a_ref);
-			return form;
+			if (a_ref.size() > 2 && a_ref[0] == '0' && (a_ref[1] == 'x' || a_ref[1] == 'X'))
+				return FormByHex(a_ref.substr(2));
+			if (auto* form = RE::TESForm::LookupByEditorID(a_ref))
+				return form;
+			return FormByHex(a_ref);
+		}
+
+		// Find or create+bind a script Object of `a_className` for `a_form` — the engine's own
+		// form→Papyrus binding (FindBoundObject → CreateObject → BindID; see CommonLib PackUnpack).
+		// Dispatching/packing on a form that isn't bound is what CTD'd. Null if it can't bind.
+		RE::BSTSmartPointer<BSScript::Object> BindFormObject(BSScript::Internal::VirtualMachine* a_vm, RE::TESForm* a_form, const char* a_className)
+		{
+			RE::BSTSmartPointer<BSScript::Object> obj;
+			auto*                                 policy = a_vm->GetObjectHandlePolicy();
+			if (!policy || !a_className)
+				return obj;
+			const auto typeID = static_cast<RE::VMTypeID>(a_form->GetFormType());
+			const auto handle = policy->GetHandleForObject(typeID, a_form);
+			if (handle == policy->EmptyHandle())
+				return obj;
+			if (!a_vm->FindBoundObject(handle, a_className, obj) || !obj)
+				if (a_vm->CreateObject(a_className, obj) && obj)
+					RE::BSScript::BindID(obj, a_form, typeID);
+			return obj;
 		}
 
 		BSScript::Variable JsonToVariable(BSScript::Internal::VirtualMachine* a_vm, const json& a_arg, const BSScript::TypeInfo* a_paramType = nullptr);
 
 		// Pack a form into a Variable typed as `a_paramType` expects. PackHandle would type the
 		// form as its *native* class, which a param declared as a base class (Form/ObjectReference)
-		// rejects; binding to the param's class instead lets the upcast bind. Falls back to native
-		// packing when the param type is unknown or not an object.
+		// rejects; binding to the param's class lets the upcast bind. Native fallback otherwise.
 		void PackFormToParam(BSScript::Internal::VirtualMachine* a_vm, RE::TESForm* a_form, const BSScript::TypeInfo& a_paramType, BSScript::Variable& a_out)
 		{
-			const auto formTypeID = static_cast<RE::VMTypeID>(a_form->GetFormType());
-			if (a_paramType.IsObject()) {
-				if (auto* paramClass = a_paramType.GetTypeInfo(); paramClass && paramClass->GetName()) {
-					if (auto* policy = a_vm->GetObjectHandlePolicy()) {
-						const auto                            handle = policy->GetHandleForObject(formTypeID, a_form);
-						RE::BSTSmartPointer<BSScript::Object> obj;
-						if (!a_vm->FindBoundObject(handle, paramClass->GetName(), obj) || !obj) {
-							if (a_vm->CreateObject(paramClass->GetName(), obj) && obj)
-								RE::BSScript::BindID(obj, a_form, formTypeID);
-						}
-						if (obj) {
-							a_out.SetObject(obj, a_paramType.GetRawType());
-							return;
-						}
+			if (a_paramType.IsObject())
+				if (auto* paramClass = a_paramType.GetTypeInfo(); paramClass)
+					if (auto obj = BindFormObject(a_vm, a_form, paramClass->GetName())) {
+						a_out.SetObject(obj, a_paramType.GetRawType());
+						return;
 					}
-				}
-			}
-			BSScript::PackHandle(&a_out, a_form, formTypeID);  // native fallback
+			BSScript::PackHandle(&a_out, a_form, static_cast<RE::VMTypeID>(a_form->GetFormType()));
 		}
 
-		// Build a typed Papyrus Array from a homogeneous JSON array (scalars only). The element
-		// type is taken from the first element; empty arrays can't be typed, so they're rejected.
+		// Build a typed Papyrus Array from a JSON array of scalars. The element type comes from
+		// the contents (a typed Papyrus array can't be inferred from an empty list, so empty is
+		// rejected) and every element must share one kind — a mixed array would otherwise be packed
+		// as the first element's type and mis-typed silently. Int promotes to Float if any element
+		// is fractional.
 		BSScript::Variable JsonArrayToVariable(BSScript::Internal::VirtualMachine* a_vm, const json& a_arr)
 		{
 			using Raw = BSScript::TypeInfo::RawType;
+			// kind: bool / number / string — the homogeneity classes (int vs float both number)
+			auto kind = [](const json& e) -> int { return e.is_boolean() ? 0 : e.is_number() ? 1 :
+				                                                           e.is_string()     ? 2 :
+				                                                                               -1; };
 			if (a_arr.empty())
 				throw ToolError(400, "papyrus call: empty array args can't be typed — pass a non-empty array");
-			const auto& first = a_arr.front();
-			Raw         elem;
-			if (first.is_boolean())
-				elem = Raw::kBool;
-			else if (first.is_number_float())
-				elem = Raw::kFloat;
-			else if (first.is_number())
-				elem = Raw::kInt;
-			else if (first.is_string())
-				elem = Raw::kString;
-			else
+			const int k0 = kind(a_arr.front());
+			if (k0 < 0)
 				throw ToolError(400, "papyrus call: array args support only bool/number/string elements");
+			bool anyFloat = false;
+			for (const auto& e : a_arr) {
+				if (kind(e) != k0)
+					throw ToolError(400, "papyrus call: array args must be homogeneous (all bool, all number, or all string)");
+				anyFloat = anyFloat || e.is_number_float();
+			}
+			const Raw elem = (k0 == 0) ? Raw::kBool : (k0 == 2) ? Raw::kString :
+			                                                      (anyFloat ? Raw::kFloat : Raw::kInt);
 
 			RE::BSTSmartPointer<BSScript::Array> array;
 			if (!a_vm->CreateArray(BSScript::TypeInfo(elem), static_cast<std::uint32_t>(a_arr.size()), array) || !array)
@@ -261,7 +289,8 @@ namespace dvb::Papyrus
 			std::mutex              m;
 			std::condition_variable cv;
 			bool                    done = false;
-			std::string             error;  // non-empty → arg-build / dispatch failed (400)
+			int                     status = 400;  // HTTP status to surface when `error` is set
+			std::string             error;         // non-empty → arg-build / bind / dispatch failed
 			BSScript::Variable      result;
 		};
 
@@ -387,36 +416,24 @@ namespace dvb::Papyrus
 				}
 			}
 
-			auto* policy = a_vm->GetObjectHandlePolicy();
-			if (!policy) {
-				a_err = "object handle policy unavailable";
-				return false;
+			// Prefer the caller's `script` when the form actually IS that type — an attached
+			// custom script, or the form's exact native type — so a member call on an attached
+			// script resolves there. Only when it isn't (e.g. `script` is a parent class like
+			// "ObjectReference" for an Actor, where BindID's exact HandleIsType would fail silently)
+			// fall back to the form's native type, whose hierarchy still satisfies the function
+			// (an Actor has ObjectReference.GetDistance).
+			RE::BSFixedString bindClass = a_className;
+			auto*             policy = a_vm->GetObjectHandlePolicy();
+			RE::VMTypeID      reqTypeID{};
+			const auto        handle = policy ? policy->GetHandleForObject(static_cast<RE::VMTypeID>(form->GetFormType()), form) : RE::VMHandle{};
+			const bool        isRequestedType = policy && a_vm->GetTypeIDForScriptObject(a_className, reqTypeID) && policy->HandleIsType(reqTypeID, handle);
+			if (!isRequestedType) {
+				RE::BSTSmartPointer<BSScript::ObjectTypeInfo> nativeType;
+				if (a_vm->GetScriptObjectType(static_cast<RE::VMTypeID>(form->GetFormType()), nativeType) && nativeType && nativeType->GetName())
+					bindClass = nativeType->GetName();
 			}
-			const auto typeID = static_cast<RE::VMTypeID>(form->GetFormType());
 
-			// Bind to the form's NATIVE script type, not the caller's `script`. BindID's
-			// HandleIsType check is exact, so binding an Actor handle to a parent class
-			// (e.g. "ObjectReference") fails silently and the object stays unbound. The bound
-			// object's hierarchy still satisfies the function (an Actor has ObjectReference's
-			// GetDistance), and the dispatch resolves it. Fall back to the caller's class.
-			RE::BSFixedString                             bindClass = a_className;
-			RE::BSTSmartPointer<BSScript::ObjectTypeInfo> nativeType;
-			if (a_vm->GetScriptObjectType(typeID, nativeType) && nativeType && nativeType->GetName())
-				bindClass = nativeType->GetName();
-
-			const auto handle = policy->GetHandleForObject(typeID, form);
-			if (handle == policy->EmptyHandle()) {
-				a_err = std::format("could not get a VM handle for form 0x{:08X}", form->GetFormID());
-				return false;
-			}
-			// Find the existing binding, or create one and bind the form to it.
-			if (!a_vm->FindBoundObject(handle, bindClass.c_str(), a_out) || !a_out) {
-				if (!a_vm->CreateObject(bindClass, a_out) || !a_out) {
-					a_err = std::format("could not create a '{}' script object for form 0x{:08X}", bindClass.c_str(), form->GetFormID());
-					return false;
-				}
-				RE::BSScript::BindID(a_out, form, typeID);
-			}
+			a_out = BindFormObject(a_vm, form, bindClass.c_str());
 			if (!a_out) {
 				a_err = std::format("could not bind form 0x{:08X} to a '{}' object", form->GetFormID(), bindClass.c_str());
 				return false;
@@ -447,9 +464,11 @@ namespace dvb::Papyrus
 
 			// Everything that touches the VM (form/array packing, handle bind, dispatch) runs on
 			// the main thread; the result arrives async on the VM tasklet thread via CallFunctor.
-			// Arg-build / bind / dispatch failures are reported back through state->error.
-			auto fail = [state](std::string a_msg) {
+			// Arg-build / bind / dispatch failures are reported back through state, preserving the
+			// status so an internal fault (503) isn't misreported to the caller as a 400.
+			auto fail = [state](int a_status, std::string a_msg) {
 				std::lock_guard<std::mutex> lk(state->m);
+				state->status = a_status;
 				state->error = std::move(a_msg);
 				state->done = true;
 				state->cv.notify_all();
@@ -457,7 +476,7 @@ namespace dvb::Papyrus
 			task->AddTask([cls, fn, argsJson, selfJson, hasSelf, state, fail]() {
 				auto* vm = BSScript::Internal::VirtualMachine::GetSingleton();
 				if (!vm) {
-					fail("Papyrus VM unavailable");
+					fail(503, "Papyrus VM unavailable");
 					return;
 				}
 
@@ -467,7 +486,7 @@ namespace dvb::Papyrus
 				if (hasSelf) {
 					std::string err;
 					if (!ResolveSelf(vm, selfJson, cls, selfObj, err)) {
-						fail(err);
+						fail(400, err);
 						return;
 					}
 				}
@@ -478,17 +497,23 @@ namespace dvb::Papyrus
 				else if (vm->GetScriptObjectType(cls, scriptType) && scriptType)
 					fnType = scriptType.get();
 
-				// Resolve the function's declared param types so a form arg can be packed to a
-				// base-typed param (e.g. GetItemCount(Form)) instead of its native class.
+				// Resolve the function up front — REQUIRED, not just for param types: a
+				// `DispatchStaticCall` to a non-existent global function null-derefs in the VM (a
+				// hard CTD, confirmed live), so a function that can't be resolved must fail cleanly
+				// here and never reach the dispatch.
+				const BSScript::IFunction* ifn = fnType ? FindFunction(fnType, std::string_view(fn.c_str() ? fn.c_str() : ""), !hasSelf) : nullptr;
+				if (!ifn) {
+					fail(404, std::format("no such {} function '{}' on script '{}'", hasSelf ? "member" : "global/native", fn.c_str() ? fn.c_str() : "", cls.c_str() ? cls.c_str() : ""));
+					return;
+				}
+				// Declared param types so a form arg can be packed to a base-typed param.
 				std::vector<BSScript::TypeInfo> paramTypes;
-				if (fnType)
-					if (const auto* ifn = FindFunction(fnType, std::string_view(fn.c_str() ? fn.c_str() : ""), !hasSelf))
-						for (std::uint32_t p = 0; p < ifn->GetParamCount(); ++p) {
-							RE::BSFixedString  pn;
-							BSScript::TypeInfo pt;
-							ifn->GetParam(p, pn, pt);
-							paramTypes.push_back(pt);
-						}
+				for (std::uint32_t p = 0; p < ifn->GetParamCount(); ++p) {
+					RE::BSFixedString  pn;
+					BSScript::TypeInfo pt;
+					ifn->GetParam(p, pn, pt);
+					paramTypes.push_back(pt);
+				}
 
 				auto* rawArgs = new RuntimeArgs();
 				try {
@@ -498,16 +523,20 @@ namespace dvb::Papyrus
 						rawArgs->args.push_back(JsonToVariable(vm, a, pt));
 						++i;
 					}
+				} catch (const ToolError& e) {
+					delete rawArgs;
+					fail(e.code, e.what());
+					return;
 				} catch (const std::exception& e) {
 					delete rawArgs;
-					fail(e.what());
+					fail(400, e.what());
 					return;
 				}
 
 				RE::BSTSmartPointer<BSScript::IStackCallbackFunctor> cb(new CallFunctor(state));
 				const bool                                           ok = hasSelf ? vm->DispatchMethodCall(selfObj, fn, rawArgs, cb) : vm->DispatchStaticCall(cls, fn, rawArgs, cb);
 				if (!ok)
-					fail(hasSelf ? "method dispatch refused — unknown function, wrong arg count, or not a member of that object's script" : "dispatch refused — unknown function, wrong arg count, or not a global/native function");
+					fail(400, hasSelf ? "method dispatch refused — unknown function, wrong arg count, or not a member of that object's script" : "dispatch refused — unknown function, wrong arg count, or not a global/native function");
 			});
 
 			std::unique_lock<std::mutex> lk(state->m);
@@ -516,7 +545,7 @@ namespace dvb::Papyrus
 			if (!completed)
 				throw ToolError(504, std::format("papyrus call '{}.{}' did not complete within {}ms (latent call or VM stalled?)", script, function, timeoutMs));
 			if (!state->error.empty())
-				throw ToolError(400, std::format("papyrus call '{}.{}': {}", script, function, state->error));
+				throw ToolError(state->status, std::format("papyrus call '{}.{}': {}", script, function, state->error));
 
 			BSScript::Variable result = state->result;
 			lk.unlock();
