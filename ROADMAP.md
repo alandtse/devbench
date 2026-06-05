@@ -49,7 +49,10 @@ automated new-game → in-world flows stall on a popup.
 - Read: `menu list`/`describe` — currently-open menus via `RE::UI`; `MessageBoxMenu` body +
   buttons read directly off `MessageBoxMenu::GetCurrentMessageBoxData()`, no GFx scrape.
 - Act: `menu accept`/`close` via `MessageBoxMenu::SelectOption(index)` — answers + dismisses with
-  no `QueueMessage` detour. **Validated live on AE 1.6.1170** (read a "missing content / Continue
+  no `QueueMessage` detour. `menu open` is the symmetric `kShow` of `close` — `UIMessageQueue`
+  instantiates a registered menu via its factory, so a plain name opens hub menus (`TweenMenu`,
+  `Journal Menu`, `MagicMenu`, …); context menus needing a target ref are out of scope for the
+  bare-name path. **Validated live on AE 1.6.1170** (read a "missing content / Continue
   loading?" Yes/No box, answered it, box dismissed). **SE** should resolve via the same id `519819`;
   **VR** is blocked on `skyrim_vr_address_library` PR #121 adding the queue id (see Modal handling).
 - Not yet reversed: other modal menus (`RaceSex Menu`, alternate-start) need their own
