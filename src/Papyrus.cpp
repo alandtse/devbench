@@ -229,6 +229,25 @@ namespace dvb::Papyrus
 			return v;
 		}
 
+		// A type-neutral default (None / 0 / 0.0 / false / "") for an OMITTED optional param.
+		// DispatchMethodCall/DispatchStaticCall don't fill Papyrus optional defaults, so a short arg
+		// list leaves the native reading unset slots — reference ops (MoveTo/Disable/Kill) then run
+		// yet do nothing. Neutral matches Papyrus's own defaults in nearly all vanilla cases; a rare
+		// non-neutral one (MoveTo's abMatchRotation=true) pads neutral but position/effect still apply.
+		BSScript::Variable DefaultVariable(const BSScript::TypeInfo& a_type)
+		{
+			BSScript::Variable v;  // default-constructed → None
+			if (a_type.IsBool())
+				v.SetBool(false);
+			else if (a_type.IsInt())
+				v.SetSInt(0);
+			else if (a_type.IsFloat())
+				v.SetFloat(0.0f);
+			else if (a_type.IsString())
+				v.SetString("");
+			return v;  // object / array → leave as None
+		}
+
 		// Find a function by name on a type, walking the parent chain for member functions
 		// (globals/statics are not inherited). Case-insensitive (Papyrus names are). For resolving
 		// param types so form args can be packed to the declared (possibly base) param class.
@@ -532,6 +551,11 @@ namespace dvb::Papyrus
 					fail(400, e.what());
 					return;
 				}
+
+				// Pad omitted trailing optionals with their type default — the VM won't, and a
+				// short arg list makes reference ops (MoveTo/Disable/Kill) run yet do nothing.
+				for (std::size_t p = rawArgs->args.size(); p < paramTypes.size(); ++p)
+					rawArgs->args.push_back(DefaultVariable(paramTypes[p]));
 
 				RE::BSTSmartPointer<BSScript::IStackCallbackFunctor> cb(new CallFunctor(state));
 				const bool                                           ok = hasSelf ? vm->DispatchMethodCall(selfObj, fn, rawArgs, cb) : vm->DispatchStaticCall(cls, fn, rawArgs, cb);

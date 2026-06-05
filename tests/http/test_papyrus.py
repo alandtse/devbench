@@ -109,6 +109,21 @@ def test_call_member_getnumitems(client, papyrus):
     assert returned >= 0, body
 
 
+def test_call_pads_omitted_optional_args(client, papyrus):
+    # DispatchStaticCall/MethodCall don't fill Papyrus optional-param defaults, so
+    # omitting them makes the native read unset slots and no-op (e.g. MoveTo/Disable
+    # with their optional flag omitted ran but did nothing). devbench pads omitted
+    # trailing optionals with the type's neutral value. Utility.RandomInt(0, 100)
+    # called with no args therefore pads to RandomInt(0, 0) -> a deterministic 0,
+    # proving the padding happened and the call no longer no-ops.
+    require_enum(papyrus, "action", "call")
+    body = client.ok("papyrus", {"action": "call", "script": "Utility", "function": "RandomInt"})
+    assert body.get("called") is True, body
+    returned = body.get("returned")
+    assert isinstance(returned, int) and not isinstance(returned, bool), body
+    assert returned == 0, body  # padded to RandomInt(0, 0)
+
+
 def test_call_bogus_function_errors(client, papyrus):
     require_enum(papyrus, "action", "call")
     status, body = client.call(
