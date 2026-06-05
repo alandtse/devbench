@@ -229,6 +229,28 @@ namespace dvb::Papyrus
 			return v;
 		}
 
+		// A type-appropriate default Variable for an OMITTED optional parameter. DispatchMethodCall/
+		// DispatchStaticCall do NOT fill Papyrus optional-param defaults — the native then reads
+		// unset arg slots and silently no-ops (e.g. ObjectReference.MoveTo with only its target, or
+		// Disable() / Kill() with their optional flag omitted, run but do nothing). Padding the call
+		// to the full param count with each param's neutral value (None / 0 / 0.0 / false / "")
+		// matches Papyrus's own optional defaults in virtually all vanilla cases. (The declared
+		// default isn't exposed for native functions, so a rare non-zero default — e.g. MoveTo's
+		// abMatchRotation=true — pads as false; position/effect still apply.)
+		BSScript::Variable DefaultVariable(const BSScript::TypeInfo& a_type)
+		{
+			BSScript::Variable v;  // default-constructed → None
+			if (a_type.IsBool())
+				v.SetBool(false);
+			else if (a_type.IsInt())
+				v.SetSInt(0);
+			else if (a_type.IsFloat())
+				v.SetFloat(0.0f);
+			else if (a_type.IsString())
+				v.SetString("");
+			return v;  // object / array → leave as None
+		}
+
 		// Find a function by name on a type, walking the parent chain for member functions
 		// (globals/statics are not inherited). Case-insensitive (Papyrus names are). For resolving
 		// param types so form args can be packed to the declared (possibly base) param class.
@@ -532,6 +554,11 @@ namespace dvb::Papyrus
 					fail(400, e.what());
 					return;
 				}
+
+				// Pad omitted trailing optionals with their type default — the VM won't, and a
+				// short arg list makes reference ops (MoveTo/Disable/Kill) run yet do nothing.
+				for (std::size_t p = rawArgs->args.size(); p < paramTypes.size(); ++p)
+					rawArgs->args.push_back(DefaultVariable(paramTypes[p]));
 
 				RE::BSTSmartPointer<BSScript::IStackCallbackFunctor> cb(new CallFunctor(state));
 				const bool                                           ok = hasSelf ? vm->DispatchMethodCall(selfObj, fn, rawArgs, cb) : vm->DispatchStaticCall(cls, fn, rawArgs, cb);
