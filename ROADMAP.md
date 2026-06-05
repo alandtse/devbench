@@ -104,6 +104,34 @@ how CS gates its server per-runtime, and lets users turn the bench on/off withou
 - **`eval` primitive + `search_api` discovery** — thin-but-powerful surface (the
   agentic-renderdoc model): let an agent run script against live RE/game state and discover the
   callable surface, rather than a bespoke tool per operation. Builds on `MainThread::RunAndWait`.
+  - **First increment — the `papyrus` tool — done.** `list`/`describe` are the `search_api`
+    discovery surface for the Papyrus VM (loaded classes, function signatures); `call` invokes a
+    **global** function via `DispatchStaticCall` or a **member** function on any form (`self`) and
+    — unlike console `cgf` — **returns the value** (a custom `IStackCallbackFunctor` bridged to a
+    condition variable turns the VM's async callback back into a synchronous result). This is the
+    value-returning, Papyrus-native slice; a native binding-registry over RE/render state (where
+    Papyrus can't see) remains the larger eval goal. A Papyrus runner was evaluated as the
+    _general_ eval engine and rejected for that role (async/off-thread, no runtime compilation,
+    blind to render state) — it fits as one leaf capability, which is exactly what `papyrus call`
+    is.
+    - **RE learning (cost a CTD):** a member dispatch needs the form **bound** to a script object
+      first. `DispatchMethodCall2(handle, …)` on a bare `GetHandleForObject` handle for an actor
+      with no bound object (`Object Table Size: 0`) null-derefs on the VM thread. The fix is the
+      engine's own `FindBoundObject` → `CreateObject` → `BindID` dance (see CommonLib
+      `PackUnpack`), then `DispatchMethodCall` on the bound `Object`. Validated live on SE 1.6.x:
+      `Actor.GetActorValue`/`GetLevel`/`GetDisplayName` on arbitrary NPCs, 10× rapid stress, no
+      crash. Member functions bind `self` to the form's **native** script type (via
+      `GetScriptObjectType`), so a parent-class method resolves through the hierarchy (an Actor's
+      `ObjectReference.GetBaseObject`).
+    - **Form args — done (all param types).** A form arg is packed to the function's **declared
+      param type**, not the form's native class: `HandleCall` resolves the `IFunction` (walk the
+      type's member/global funcs + parents), reads each `GetParam(i)` `TypeInfo`, and binds the
+      form to that class (`CreateObject(paramClass)` + `BindID`) so a base-typed param accepts it.
+      Without this, `PackHandle` types the arg as the form's native class and the VM's native-arg
+      unpack won't upcast, so a base-typed param rejected it. Validated live on SE 1.6.x:
+      `ObjectReference.GetItemCount(Gold001)` (param `Form`) → the player's gold; `GetDistance`
+      (param `ObjectReference`) → a real distance; exact-type `Actor.IsHostileToActor(Actor)` and
+      all scalar/global calls still pass. (Arrays-of-forms args remain the only unsupported shape.)
 - **Cross-plugin C-ABI** — **done & validated end-to-end** (`DevBenchAPI`). Confirmed live: CS
   registers its `feature` tool into devbench over the C-ABI and it's callable over both MCP and
   REST (list + mutating toggle round-trip). Two integration fixes were required — init at
@@ -121,6 +149,16 @@ read-time-slice capture goes away with the server rather than getting fixed in p
 Console primitives are validated for scripted tests over MCP/REST: turn (`player.setangle z`),
 reposition-along-heading (`player.setpos` from `getpos`+`getangle`), free camera (`tfc`).
 
+- **HTTP integration test bench (`tests/http/`) — in progress.** Because every tool is reachable
+  over `POST /api/tool/<name>`, the whole surface is scriptable as a live integration suite — a
+  pytest set that drives a running game and asserts on responses (e.g. `inspect scene` has a cell;
+  `papyrus call Utility.GetCurrentGameTime` → a number; `Actor.GetActorValue` on a target actor →
+  its health; `menu open TweenMenu` round-trips). A distinct tier from the host-independent
+  `devbench-tests` (Catch2, no game): it **discovers the bound port via `runtime.json`** (so it
+  follows the 8920→8921 auto-increment across instances) and **skips the whole suite when no game
+  is reachable** (and per-test when `playerLoaded` is false or a tool/action is absent in the live
+  `/api/tools` schema), so it is CI-safe. Doubles as a template for mod authors to test their own
+  C-ABI-registered tools.
 - **`scenario` runner — DONE.** One `scenario` call runs a step list server-side and returns a
   per-step transcript. Steps: `tool` (dispatch any registered tool, incl. consumer-registered
   ones), `wait` (fixed ms), **`waitFor`** (block on a Skyrim _event_ from the `EventBus` —

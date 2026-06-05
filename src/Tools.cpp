@@ -6,6 +6,7 @@
 #include "GameState.h"
 #include "Json.h"
 #include "MainThread.h"
+#include "Papyrus.h"
 #include "Recording.h"
 #include "ToolRegistry.h"
 #include "Version.h"
@@ -309,25 +310,211 @@ namespace dvb
 			throw ToolError(400, std::format("unknown action '{}' (list|open|close|describe|accept)", action));
 		}
 
-		// inspect: read live game state. Demonstrates the value-returning primitive —
-		// the read runs on the main thread and its result is returned synchronously.
+		// Identify any form as { formId, formType, name, editorId } — CommonLib's RE'd accessors.
+		json IdentifyForm(const RE::TESForm* a_form)
+		{
+			if (!a_form)
+				return nullptr;
+			json j{
+				{ "formId", std::format("0x{:08X}", a_form->GetFormID()) },
+				{ "formType", std::string(RE::FormTypeToString(a_form->GetFormType())) },
+			};
+			if (const char* n = a_form->GetName(); n && *n)
+				j["name"] = n;
+			if (const char* e = a_form->GetFormEditorID(); e && *e)
+				j["editorId"] = e;
+			return j;
+		}
+
+		// Identify a placed reference — the form's identity plus its base object and position.
+		// Actors get a live combat snapshot (health, level, hostility) so 'refs formType=Actor'
+		// is an actual check on the NPCs in the scene, not just their names.
+		json IdentifyRef(RE::TESObjectREFR* a_ref)
+		{
+			if (!a_ref)
+				return nullptr;
+			json j = IdentifyForm(a_ref);
+			if (auto* base = a_ref->GetBaseObject())
+				j["base"] = IdentifyForm(base);
+			const auto p = a_ref->GetPosition();
+			j["position"] = json::array({ p.x, p.y, p.z });
+
+			if (auto* actor = a_ref->As<RE::Actor>()) {
+				json a{ { "level", actor->GetLevel() } };
+				if (auto* avo = actor->AsActorValueOwner()) {
+					a["health"] = avo->GetActorValue(RE::ActorValue::kHealth);
+					a["healthMax"] = avo->GetPermanentActorValue(RE::ActorValue::kHealth);
+				}
+				if (auto* pc = RE::PlayerCharacter::GetSingleton(); pc && actor != pc)
+					a["hostileToPlayer"] = actor->IsHostileToActor(pc);
+				a["playerTeammate"] = actor->IsPlayerTeammate();
+				j["actor"] = std::move(a);
+			}
+			return j;
+		}
+
+		// inspect: read live game state. The value-returning primitive — each read runs on the
+		// main thread and its result is returned synchronously. kinds: state | vm | scene | refs.
 		json InspectHandler(const json& a_args, const ToolContext&)
 		{
 			const std::string kind = a_args.value("kind", std::string("state"));
-			if (kind != "state")
-				throw ToolError(400, std::format("unknown kind '{}'", kind));
 
-			return MainThread::RunAndWait([]() -> json {
-				auto*      pc = RE::PlayerCharacter::GetSingleton();
-				const bool loaded = pc && pc->Get3D() != nullptr;
-				return json{
-					{ "plugin", "devbench" },
-					{ "version", DEVBENCH_VERSION_STRING },
-					{ "vr", REL::Module::IsVR() },
-					{ "playerLoaded", loaded },
-					{ "frame", game::CurrentFrame() },
-				};
-			});
+			if (kind == "state") {
+				return MainThread::RunAndWait([]() -> json {
+					auto*      pc = RE::PlayerCharacter::GetSingleton();
+					const bool loaded = pc && pc->Get3D() != nullptr;
+					return json{
+						{ "plugin", "devbench" },
+						{ "version", DEVBENCH_VERSION_STRING },
+						{ "vr", REL::Module::IsVR() },
+						{ "playerLoaded", loaded },
+						{ "frame", game::CurrentFrame() },
+					};
+				});
+			}
+
+			// vm: Papyrus VM health — how loaded the script engine is (spot script lag).
+			if (kind == "vm") {
+				return MainThread::RunAndWait([]() -> json {
+					auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+					if (!vm)
+						return json{ { "available", false } };
+					std::size_t types = 0;
+					{
+						RE::BSSpinLockGuard l(vm->typeInfoLock);
+						types = vm->objectTypeMap.size();
+					}
+					std::size_t running = 0;
+					{
+						RE::BSSpinLockGuard l(vm->runningStacksLock);
+						running = vm->allRunningStacks.size();
+					}
+					return json{
+						{ "available", true },
+						{ "loadedTypes", types },
+						{ "attachedScripts", vm->scriptCount },
+						{ "arrays", vm->arrayCount },
+						{ "runningStacks", running },
+						{ "frozenStacks", vm->frozenStacksCount },
+						{ "overstressed", vm->overstressed },
+					};
+				});
+			}
+
+			// scene: the player's live context — cell/worldspace/location, position, time, weather.
+			if (kind == "scene") {
+				return MainThread::RunAndWait([]() -> json {
+					auto* pc = RE::PlayerCharacter::GetSingleton();
+					if (!pc || !pc->Get3D())
+						return json{ { "playerLoaded", false } };
+					json j{ { "playerLoaded", true } };
+					if (auto* cell = pc->GetParentCell())
+						j["cell"] = IdentifyForm(cell);
+					if (auto* ws = pc->GetWorldspace())
+						j["worldspace"] = IdentifyForm(ws);
+					if (auto* loc = pc->GetCurrentLocation())
+						j["location"] = IdentifyForm(loc);
+					const auto p = pc->GetPosition();
+					j["position"] = json::array({ p.x, p.y, p.z });
+					if (auto* cal = RE::Calendar::GetSingleton()) {
+						j["gameHour"] = cal->GetHour();
+						j["daysPassed"] = cal->GetDaysPassed();
+					}
+					if (auto* sky = RE::Sky::GetSingleton(); sky && sky->currentWeather)
+						j["weather"] = IdentifyForm(sky->currentWeather);
+					return j;
+				});
+			}
+
+			// refs: consolidated form identification. One of three sources, one identify shape:
+			//   'formId'      → that one form (a placed ref gets base + position)
+			//   'selected'    → the console-selected / crosshair ref (set via prid/click)
+			//   else enumerate the loaded references in the grid (on-screen or not), with optional
+			//                   'formType' filter, 'radius' (from player), and 'limit' (default 100).
+			if (kind == "refs") {
+				const std::string formId = a_args.value("formId", std::string{});
+				const bool        selected = a_args.value("selected", false);
+				const std::string typeFilter = a_args.value("formType", std::string{});
+				const double      radius = a_args.value("radius", 0.0);
+				const int         limit = a_args.value("limit", 100);
+				return MainThread::RunAndWait([=]() -> json {
+					auto lower = [](std::string s) {
+						std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+						return s;
+					};
+
+					if (!formId.empty()) {
+						RE::TESForm* f = nullptr;
+						try {
+							f = RE::TESForm::LookupByID(static_cast<RE::FormID>(std::stoul(formId, nullptr, 16)));
+						} catch (...) {
+						}
+						if (!f)
+							f = RE::TESForm::LookupByEditorID(formId);
+						json one = (f && f->As<RE::TESObjectREFR>()) ? IdentifyRef(f->As<RE::TESObjectREFR>()) : IdentifyForm(f);
+						return json{ { "count", f ? 1 : 0 }, { "refs", f ? json::array({ one }) : json::array() } };
+					}
+
+					if (selected) {
+						auto sel = RE::Console::GetSelectedRef();
+						return json{
+							{ "source", "selected" },
+							{ "count", sel ? 1 : 0 },
+							{ "refs", sel ? json::array({ IdentifyRef(sel.get()) }) : json::array() },
+						};
+					}
+
+					auto* tes = RE::TES::GetSingleton();
+					if (!tes)
+						throw ToolError(503, "TES unavailable (no loaded world?)");
+					// The engine's type strings are 4-char codes (ACHR, NPC_, CONT). Map common
+					// friendly names onto them so 'Actor'/'container' work, not just 'ACHR'; the
+					// match is also a substring, so a raw code or a prefix ('ACH') works too.
+					std::string needle = lower(typeFilter);
+					{
+						static const std::unordered_map<std::string, std::string> kAlias{
+							{ "actor", "achr" }, { "npc", "npc_" }, { "container", "cont" },
+							{ "door", "door" }, { "weapon", "weap" }, { "armor", "armo" },
+							{ "book", "book" }, { "ingredient", "ingr" }, { "potion", "alch" },
+							{ "misc", "misc" }, { "light", "ligh" }, { "furniture", "furn" },
+							{ "activator", "acti" }, { "flora", "flor" }, { "tree", "tree" },
+							{ "static", "stat" }, { "key", "keym" }, { "scroll", "scrl" },
+							{ "ammo", "ammo" }, { "soulgem", "slgm" }
+						};
+						if (auto it = kAlias.find(needle); it != kAlias.end())
+							needle = it->second;
+					}
+					json refs = json::array();
+					int  total = 0;
+					auto cb = [&](RE::TESObjectREFR* r) {
+						if (r && r->GetFormID() != 0) {
+							if (!needle.empty()) {
+								const std::string t = lower(std::string(RE::FormTypeToString(r->GetFormType())));
+								const std::string bt = r->GetBaseObject() ? lower(std::string(RE::FormTypeToString(r->GetBaseObject()->GetFormType()))) : std::string{};
+								if (t.find(needle) == std::string::npos && bt.find(needle) == std::string::npos)
+									return RE::BSContainer::ForEachResult::kContinue;
+							}
+							++total;
+							if (static_cast<int>(refs.size()) < limit)
+								refs.push_back(IdentifyRef(r));
+						}
+						return RE::BSContainer::ForEachResult::kContinue;
+					};
+					auto* pc = RE::PlayerCharacter::GetSingleton();
+					if (radius > 0.0 && pc)
+						tes->ForEachReferenceInRange(pc, static_cast<float>(radius), cb);
+					else
+						tes->ForEachReference(cb);
+					return json{
+						{ "count", total },
+						{ "returned", static_cast<int>(refs.size()) },
+						{ "truncated", total > static_cast<int>(refs.size()) },
+						{ "refs", std::move(refs) },
+					};
+				});
+			}
+
+			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|refs)", kind));
 		}
 
 		// camera: read or set the player camera point of view, so a recording can capture the
@@ -769,12 +956,24 @@ namespace dvb
 		inspect.name = "inspect";
 		inspect.description =
 			"Read live game/plugin state. Runs on the main thread and returns the value "
-			"synchronously (times out if the game is mid-load / not pumping tasks).";
+			"synchronously (times out if the game is mid-load / not pumping tasks). kinds: "
+			"'state' → { plugin, version, vr, playerLoaded, frame }; 'vm' → Papyrus VM health "
+			"{ loadedTypes, attachedScripts, arrays, runningStacks, frozenStacks, overstressed }; "
+			"'scene' → player context { cell, worldspace, location, position, gameHour, daysPassed, "
+			"weather }; 'refs' → identify reference(s) sharing one shape { formId, formType, name, "
+			"editorId, base, position } — pass 'formId' for one form, 'selected'=true for the "
+			"console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid "
+			"(optional 'formType' filter, 'radius' from player, 'limit' default 100).";
 		inspect.readOnly = true;
 		inspect.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state" }) }, { "description", "'state' → { plugin, version, vr, playerLoaded }" } } },
+								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state", "vm", "scene", "refs" }) }, { "description", "state | vm | scene | refs" } } },
+								{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form (hex formId, e.g. 0x14, or EditorID)" } } },
+								{ "selected", json{ { "type", "boolean" }, { "description", "refs: identify the console-selected / crosshair ref instead" } } },
+								{ "formType", json{ { "type", "string" }, { "description", "refs enumerate: keep only refs whose type or base type matches (e.g. Actor, Container)" } } },
+								{ "radius", json{ { "type", "number" }, { "description", "refs enumerate: only refs within this distance of the player (0 = whole loaded grid)" } } },
+								{ "limit", json{ { "type", "integer" }, { "description", "refs enumerate: max refs to return (default 100)" } } },
 							} },
 		};
 		a_registry.Register(std::move(inspect), &InspectHandler);
@@ -801,6 +1000,37 @@ namespace dvb
 							} },
 		};
 		a_registry.Register(std::move(menu), &MenuHandler);
+
+		ToolDescriptor papyrus;
+		papyrus.name = "papyrus";
+		papyrus.description =
+			"Inspect the live Papyrus surface and invoke global functions, returning the value. "
+			"action='list' returns loaded script class names { total, returned, truncated, scripts } "
+			"(optional 'filter' substring, 'limit' default 200). 'describe' takes a 'script' (class "
+			"name) and returns its { globalFunctions, memberFunctions, properties }, each function "
+			"with params + returnType — use it to discover what 'call' can invoke. 'call' runs a "
+			"function via the VM: 'script' + 'function' (+ optional 'args' array, 'timeoutMs' "
+			"default 3000) and returns { called, returned, returnedType }. Unlike console 'cgf', "
+			"this hands the return value back (e.g. Utility.GetCurrentGameTime → a Float). Pass "
+			"'self' to call a MEMBER function on a target: { \"form\": \"0x14 | EditorID\" } targets "
+			"any form, or \"selected\" uses the console/crosshair ref (set via prid); without 'self' "
+			"only global/native functions are callable. args and returns support bool/number/string, "
+			"{ \"form\": … } (a form return resolves to { formId, formType, editorId, name }), and "
+			"arrays of scalars.";
+		papyrus.inputSchema = json{
+			{ "type", "object" },
+			{ "properties", json{
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "call" }) }, { "description", "list | describe | call" } } },
+								{ "script", json{ { "type", "string" }, { "description", "describe/call: the Papyrus script class name, e.g. Utility, Game, Actor" } } },
+								{ "function", json{ { "type", "string" }, { "description", "call: the function name, e.g. GetCurrentGameTime or GetActorValue" } } },
+								{ "self", json{ { "description", "call: target a member function — { \"form\": \"0x14 | EditorID\" } or \"selected\" (console/crosshair ref). Omit for global/native functions." } } },
+								{ "args", json{ { "type", "array" }, { "description", "call: arguments; each a bool/number/string, { \"form\": \"0x14 | EditorID\" }, or an array of scalars" } } },
+								{ "filter", json{ { "type", "string" }, { "description", "list: case-insensitive substring to match class names" } } },
+								{ "limit", json{ { "type", "integer" }, { "description", "list: max class names to return (default 200)" } } },
+								{ "timeoutMs", json{ { "type", "integer" }, { "description", "call: ms to wait for the result before 504 (default 3000)" } } },
+							} },
+		};
+		a_registry.Register(std::move(papyrus), &Papyrus::Handle);
 
 		ToolDescriptor scenario;
 		scenario.name = "scenario";
