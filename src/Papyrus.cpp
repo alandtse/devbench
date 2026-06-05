@@ -229,14 +229,11 @@ namespace dvb::Papyrus
 			return v;
 		}
 
-		// A type-appropriate default Variable for an OMITTED optional parameter. DispatchMethodCall/
-		// DispatchStaticCall do NOT fill Papyrus optional-param defaults — the native then reads
-		// unset arg slots and silently no-ops (e.g. ObjectReference.MoveTo with only its target, or
-		// Disable() / Kill() with their optional flag omitted, run but do nothing). Padding the call
-		// to the full param count with each param's neutral value (None / 0 / 0.0 / false / "")
-		// matches Papyrus's own optional defaults in virtually all vanilla cases. (The declared
-		// default isn't exposed for native functions, so a rare non-zero default — e.g. MoveTo's
-		// abMatchRotation=true — pads as false; position/effect still apply.)
+		// A type-neutral default (None / 0 / 0.0 / false / "") for an OMITTED optional param.
+		// DispatchMethodCall/DispatchStaticCall don't fill Papyrus optional defaults, so a short arg
+		// list leaves the native reading unset slots — reference ops (MoveTo/Disable/Kill) then run
+		// yet do nothing. Neutral matches Papyrus's own defaults in nearly all vanilla cases; a rare
+		// non-neutral one (MoveTo's abMatchRotation=true) pads neutral but position/effect still apply.
 		BSScript::Variable DefaultVariable(const BSScript::TypeInfo& a_type)
 		{
 			BSScript::Variable v;  // default-constructed → None
