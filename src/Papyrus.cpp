@@ -483,17 +483,23 @@ namespace dvb::Papyrus
 				else if (vm->GetScriptObjectType(cls, scriptType) && scriptType)
 					fnType = scriptType.get();
 
-				// Resolve the function's declared param types so a form arg can be packed to a
-				// base-typed param (e.g. GetItemCount(Form)) instead of its native class.
+				// Resolve the function up front — REQUIRED, not just for param types: a
+				// `DispatchStaticCall` to a non-existent global function null-derefs in the VM (a
+				// hard CTD, confirmed live), so a function that can't be resolved must fail cleanly
+				// here and never reach the dispatch.
+				const BSScript::IFunction* ifn = fnType ? FindFunction(fnType, std::string_view(fn.c_str() ? fn.c_str() : ""), !hasSelf) : nullptr;
+				if (!ifn) {
+					fail(404, std::format("no such {} function '{}' on script '{}'", hasSelf ? "member" : "global/native", fn.c_str() ? fn.c_str() : "", cls.c_str() ? cls.c_str() : ""));
+					return;
+				}
+				// Declared param types so a form arg can be packed to a base-typed param.
 				std::vector<BSScript::TypeInfo> paramTypes;
-				if (fnType)
-					if (const auto* ifn = FindFunction(fnType, std::string_view(fn.c_str() ? fn.c_str() : ""), !hasSelf))
-						for (std::uint32_t p = 0; p < ifn->GetParamCount(); ++p) {
-							RE::BSFixedString  pn;
-							BSScript::TypeInfo pt;
-							ifn->GetParam(p, pn, pt);
-							paramTypes.push_back(pt);
-						}
+				for (std::uint32_t p = 0; p < ifn->GetParamCount(); ++p) {
+					RE::BSFixedString  pn;
+					BSScript::TypeInfo pt;
+					ifn->GetParam(p, pn, pt);
+					paramTypes.push_back(pt);
+				}
 
 				auto* rawArgs = new RuntimeArgs();
 				try {
