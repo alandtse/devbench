@@ -220,9 +220,10 @@ namespace dvb
 
 		// menu: detect/answer menus. 'list' = open menus + messageBoxOpen (tracked live from
 		// MenuOpenCloseEvent); 'describe' = the active MessageBoxMenu's body + buttons; 'accept'
-		// = select a button by index (answers + dismisses); 'close' = hide a menu by name
-		// (kHide). describe/accept use CommonLib's RE'd MessageBoxMenu accessors
-		// (GetCurrentMessageBoxData / SelectOption) on the main thread — no detour.
+		// = select a button by index (answers + dismisses); 'open' = show a menu by name (kShow);
+		// 'close' = hide a menu by name (kHide). open/close are symmetric UI-queue ops; describe/
+		// accept use CommonLib's RE'd MessageBoxMenu accessors (GetCurrentMessageBoxData /
+		// SelectOption) on the main thread — no detour.
 		json MenuHandler(const json& a_args, const ToolContext&)
 		{
 			const std::string action = a_args.value("action", std::string("list"));
@@ -236,6 +237,26 @@ namespace dvb
 					open.push_back(m);
 				}
 				return json{ { "openMenus", std::move(open) }, { "messageBoxOpen", messageBox } };
+			}
+
+			if (action == "open") {
+				// Show a menu by name via the UI message queue (kShow) — the mirror of 'close'.
+				// kShow instantiates the registered menu via its factory if no instance exists
+				// yet, so this opens hub menus (TweenMenu, "Journal Menu", MagicMenu, MapMenu,
+				// StatsMenu, InventoryMenu, FavoritesMenu) from a plain name. Context menus
+				// (ContainerMenu/BarterMenu/BookMenu) need a target ref and won't open this way.
+				// Marshalled to the main thread.
+				const std::string name = a_args.value("name", std::string{});
+				if (name.empty())
+					throw ToolError(400, "action 'open' requires a 'name' (menu to show)");
+				auto* task = SKSE::GetTaskInterface();
+				if (!task)
+					throw ToolError(500, "SKSE TaskInterface unavailable");
+				task->AddTask([name]() {
+					if (auto* q = RE::UIMessageQueue::GetSingleton())
+						q->AddMessage(name.c_str(), RE::UI_MESSAGE_TYPE::kShow, nullptr);
+				});
+				return json{ { "queued", true }, { "action", "open" }, { "name", name } };
 			}
 
 			if (action == "close") {
@@ -285,7 +306,7 @@ namespace dvb
 				return json{ { "queued", true }, { "action", "accept" }, { "index", index } };
 			}
 
-			throw ToolError(400, std::format("unknown action '{}' (list|close|describe|accept)", action));
+			throw ToolError(400, std::format("unknown action '{}' (list|open|close|describe|accept)", action));
 		}
 
 		// inspect: read live game state. Demonstrates the value-returning primitive —
@@ -761,18 +782,21 @@ namespace dvb
 		ToolDescriptor menu;
 		menu.name = "menu";
 		menu.description =
-			"Inspect, answer, or dismiss menus. action='list' returns { openMenus, messageBoxOpen } "
-			"tracked live from menu open/close events. 'describe' returns the active MessageBoxMenu "
-			"as { messageBoxOpen, bodyText, buttons:[…], cancelIndex } (read the buttons, then pick "
-			"one). 'accept' answers a MessageBoxMenu by button 'index' (default 0) — runs its "
-			"callback and dismisses it (this is how you clear a Yes/No modal, e.g. the "
-			"content-mismatch dialog gating a load; kHide does NOT). 'close' hides a menu by 'name' "
-			"via the UI queue (kHide).";
+			"Inspect, open, answer, or dismiss menus. action='list' returns { openMenus, "
+			"messageBoxOpen } tracked live from menu open/close events. 'describe' returns the "
+			"active MessageBoxMenu as { messageBoxOpen, bodyText, buttons:[…], cancelIndex } (read "
+			"the buttons, then pick one). 'accept' answers a MessageBoxMenu by button 'index' "
+			"(default 0) — runs its callback and dismisses it (this is how you clear a Yes/No modal, "
+			"e.g. the content-mismatch dialog gating a load; kHide does NOT). 'open' shows a menu by "
+			"'name' via the UI queue (kShow) — opens hub menus from a plain name (TweenMenu, "
+			"'Journal Menu', MagicMenu, MapMenu, StatsMenu, InventoryMenu, FavoritesMenu); context "
+			"menus that need a target ref (ContainerMenu/BarterMenu/BookMenu) won't open this way. "
+			"'close' hides a menu by 'name' via the UI queue (kHide).";
 		menu.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "close" }) }, { "description", "list | describe | accept | close" } } },
-								{ "name", json{ { "type", "string" }, { "description", "menu name to hide (required for close), e.g. MessageBoxMenu" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "open", "close" }) }, { "description", "list | describe | accept | open | close" } } },
+								{ "name", json{ { "type", "string" }, { "description", "menu name to show/hide (required for open and close), e.g. TweenMenu, MessageBoxMenu" } } },
 								{ "index", json{ { "type", "integer" }, { "description", "accept: 0-based button index to select (default 0). See describe's buttons/cancelIndex." } } },
 							} },
 		};
