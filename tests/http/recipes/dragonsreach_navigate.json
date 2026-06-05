@@ -1,0 +1,890 @@
+{
+  "meta": {
+    "description": "Navigate Whiterun Dragonsreach (~29s). Self-contained via coc; derived from a devbench recording, no save dependency.",
+    "cell": "WhiterunDragonsreach",
+    "sourceRecording": "recording_1780255555.json"
+  },
+  "steps": [
+    {
+      "tool": "console",
+      "args": {
+        "action": "exec",
+        "command": "coc WhiterunDragonsreach"
+      }
+    },
+    {
+      "waitUntil": "playerLoaded"
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -448.00"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y -128.00"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -318.00"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 319.68"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -448.00"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y -128.00"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -318.00"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 319.68"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -444.91"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 27.92"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -318.00"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 1.37"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -436.47"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 380.05"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -318.00"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 1.37"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -427.64"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 727.52"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -275.86"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 1.37"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -418.07"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 1080.62"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -167.78"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 1.37"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -408.89"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 1428.27"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -78.00"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 1.37"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -400.16"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 1792.40"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -79.65"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 1.37"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -498.81"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 2121.67"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -71.96"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 37.96"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -390.86"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 2423.97"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -79.65"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 138.61"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -373.08"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 2651.31"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -16.85"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 174.81"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -509.39"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 2865.18"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z 7.67"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 208.82"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -667.92"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 2562.49"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z 24.76"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 207.77"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -894.50"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 2296.62"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -79.65"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 224.54"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -1135.75"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 2033.77"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -78.00"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 236.09"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -1478.34"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 1944.75"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -72.12"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 262.56"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -1823.40"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 1851.67"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -79.65"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 261.21"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -2160.67"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 1749.78"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -79.65"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 193.27"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -2381.00"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 1706.02"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -79.63"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 95.62"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -2111.61"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 1793.60"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -79.65"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 73.21"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -1761.41"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 1845.30"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -79.65"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 82.97"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -1404.06"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 1875.50"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -68.40"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 94.42"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -1142.10"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 1661.02"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -78.00"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 159.91"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -1038.46"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 1321.21"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -78.74"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 163.55"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -988.15"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 964.34"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -78.48"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 174.22"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -915.94"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 619.75"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -74.12"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 167.24"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -905.30"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 302.25"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -320.30"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 124.66"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos x -938.95"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos y 176.38"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setpos z -318.00"
+      },
+      "tool": "console"
+    },
+    {
+      "args": {
+        "action": "exec",
+        "command": "player.setangle z 87.63"
+      },
+      "tool": "console"
+    },
+    {
+      "wait": 1000
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "meta": {
+    "description": "Follow Nelkir (a child NPC who wanders Whiterun Dragonsreach) via repeated player.moveto. moveto is ref-relative, so this static recipe tracks the NPC wherever he walks. coc makes it save-agnostic.",
+    "npc": "0x1A67B",
+    "npcName": "Nelkir",
+    "cell": "WhiterunDragonsreach"
+  },
+  "steps": [
+    {
+      "tool": "console",
+      "args": {
+        "action": "exec",
+        "command": "coc WhiterunDragonsreach"
+      }
+    },
+    {
+      "waitUntil": "playerLoaded"
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "tool": "console",
+      "args": {
+        "action": "exec",
+        "command": "player.moveto 0x1A67B"
+      }
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "tool": "console",
+      "args": {
+        "action": "exec",
+        "command": "player.moveto 0x1A67B"
+      }
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "tool": "console",
+      "args": {
+        "action": "exec",
+        "command": "player.moveto 0x1A67B"
+      }
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "tool": "console",
+      "args": {
+        "action": "exec",
+        "command": "player.moveto 0x1A67B"
+      }
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "tool": "console",
+      "args": {
+        "action": "exec",
+        "command": "player.moveto 0x1A67B"
+      }
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "tool": "console",
+      "args": {
+        "action": "exec",
+        "command": "player.moveto 0x1A67B"
+      }
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "tool": "console",
+      "args": {
+        "action": "exec",
+        "command": "player.moveto 0x1A67B"
+      }
+    }
+  ]
+}
