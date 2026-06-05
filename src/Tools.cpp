@@ -437,6 +437,10 @@ namespace dvb
 				const std::string typeFilter = a_args.value("formType", std::string{});
 				const double      radius = a_args.value("radius", 0.0);
 				const int         limit = a_args.value("limit", 100);
+				if (radius < 0.0)
+					throw ToolError(400, "inspect refs: 'radius' must be >= 0 (0 scans the whole loaded grid)");
+				if (limit < 0)
+					throw ToolError(400, "inspect refs: 'limit' must be >= 0");
 				return MainThread::RunAndWait([=]() -> json {
 					auto lower = [](std::string s) {
 						std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -444,13 +448,20 @@ namespace dvb
 					};
 
 					if (!formId.empty()) {
+						// Explicit 0x.. → FormID; otherwise EditorID first (so an all-hex EditorID
+						// isn't misread as a FormID), then a bare hex FormID fallback.
+						auto byHex = [](const std::string& s) -> RE::TESForm* {
+							try {
+								return RE::TESForm::LookupByID(static_cast<RE::FormID>(std::stoul(s, nullptr, 16)));
+							} catch (...) {
+								return nullptr;
+							}
+						};
 						RE::TESForm* f = nullptr;
-						try {
-							f = RE::TESForm::LookupByID(static_cast<RE::FormID>(std::stoul(formId, nullptr, 16)));
-						} catch (...) {
-						}
-						if (!f)
-							f = RE::TESForm::LookupByEditorID(formId);
+						if (formId.size() > 2 && formId[0] == '0' && (formId[1] == 'x' || formId[1] == 'X'))
+							f = byHex(formId.substr(2));
+						else if (f = RE::TESForm::LookupByEditorID(formId); !f)
+							f = byHex(formId);
 						json one = (f && f->As<RE::TESObjectREFR>()) ? IdentifyRef(f->As<RE::TESObjectREFR>()) : IdentifyForm(f);
 						return json{ { "count", f ? 1 : 0 }, { "refs", f ? json::array({ one }) : json::array() } };
 					}
