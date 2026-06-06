@@ -3,6 +3,7 @@
 #include "DevBenchAPI.h"
 #include "EventBus.h"
 #include "Json.h"
+#include "MenuExtensions.h"
 #include "ToolRegistry.h"
 #include "Version.h"
 
@@ -12,6 +13,27 @@ namespace dvb::HostApi
 	{
 		ToolRegistry* g_registry = nullptr;
 		EventBus*     g_events = nullptr;
+
+		// Wrap a consumer's C callback (fn + ctx) as a ToolHandler: args in as a JSON string, result
+		// collected via our host-owned sink. Nothing C++ crosses the DLL boundary — only const char*
+		// and function pointers. Shared by RegisterTool and RegisterMenuHandler.
+		ToolHandler MakeHandler(DevBenchAPI::ToolFn a_handler, void* a_ctx)
+		{
+			return [a_handler, a_ctx](const json& a_args, const ToolContext&) -> json {
+				std::string          result;
+				DevBenchAPI::WriteFn write = +[](void* a_sink, const char* a_json) {
+					*static_cast<std::string*>(a_sink) = a_json ? a_json : "";
+				};
+				a_handler(a_ctx, a_args.dump().c_str(), &result, write);
+				if (result.empty())
+					return json::object();
+				try {
+					return json::parse(result);
+				} catch (...) {
+					return json{ { "raw", result } };
+				}
+			};
+		}
 
 		// Concrete implementation of the published C-ABI interface, wired to the
 		// host's registry + bus.
@@ -41,26 +63,24 @@ namespace dvb::HostApi
 				d.inputSchema = desc.value("inputSchema", json::object());
 				d.readOnly = desc.value("readOnly", false);
 
-				const auto  handler = a_handler;
-				void* const ctx = a_ctx;
-				// Wrap the C callback as a ToolHandler: pass args as a JSON string, collect
-				// the result the consumer writes via our sink. Nothing C++ crosses the DLL
-				// boundary — only const char* and function pointers.
-				return g_registry->Register(std::move(d),
-					[handler, ctx](const json& a_args, const ToolContext&) -> json {
-						std::string          result;
-						DevBenchAPI::WriteFn write = +[](void* a_sink, const char* a_json) {
-							*static_cast<std::string*>(a_sink) = a_json ? a_json : "";
-						};
-						handler(ctx, a_args.dump().c_str(), &result, write);
-						if (result.empty())
-							return json::object();
-						try {
-							return json::parse(result);
-						} catch (...) {
-							return json{ { "raw", result } };
-						}
-					});
+				return g_registry->Register(std::move(d), MakeHandler(a_handler, a_ctx));
+			}
+
+			bool RegisterMenuHandler(const char* a_menuName, const char* a_descriptorJson,
+				DevBenchAPI::ToolFn a_handler, void* a_ctx) override
+			{
+				if (!a_menuName || !*a_menuName || !a_handler)
+					return false;
+				json desc = json::object();
+				if (a_descriptorJson) {
+					try {
+						desc = json::parse(a_descriptorJson);
+					} catch (...) {
+					}
+				}
+				if (!desc.is_object())  // a scalar/array descriptor would break the `menu describe` object contract
+					desc = json::object();
+				return MenuExtensions::Register(a_menuName, std::move(desc), MakeHandler(a_handler, a_ctx));
 			}
 
 			void EmitEvent(const char* a_topic, const char* a_payloadJson) override
@@ -97,6 +117,19 @@ namespace dvb::HostApi
 					const std::string out = R"({"pong":true,"echo":)" + args + "}";
 					a_write(a_sink, out.c_str()); }, nullptr);
 		}
+
+		// Self-test the menu-extension path the same way: register a handler THROUGH the public
+		// interface so `menu invoke name=devbench.selftest` and `menu describe name=…` round-trip
+		// the C-callback without a separate consumer mod.
+		void RegisterMenuSelfTest()
+		{
+			static constexpr const char* desc =
+				R"({"description":"devbench menu-extension self-test; echoes its args."})";
+			g_interface.RegisterMenuHandler("devbench.selftest", desc, +[](void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write) {
+					const std::string args = (a_argsJson && *a_argsJson) ? a_argsJson : "{}";
+					const std::string out = R"({"invoked":true,"echo":)" + args + "}";
+					a_write(a_sink, out.c_str()); }, nullptr);
+		}
 	}
 
 	void Init(ToolRegistry& a_registry, EventBus& a_events)
@@ -104,6 +137,7 @@ namespace dvb::HostApi
 		g_registry = &a_registry;
 		g_events = &a_events;
 		RegisterSelfTest();
+		RegisterMenuSelfTest();
 	}
 
 	void OnInterfaceRequest(SKSE::MessagingInterface::Message* a_message)
