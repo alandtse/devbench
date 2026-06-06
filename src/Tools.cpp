@@ -221,9 +221,11 @@ namespace dvb
 		}
 
 		// menu: detect/answer menus. 'list' = open menus + messageBoxOpen (tracked live from
-		// MenuOpenCloseEvent); 'describe' = the active MessageBoxMenu's body + buttons; 'accept'
-		// = select a button by index (answers + dismisses); 'open' = show a menu by name (kShow);
-		// 'close' = hide a menu by name (kHide). open/close are symmetric UI-queue ops; describe/
+		// MenuOpenCloseEvent) + consumer-registered handler names; 'describe' = the active
+		// MessageBoxMenu's body + buttons, or (with 'name') a registered handler's descriptor;
+		// 'accept' = select a button by index (answers + dismisses); 'open' = show a menu by name
+		// (kShow); 'close' = hide a menu by name (kHide); 'invoke' = dispatch to a consumer-registered
+		// menu handler (C-ABI RegisterMenuHandler). open/close are symmetric UI-queue ops; describe/
 		// accept use CommonLib's RE'd MessageBoxMenu accessors (GetCurrentMessageBoxData /
 		// SelectOption) on the main thread — no detour.
 		json MenuHandler(const json& a_args, const ToolContext& a_ctx)
