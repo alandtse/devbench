@@ -63,6 +63,19 @@ namespace DevBenchAPI
 
 		// Publish an event (MCP notification + REST /api/events?since=N).
 		virtual void EmitEvent(const char* a_topic, const char* a_payloadJson) = 0;
+
+		// Register a handler for a custom menu, dispatched through the base `menu` tool as
+		// action='invoke', name='<menuName>' — so a mod exposes its menu's interaction WITHOUT
+		// adding a top-level tool (the agent-facing surface stays the single `menu` tool). Same
+		// handler contract as RegisterTool (args JSON in, result JSON out, runs on the listener
+		// thread — marshal to the main thread yourself). a_descriptorJson { "description", ... } is
+		// surfaced via `menu describe name='<menuName>'` so callers discover the accepted args.
+		// Returns false if it replaced an existing handler for that menu.
+		//
+		// ABI: appended after EmitEvent, so the vtable slot only exists on hosts that ship it —
+		// call this only when GetBuildNumber() >= 10400 (devbench 1.4.0).
+		virtual bool RegisterMenuHandler(const char* a_menuName, const char* a_descriptorJson,
+			ToolFn a_handler, void* a_ctx) = 0;
 	};
 }
 

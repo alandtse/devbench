@@ -6,6 +6,7 @@
 #include "GameState.h"
 #include "Json.h"
 #include "MainThread.h"
+#include "MenuExtensions.h"
 #include "Papyrus.h"
 #include "Recording.h"
 #include "ToolRegistry.h"
@@ -225,7 +226,7 @@ namespace dvb
 		// 'close' = hide a menu by name (kHide). open/close are symmetric UI-queue ops; describe/
 		// accept use CommonLib's RE'd MessageBoxMenu accessors (GetCurrentMessageBoxData /
 		// SelectOption) on the main thread — no detour.
-		json MenuHandler(const json& a_args, const ToolContext&)
+		json MenuHandler(const json& a_args, const ToolContext& a_ctx)
 		{
 			const std::string action = a_args.value("action", std::string("list"));
 
@@ -237,7 +238,26 @@ namespace dvb
 						messageBox = true;
 					open.push_back(m);
 				}
-				return json{ { "openMenus", std::move(open) }, { "messageBoxOpen", messageBox } };
+				// `registered` = menus a consumer mod exposed via the C-ABI RegisterMenuHandler,
+				// invocable with action='invoke' (kept under this one tool, not separate tools).
+				return json{
+					{ "openMenus", std::move(open) },
+					{ "messageBoxOpen", messageBox },
+					{ "registered", MenuExtensions::Names() },
+				};
+			}
+
+			if (action == "invoke") {
+				// Dispatch to a consumer-registered menu handler (see C-ABI RegisterMenuHandler).
+				// The handler receives the full args object and runs under the same contract as a
+				// tool handler; we just route by `name` so mod menus share the one `menu` tool.
+				const std::string name = a_args.value("name", std::string{});
+				if (name.empty())
+					throw ToolError(400, "action 'invoke' requires a 'name' (a registered menu — see menu list .registered)");
+				auto entry = MenuExtensions::Find(name);
+				if (!entry)
+					throw ToolError(404, std::format("no handler registered for menu '{}' (see menu list .registered)", name));
+				return entry->handler(a_args, a_ctx);
 			}
 
 			if (action == "open") {
@@ -278,6 +298,14 @@ namespace dvb
 			}
 
 			if (action == "describe") {
+				// With a `name`, report a consumer-registered menu's descriptor (what `invoke`
+				// accepts). Without one, fall back to the active MessageBoxMenu (the original use).
+				if (const std::string name = a_args.value("name", std::string{}); !name.empty()) {
+					auto entry = MenuExtensions::Find(name);
+					if (!entry)
+						throw ToolError(404, std::format("no handler registered for menu '{}' (see menu list .registered)", name));
+					return json{ { "registered", true }, { "name", name }, { "descriptor", entry->descriptor } };
+				}
 				// Read the active MessageBoxMenu (body + buttons) via CommonLib's RE'd
 				// GetCurrentMessageBoxData() — on the main thread (touches the live UI queue).
 				return MainThread::RunAndWait([]() -> json {
@@ -307,7 +335,7 @@ namespace dvb
 				return json{ { "queued", true }, { "action", "accept" }, { "index", index } };
 			}
 
-			throw ToolError(400, std::format("unknown action '{}' (list|open|close|describe|accept)", action));
+			throw ToolError(400, std::format("unknown action '{}' (list|open|close|describe|accept|invoke)", action));
 		}
 
 		// Identify any form as { formId, formType, name, editorId } — CommonLib's RE'd accessors.
@@ -1008,12 +1036,15 @@ namespace dvb
 			"'name' via the UI queue (kShow) — opens hub menus from a plain name (TweenMenu, "
 			"'Journal Menu', MagicMenu, MapMenu, StatsMenu, InventoryMenu, FavoritesMenu); context "
 			"menus that need a target ref (ContainerMenu/BarterMenu/BookMenu) won't open this way. "
-			"'close' hides a menu by 'name' via the UI queue (kHide).";
+			"'close' hides a menu by 'name' via the UI queue (kHide). 'invoke' dispatches to a "
+			"consumer-registered menu handler by 'name' (a mod exposes its menu's interaction via the "
+			"C-ABI RegisterMenuHandler instead of adding its own tool); 'list' returns those under "
+			"'registered', and 'describe' with a 'name' returns that handler's descriptor.";
 		menu.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "open", "close" }) }, { "description", "list | describe | accept | open | close" } } },
-								{ "name", json{ { "type", "string" }, { "description", "menu name to show/hide (required for open and close), e.g. TweenMenu, MessageBoxMenu" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "open", "close", "invoke" }) }, { "description", "list | describe | accept | open | close | invoke" } } },
+								{ "name", json{ { "type", "string" }, { "description", "open/close: menu to show/hide (e.g. TweenMenu). invoke: a registered menu (see list .registered). describe: a registered menu to return its descriptor." } } },
 								{ "index", json{ { "type", "integer" }, { "description", "accept: 0-based button index to select (default 0). See describe's buttons/cancelIndex." } } },
 							} },
 		};

@@ -26,6 +26,36 @@ def test_list(client, menu):
     assert isinstance(body.get("messageBoxOpen"), bool), body
 
 
+def test_list_includes_registered(client, menu):
+    # Consumer-registered menu handlers (C-ABI RegisterMenuHandler) surface under `registered`.
+    if "invoke" not in schema_enum(menu, "action"):
+        pytest.skip("menu 'invoke' action not in live schema (no extension support on this build)")
+    body = client.ok("menu", {"action": "list"})
+    assert isinstance(body.get("registered"), list), body
+
+
+def test_invoke_selftest_roundtrips(client, menu):
+    # The host registers a `devbench.selftest` handler through the public C-ABI (the ping pattern),
+    # so invoke must route to it and echo the args back through the C-callback boundary.
+    require_enum(menu, "action", "invoke")
+    registered = client.ok("menu", {"action": "list"}).get("registered", [])
+    if "devbench.selftest" not in registered:
+        pytest.skip("devbench.selftest handler not registered on this build")
+    body = client.ok("menu", {"action": "invoke", "name": "devbench.selftest", "foo": 42})
+    assert body.get("invoked") is True, body
+    assert body.get("echo", {}).get("foo") == 42, body
+
+    desc = client.ok("menu", {"action": "describe", "name": "devbench.selftest"})
+    assert desc.get("registered") is True and isinstance(desc.get("descriptor"), dict), desc
+
+
+def test_invoke_unknown_menu_404(client, menu):
+    require_enum(menu, "action", "invoke")
+    status, body = client.call("menu", {"action": "invoke", "name": "NoSuchMenuXYZ"})
+    assert status == 404, (status, body)
+    assert isinstance(body, dict) and "error" in body, body
+
+
 @pytest.mark.requires_player
 def test_open_tween_roundtrip(client, menu):
     require_enum(menu, "action", "list")
