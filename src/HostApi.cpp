@@ -78,6 +78,8 @@ namespace dvb::HostApi
 					} catch (...) {
 					}
 				}
+				if (!desc.is_object())  // a scalar/array descriptor would break the `menu describe` object contract
+					desc = json::object();
 				return MenuExtensions::Register(a_menuName, std::move(desc), MakeHandler(a_handler, a_ctx));
 			}
 
