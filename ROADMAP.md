@@ -194,6 +194,18 @@ match}`), and `waitUntil` (poll live state: `playerLoaded`/`noModal`/`noMenu`). 
   `scenario` file, then replays it. Cadence + interpolation tunable; the captured path doubles as
   the `measure` window. Cheapest first cut needs no new engine hooks — poll the existing pose reads
   on a timer and emit a scenario.
+- **Replay coupling: producer signal + consumer override — DONE.** A recipe's `meta.coupling`
+  tier (anchored/cell/worldspace) is the **producer's** declaration of how tightly the start must
+  be reproduced. A **consumer** can now override it on `record action=replay`: `coupling` forces a
+  looser tier (e.g. `worldspace` skips the scene restore) and `force` turns the scene-mismatch
+  abort into a reported warning — so a consumer can run a recipe _generally_, accepting it may not
+  reproduce, rather than being bound to the exact save. Replay returns the effective
+  `{ coupling: { tier, producer, overridden, forced } }` and the scene step reports `sceneMismatch`,
+  so ignoring the signal is a deliberate, visible choice. Pairs with the (not-yet-built) **portable
+  entry capture** — recording start conditions (cell + pose + time + weather) instead of a save, so
+  a save-coupled recording can be reconstructed via `coc`+`setpos`+`settime`+`setweather` and run
+  across saves/installs. Exact runs still prefer the save entry; portable + override is for
+  benchmarks, sharing, and CI on a vanilla install (where quest/inventory state is irrelevant).
 
 ### Modal handling — read/answer a blocking MessageBoxMenu (IMPLEMENTED & AE-validated, no hook needed)
 

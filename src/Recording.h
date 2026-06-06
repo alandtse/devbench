@@ -60,9 +60,12 @@ namespace dvb::Recording
 	/// (record start/stop, replay) since devbench is otherwise headless. No-op if no task interface.
 	void Notify(const std::string& a_msg);
 
-	/// Build the step list for action=replay from a recording file (a_args.path). With
-	/// a_args.restoreScene=true, prepend the entry point (load the save / coc the cell) +
-	/// waitUntil playerLoaded so the trajectory runs in the recorded scene. Throws ToolError
-	/// on a missing/invalid file. The caller runs the result through the scenario tool.
+	/// Build the replay plan for action=replay from a recording file (a_args.path). Returns
+	/// { steps, coupling } — `steps` runs through the scenario tool; `coupling` reports the
+	/// effective tier. With a_args.restoreScene=true, the steps prepend the entry point (load
+	/// the save / coc the cell) + waitUntil playerLoaded so the trajectory runs in the recorded
+	/// scene. The recipe's tier is the producer's signal; a_args.coupling overrides it (run
+	/// looser) and a_args.force turns the scene mismatch from an abort into a reported warning.
+	/// Throws ToolError on a missing/invalid file or an invalid coupling override.
 	json BuildReplaySteps(const json& a_args);
 }
