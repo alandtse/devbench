@@ -5,6 +5,11 @@ SKIPPED (never failed). It also skips individual tests whose tool — or a neede
 action/kind — is absent from the *live* schema, so the suite stays green across
 branches that add or drop capabilities.
 
+Self-contained: if a server is reachable but sitting at the main menu, the suite
+drives the game into a playable state itself (see DEVBENCH_BOOTSTRAP below) so
+requires_player tests run instead of skipping. An already-loaded game is used
+as-is. Set DEVBENCH_BOOTSTRAP=off to keep the old "human controls state" behavior.
+
 Discovery order for the base URL (first hit wins):
   1. env var DEVBENCH_URL  (e.g. http://127.0.0.1:8921)
   2. runtime.json under known Skyrim SE / VR Data paths ({"port": <int>})
@@ -18,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -178,14 +184,133 @@ def tool_schema(client: Client) -> dict[str, dict[str, Any]]:
     return {d["name"]: d for d in client.tools()}
 
 
-@pytest.fixture(scope="session")
-def player_loaded(client: Client) -> bool:
-    """Whether an in-world save is loaded (inspect{kind:state}.playerLoaded)."""
+# --------------------------------------------------------------------------- #
+# Recipes — the portable scenario JSONs under recipes/ are the bench's reusable
+# game-driving artifacts. One loader + one runner, shared by the recipe tests AND
+# the env bootstrap below, so "how to play a recipe" lives in exactly one place.
+# --------------------------------------------------------------------------- #
+RECIPES_DIR = Path(__file__).parent / "recipes"
+
+
+def load_recipe(name: str) -> dict[str, Any]:
+    """Load recipes/<name>.json."""
+    return json.loads((RECIPES_DIR / f"{name}.json").read_text(encoding="utf-8"))
+
+
+def run_recipe(client: "Client", recipe: "str | dict[str, Any]", *,
+               timeout: float = 120.0, continue_on_error: bool = True) -> tuple[int, Any]:
+    """Play a recipe's steps through the `scenario` tool. `recipe` is a name or a
+    loaded dict. Returns (status, body) — the single place that knows how to run one."""
+    if isinstance(recipe, str):
+        recipe = load_recipe(recipe)
+    return client.call(
+        "scenario",
+        {"steps": recipe["steps"], "continueOnError": continue_on_error},
+        timeout=timeout,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Environment bootstrap — drive the game into a playable state itself, so
+# requires_player tests run whether the game starts at the main menu or in-world.
+#
+#   DEVBENCH_BOOTSTRAP = coc (default) | save | off
+#     coc  — `coc <cell>` from the main menu (save-independent; starts a fresh
+#            session). Cell from DEVBENCH_COC_CELL (default "WhiterunDragonsreach").
+#     save — load DEVBENCH_SAVE, or the most recent save if unset.
+#     off  — never drive the game; tests skip if no save is loaded (old behavior).
+#
+# Bootstrapping only happens FROM THE MAIN MENU — an already-loaded game is used
+# as-is and never disturbed. In CI (no server) the suite is skipped before this
+# ever runs.
+# --------------------------------------------------------------------------- #
+BOOTSTRAP_TIMEOUT = 90.0
+DEFAULT_COC_CELL = "WhiterunDragonsreach"  # vanilla, light, present in any load order
+
+
+def _state_player_loaded(client: Client) -> bool:
     try:
         body = client.ok("inspect", {"kind": "state"})
     except (AssertionError, requests.RequestException):
         return False
     return bool(isinstance(body, dict) and body.get("playerLoaded"))
+
+
+def _most_recent_save(client: Client) -> str | None:
+    """Best-effort newest save name from `game list` (first entry), or None."""
+    try:
+        _, body = client.call("game", {"action": "list"})
+        saves = body.get("saves") if isinstance(body, dict) else None
+        return saves[0] if isinstance(saves, list) and saves else None
+    except requests.RequestException:
+        return None
+
+
+def _clear_gating_modal(client: Client) -> None:
+    """A load can be gated by a content-mismatch Yes/No box — accept it so the
+    load proceeds. Best-effort: only acts when a MessageBoxMenu is actually open."""
+    try:
+        _, body = client.call("menu", {"action": "list"})
+        if isinstance(body, dict) and body.get("messageBoxOpen"):
+            client.call("menu", {"action": "accept", "index": 0})
+    except requests.RequestException:
+        pass
+
+
+def _wait_player(client: Client, retrigger=None, timeout: float = BOOTSTRAP_TIMEOUT) -> bool:
+    """Poll until a player is loaded; clear gating modals; retrigger once midway
+    (a load/coc issued at the main menu sometimes doesn't take on the first try)."""
+    deadline = time.time() + timeout
+    retried = False
+    while time.time() < deadline:
+        _clear_gating_modal(client)
+        if _state_player_loaded(client):
+            return True
+        if retrigger and not retried and (deadline - time.time()) < timeout - 25:
+            retrigger()
+            retried = True
+        time.sleep(3)
+    return False
+
+
+def _bootstrap(client: Client) -> bool:
+    mode = os.environ.get("DEVBENCH_BOOTSTRAP", "coc").lower()
+    if mode == "off":
+        return False
+    if mode == "save":
+        name = os.environ.get("DEVBENCH_SAVE") or _most_recent_save(client)
+        if not name:
+            return False
+        load = lambda: client.call("game", {"action": "load", "name": name})  # noqa: E731
+        load()
+        return _wait_player(client, retrigger=load)
+    # default "coc": reuse the portable `bootstrap` recipe (coc + waitUntil playerLoaded)
+    # through the scenario engine — the same machinery the recipe tests use.
+    cell = os.environ.get("DEVBENCH_COC_CELL", DEFAULT_COC_CELL)
+    try:
+        recipe = load_recipe("bootstrap")
+        for step in recipe.get("steps", []):
+            cmd = step.get("args", {}).get("command", "")
+            if step.get("tool") == "console" and cmd.startswith("coc "):
+                step["args"]["command"] = f"coc {cell}"
+        status, _ = run_recipe(client, recipe, timeout=BOOTSTRAP_TIMEOUT)
+        if status == 200 and _state_player_loaded(client):
+            return True
+    except (OSError, KeyError, requests.RequestException):
+        pass  # no scenario tool / recipe missing → fall back to driving it directly
+    coc = lambda: client.call("console", {"command": f"coc {cell}"})  # noqa: E731
+    coc()
+    return _wait_player(client, retrigger=coc)
+
+
+@pytest.fixture(scope="session")
+def player_loaded(client: Client) -> bool:
+    """True once an in-world save is loaded. If the game is at the main menu, drive
+    it into a playable state per DEVBENCH_BOOTSTRAP (default: coc) so the suite is
+    self-contained; an already-loaded game is used as-is."""
+    if _state_player_loaded(client):
+        return True
+    return _bootstrap(client)
 
 
 # --------------------------------------------------------------------------- #
@@ -223,15 +348,18 @@ def require_enum(descriptor: dict[str, Any], prop: str, value: str) -> None:
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
-        "requires_player: test needs an in-world save loaded; skipped if playerLoaded is false",
+        "requires_player: test needs an in-world save; the suite bootstraps one "
+        "(DEVBENCH_BOOTSTRAP) and only skips if that's disabled or fails",
     )
 
 
 @pytest.fixture
 def requires_player(player_loaded: bool) -> None:
-    """Skip the test unless an in-world save is currently loaded."""
+    """Skip only if no player is loaded and the bootstrap couldn't establish one
+    (DEVBENCH_BOOTSTRAP=off, or it timed out)."""
     if not player_loaded:
-        pytest.skip("no in-world save loaded (inspect{kind:state}.playerLoaded == false)")
+        pytest.skip("no player loaded and bootstrap did not establish one "
+                    "(DEVBENCH_BOOTSTRAP=off or it failed)")
 
 
 @pytest.fixture(autouse=True)

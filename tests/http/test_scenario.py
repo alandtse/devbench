@@ -11,14 +11,9 @@ marked `slow` — deselect with `-m "not slow"`.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
-from conftest import require_tool
-
-RECIPE = Path(__file__).parent / "recipes" / "dragonsreach_navigate.json"
+from conftest import load_recipe, require_tool, run_recipe
 
 
 @pytest.mark.slow
@@ -27,17 +22,14 @@ def test_navigate_dragonsreach_recipe(client, tool_schema):
     require_tool(tool_schema, "scenario")
     require_tool(tool_schema, "console")  # the recipe dispatches console steps
 
-    recipe = json.loads(RECIPE.read_text(encoding="utf-8"))
+    recipe = load_recipe("dragonsreach_navigate")
     steps = recipe["steps"]
     assert len(steps) > 50, "recipe should be the full navigation, not a stub"
 
     # The scenario blocks server-side for the recipe's duration (~31s) — give the
     # HTTP call room beyond that.
-    body = client.ok(
-        "scenario",
-        {"steps": steps, "continueOnError": True},
-        timeout=120.0,
-    )
+    status, body = run_recipe(client, recipe, timeout=120.0)
+    assert status == 200, body
     assert body.get("ok") is True, body
     assert body.get("aborted") in (False, None), body
     assert body.get("stepsRun") == len(steps), body

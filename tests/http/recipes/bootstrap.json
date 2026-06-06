@@ -1,0 +1,9 @@
+{
+  "meta": {
+    "description": "Bench bootstrap: coc into a known cell from the main menu, then wait until the player is loaded. The cell is overridden by DEVBENCH_COC_CELL; run via the scenario tool by conftest when the game starts at the main menu."
+  },
+  "steps": [
+    { "tool": "console", "args": { "command": "coc WhiterunDragonsreach" } },
+    { "waitUntil": "playerLoaded", "timeoutMs": 60000 }
+  ]
+}
