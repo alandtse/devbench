@@ -16,16 +16,13 @@ Marked `slow` (~18s) + `requires_player`.
 
 from __future__ import annotations
 
-import json
 import math
 import time
-from pathlib import Path
 
 import pytest
 
-from conftest import require_tool
+from conftest import load_recipe, require_tool, run_recipe
 
-RECIPE = Path(__file__).parent / "recipes" / "follow_nelkir.json"
 NPC = "0x1A67B"  # Nelkir, a Dragonsreach wanderer (Skyrim.esm ref, stable across saves)
 PLAYER = "0x14"
 
@@ -48,10 +45,11 @@ def test_follow_moving_npc(client, tool_schema):
     require_tool(tool_schema, "console")
     require_tool(tool_schema, "inspect")
 
-    recipe = json.loads(RECIPE.read_text(encoding="utf-8"))
+    recipe = load_recipe("follow_nelkir")
 
     # Run the follow recipe (coc in + repeated moveto). It blocks ~18s.
-    body = client.ok("scenario", {"steps": recipe["steps"], "continueOnError": True}, timeout=90.0)
+    status, body = run_recipe(client, recipe, timeout=90.0)
+    assert status == 200, body
     assert body.get("ok") is True, body
     assert body.get("stepsRun") == len(recipe["steps"]), body
 

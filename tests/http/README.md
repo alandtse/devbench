@@ -48,12 +48,29 @@ returns JSON carrying a `plugin` field (liveness check).
 ## Skip rules (why the suite stays green)
 
 - **No server reachable** → entire session skipped.
-- **No in-world save loaded** → tests marked `@pytest.mark.requires_player` are
-  skipped (checked via `inspect{kind:state}.playerLoaded`). The suite never
-  loads a save itself — the human/another agent controls game state.
+- **No in-world save loaded** → the suite **bootstraps one itself** (see below),
+  so `@pytest.mark.requires_player` tests run; they skip only if the bootstrap is
+  disabled (`DEVBENCH_BOOTSTRAP=off`) or fails.
 - **Capability absent on this branch** → a test skips when its tool is missing
   from `GET /api/tools`, or when a needed action/kind is absent from the live
   `inputSchema` enum (e.g. `menu` `open`).
+
+## Self-contained bootstrap
+
+If a server is reachable but at the **main menu**, the suite drives the game into
+a playable state itself (an already-loaded game is used as-is and never
+disturbed). Controlled by `DEVBENCH_BOOTSTRAP`:
+
+| Value           | Behavior                                                                               |
+| --------------- | -------------------------------------------------------------------------------------- |
+| `coc` (default) | Run the `recipes/bootstrap.json` recipe (`coc` into a cell + wait) — save-independent. |
+| `save`          | Load `DEVBENCH_SAVE`, or the most recent save if unset.                                |
+| `off`           | Don't drive the game; `requires_player` tests skip (the old "human controls state").   |
+
+`DEVBENCH_COC_CELL` overrides the `coc` target (default `WhiterunDragonsreach`).
+The `coc` path reuses the same recipe loader + `scenario` runner the recipe tests
+use (`load_recipe`/`run_recipe` in `conftest.py`) — there's one place that knows
+how to play a recipe.
 
 ## Layout
 
