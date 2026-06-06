@@ -834,6 +834,8 @@ namespace dvb
 							const std::uint32_t wsWant = step.value("worldspaceFormID", 0u);
 							const std::uint32_t cellWant = step.value("cellFormID", 0u);
 							const long          timeoutMs = step.value("timeoutMs", static_cast<long>(10000));
+							// soft (consumer forced a looser coupling): a mismatch is reported, not fatal.
+							const bool soft = step.value("soft", false);
 							// The scene may still be loading right after a restore — poll until the
 							// player is loaded, read the current worldspace/cell, compare the coarse id.
 							json       check;
@@ -865,17 +867,30 @@ namespace dvb
 							} while (steady_clock::now() < deadline);
 
 							if (!ready) {
-								r["errorCode"] = 504;
-								r["error"] = "scene assert: player never finished loading";
-								stepFailed = true;
+								// soft: don't fail the run, just note we couldn't confirm the scene.
+								r["ok"] = soft;
+								r["sceneConfirmed"] = false;
+								(soft ? r["warning"] : r["error"]) = "scene assert: player never finished loading";
+								if (!soft) {
+									r["errorCode"] = 504;
+									stepFailed = true;
+								}
 							} else if (!check.value("ok", false)) {
-								const std::string wantEid = interior ? step.value("cell", std::string{}) : step.value("worldspace", std::string{});
-								r["errorCode"] = 409;
-								r["error"] = std::format("scene mismatch: recorded {} '{}' (0x{:X}), currently in 0x{:X} — aborting replay",
-									interior ? "cell" : "worldspace", wantEid,
-									interior ? cellWant : wsWant,
-									interior ? check.value("cellFormID", 0u) : check.value("worldspaceFormID", 0u));
-								stepFailed = true;
+								const std::string   wantEid = interior ? step.value("cell", std::string{}) : step.value("worldspace", std::string{});
+								const std::uint32_t cur = interior ? check.value("cellFormID", 0u) : check.value("worldspaceFormID", 0u);
+								const std::string   msg = std::format("scene mismatch: recorded {} '{}' (0x{:X}), currently in 0x{:X}{}",
+									interior ? "cell" : "worldspace", wantEid, interior ? cellWant : wsWant, cur,
+									soft ? " — forced, proceeding" : " — aborting replay");
+								r["sceneMismatch"] = true;
+								r["worldspaceFormID"] = check.value("worldspaceFormID", 0u);
+								r["cellFormID"] = check.value("cellFormID", 0u);
+								// soft: a forced consumer accepted that the scene may not match — warn, don't abort.
+								r["ok"] = soft;
+								(soft ? r["warning"] : r["error"]) = msg;
+								if (!soft) {
+									r["errorCode"] = 409;
+									stepFailed = true;
+								}
 							} else {
 								r["ok"] = true;
 								r["worldspaceFormID"] = check.value("worldspaceFormID", 0u);
@@ -1093,7 +1108,12 @@ namespace dvb
 			"'replay' runs a recording file ('path'): with restoreScene=true it re-establishes "
 			"the entryPoint (loads the save / coc's the cell) and waits for the player before the "
 			"trajectory, so the run reproduces the recorded scene; otherwise it teleports along "
-			"the path in the current scene. Emits record.started / record.stopped markers.";
+			"the path in the current scene. Emits record.started / record.stopped markers. The "
+			"recipe's coupling tier (meta.coupling) is the producer's signal for how tightly the "
+			"start must be reproduced; a consumer can override it — 'coupling' forces a looser tier "
+			"('worldspace' skips the restore) and 'force' turns a scene mismatch from an abort into a "
+			"reported warning, to run a recipe generally accepting it may not reproduce. replay "
+			"returns the effective { coupling: { tier, producer, overridden, forced } }.";
 		record.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
@@ -1101,6 +1121,8 @@ namespace dvb
 								{ "intervalMs", json{ { "type", "integer" }, { "description", "start: pose sample period in ms (default = config recordIntervalMs, min 10)" } } },
 								{ "path", json{ { "type", "string" }, { "description", "replay: recording file to play back (from stop's 'path')" } } },
 								{ "restoreScene", json{ { "type", "boolean" }, { "description", "replay: re-establish the recorded entryPoint + wait for load before the trajectory (default false)" } } },
+								{ "coupling", json{ { "type", "string" }, { "enum", json::array({ "anchored", "cell", "worldspace" }) }, { "description", "replay: override the recipe's coupling tier — run looser than the producer signaled (worldspace skips the scene restore)" } } },
+								{ "force", json{ { "type", "boolean" }, { "description", "replay: proceed even if the scene doesn't match the recording — report the mismatch as a warning instead of aborting (default false)" } } },
 							} },
 		};
 		a_registry.Register(std::move(record),
@@ -1109,14 +1131,16 @@ namespace dvb
 				// it through the scenario engine, which needs the registry — hence handled here
 				// rather than in Recording::Handle.
 				if (a_args.value("action", std::string{}) == "replay") {
-					const json steps = Recording::BuildReplaySteps(a_args);
+					const json plan = Recording::BuildReplaySteps(a_args);
+					const json steps = plan.value("steps", json::array());
 					long       estMs = 0;  // sum of wait steps ≈ replay duration
 					for (const auto& s : steps)
 						if (s.contains("wait"))
 							estMs += s["wait"].get<long>();
 					Recording::Notify(std::format("devbench: replaying {} steps (~{:.1f}s)", steps.size(), estMs / 1000.0));
 					logs::info("devbench: replay starting — {} steps, ~{}ms", steps.size(), estMs);
-					const json result = ScenarioHandler(json{ { "steps", steps } }, a_ctx, a_registry, a_events);
+					json result = ScenarioHandler(json{ { "steps", steps } }, a_ctx, a_registry, a_events);
+					result["coupling"] = plan.value("coupling", json::object());  // surface effective tier / override
 					logs::info("devbench: replay finished — {} steps, ok={}",
 						result.value("stepsRun", 0), result.value("ok", false));
 					return result;

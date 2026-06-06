@@ -510,6 +510,19 @@ namespace dvb::Recording
 			}
 		}
 
+		// The recipe's tier is the PRODUCER's signal ("how tightly this needs its start").
+		// A CONSUMER may override it — run looser than the producer asked, accepting it may
+		// not reproduce (e.g. force "worldspace" to skip a save-coupled recipe's restore).
+		const std::string producerTier = tier;
+		if (const std::string ov = a_args.value("coupling", std::string{}); !ov.empty()) {
+			if (ov != "anchored" && ov != "cell" && ov != "worldspace")
+				throw ToolError(400, std::format("invalid coupling '{}' (anchored | cell | worldspace)", ov));
+			tier = ov;
+		}
+		// `force`: proceed even if the scene doesn't match — the scene assert below becomes a
+		// reported warning instead of an abort. The consumer explicitly opted into "may not work".
+		const bool force = a_args.value("force", false);
+
 		const bool restoreScene = a_args.value("restoreScene", false);
 		const long settleMs = a_args.value("settleMs", static_cast<long>(g_loadSettleMs));
 		const bool cleanTransition = a_args.value("cleanTransition", g_cleanTransition);
@@ -567,6 +580,7 @@ namespace dvb::Recording
 				{ "cellFormID", cellFormID },
 				{ "worldspace", meta.value("worldspace", std::string{}) },
 				{ "cell", meta.value("cell", std::string{}) },
+				{ "soft", force },  // forced → report a mismatch instead of aborting
 			});
 		}
 
@@ -587,6 +601,16 @@ namespace dvb::Recording
 				}
 			}
 		}
-		return steps;
+		// Return the steps plus the effective coupling so the caller can surface what it
+		// actually did (which tier ran, whether the consumer overrode the producer's signal).
+		return json{
+			{ "steps", std::move(steps) },
+			{ "coupling", json{
+							  { "tier", tier },
+							  { "producer", producerTier },
+							  { "overridden", tier != producerTier },
+							  { "forced", force },
+						  } },
+		};
 	}
 }
