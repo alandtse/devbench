@@ -128,6 +128,27 @@ def test_mods(client, inspect):
     assert "skyrim.esm" in names, names
 
 
+@pytest.mark.requires_player
+def test_player(client, inspect):
+    require_enum(inspect, "kind", "player")
+    body = client.ok("inspect", {"kind": "player"})
+    assert body.get("playerLoaded") is True, body
+    assert isinstance(body.get("level"), int), body
+    assert _is_number(body.get("gold")), body
+
+    avs = body.get("actorValues")
+    assert isinstance(avs, dict), body
+    for av in ("health", "magicka", "stamina", "carryWeight"):
+        slot = avs.get(av)
+        assert isinstance(slot, dict), (av, body)
+        assert _is_number(slot.get("current")) and _is_number(slot.get("max")), (av, slot)
+
+    equipped = body.get("equipped")
+    assert isinstance(equipped, dict), body
+    for hand in ("right", "left", "ammo"):
+        assert hand in equipped, equipped  # may be null when nothing is equipped
+
+
 def test_extensions_list_and_dispatch(client, inspect):
     # RegisterToolExtension lets a mod add a custom inspect kind. The host registers a
     # `devbench.selftest` inspect extension through the public C-ABI (the ping pattern),
