@@ -105,6 +105,14 @@ how CS gates its server per-runtime, and lets users turn the bench on/off withou
 - **`eval` primitive + `search_api` discovery** — thin-but-powerful surface (the
   agentic-renderdoc model): let an agent run script against live RE/game state and discover the
   callable surface, rather than a bespoke tool per operation. Builds on `MainThread::RunAndWait`.
+  - **Curated-first → registry-extracted (the plan to "expose CommonLib").** C++ has no runtime
+    reflection, so the native binding-registry is the only way to expose RE/render state Papyrus
+    can't see. Rather than big-bang a scripting VM, we ship **curated `inspect` kinds** for the
+    high-value reads (each its own PR, on a shared `re_read` helper), then **extract** the generic
+    binding registry once ~4–5 kinds expose the pattern; the curated kinds then delegate to it and
+    the generic `read`/`eval` path opens as the escape hatch. The kinds aren't throwaway — they
+    become the registry's first bindings. Started: `mods` (load order). Next: `player`, `inventory`,
+    `quests`, `effects`. (Perf/frame-timing stays out of core — that's Tracy/consumer extensions.)
   - **First increment — the `papyrus` tool — done.** `list`/`describe` are the `search_api`
     discovery surface for the Papyrus VM (loaded classes, function signatures); `call` invokes a
     **global** function via `DispatchStaticCall` or a **member** function on any form (`self`) and

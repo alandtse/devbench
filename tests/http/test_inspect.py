@@ -106,6 +106,28 @@ def test_refs_enumerate(client, inspect):
     assert isinstance(body.get("truncated"), bool), body
 
 
+def test_mods(client, inspect):
+    require_enum(inspect, "kind", "mods")
+    body = client.ok("inspect", {"kind": "mods"})
+    assert isinstance(body, dict), body
+    for field in ("count", "lightCount", "total"):
+        assert isinstance(body.get(field), int), (field, body)
+    assert body["total"] == body["count"] + body["lightCount"], body
+
+    plugins = body.get("plugins")
+    light = body.get("lightPlugins")
+    assert isinstance(plugins, list) and isinstance(light, list), body
+    assert len(plugins) == body["count"], body
+    assert len(light) == body["lightCount"], body
+
+    # Skyrim.esm is always present (full plugin, load-order index 0) once data is loaded.
+    for p in plugins:
+        assert isinstance(p.get("index"), int), p
+        assert isinstance(p.get("name"), str) and p["name"], p
+    names = [p["name"].lower() for p in plugins]
+    assert "skyrim.esm" in names, names
+
+
 def test_extensions_list_and_dispatch(client, inspect):
     # RegisterToolExtension lets a mod add a custom inspect kind. The host registers a
     # `devbench.selftest` inspect extension through the public C-ABI (the ping pattern),
