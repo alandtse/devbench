@@ -637,6 +637,65 @@ namespace dvb
 				});
 			}
 
+			// quests: the journal — quests that are running or completed, each with its current stage
+			// and non-dormant objectives. 'active' marks the player's tracked quest. 'limit' default 100.
+			if (kind == "quests") {
+				const int limit = a_args.value("limit", 100);
+				if (limit < 0)
+					throw ToolError(400, "inspect quests: 'limit' must be >= 0");
+				return MainThread::RunAndWait([=]() -> json {
+					auto* dh = RE::TESDataHandler::GetSingleton();
+					if (!dh)
+						throw ToolError(503, "TESDataHandler unavailable (no data loaded?)");
+					auto objState = [](RE::QUEST_OBJECTIVE_STATE s) -> const char* {
+						switch (s) {
+						case RE::QUEST_OBJECTIVE_STATE::kDisplayed:
+							return "displayed";
+						case RE::QUEST_OBJECTIVE_STATE::kCompleted:
+						case RE::QUEST_OBJECTIVE_STATE::kCompletedDisplayed:
+							return "completed";
+						case RE::QUEST_OBJECTIVE_STATE::kFailed:
+						case RE::QUEST_OBJECTIVE_STATE::kFailedDisplayed:
+							return "failed";
+						default:
+							return "dormant";
+						}
+					};
+					json quests = json::array();
+					int  total = 0;
+					for (auto* q : dh->GetFormArray<RE::TESQuest>()) {
+						if (!q || !(q->IsRunning() || q->IsCompleted()))
+							continue;
+						++total;
+						if (static_cast<int>(quests.size()) >= limit)
+							continue;
+						json jq = IdentifyForm(q);
+						jq["stage"] = q->GetCurrentStageID();
+						jq["type"] = static_cast<int>(q->GetType());
+						jq["active"] = q->IsActive();
+						jq["completed"] = q->IsCompleted();
+						json objs = json::array();
+						for (auto* obj : q->objectives) {
+							if (!obj || obj->state.get() == RE::QUEST_OBJECTIVE_STATE::kDormant)
+								continue;
+							objs.push_back(json{
+								{ "index", obj->index },
+								{ "text", std::string(obj->displayText.c_str() ? obj->displayText.c_str() : "") },
+								{ "state", objState(obj->state.get()) },
+							});
+						}
+						jq["objectives"] = std::move(objs);
+						quests.push_back(std::move(jq));
+					}
+					return json{
+						{ "count", total },
+						{ "returned", static_cast<int>(quests.size()) },
+						{ "truncated", total > static_cast<int>(quests.size()) },
+						{ "quests", std::move(quests) },
+					};
+				});
+			}
+
 			// refs: consolidated form identification. One of three sources, one identify shape:
 			//   'formId'      → that one form (a placed ref gets base + position)
 			//   'selected'    → the console-selected / crosshair ref (set via prid/click)
@@ -745,7 +804,7 @@ namespace dvb
 			if (auto entry = ToolExtensions::Find("inspect", kind))
 				return entry->handler(a_args, a_ctx);
 
-			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|inventory|refs|extensions, or a registered kind — see inspect kind=extensions)", kind));
+			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|inventory|quests|refs|extensions, or a registered kind — see inspect kind=extensions)", kind));
 		}
 
 		// camera: read or set the player camera point of view, so a recording can capture the
@@ -1211,6 +1270,8 @@ namespace dvb
 			"actorValues:{health,magicka,stamina,carryWeight each {current,max}}, equipped:{right,left,ammo} }; "
 			"'inventory' → items held by the player (or a container 'formId') { owner, count, items:[{formId, "
 			"name, formType, count, value, weight, equipped}] } (filters: 'formType', 'limit'); "
+			"'quests' → journal (running/completed) { count, quests:[{formId, name, stage, type, active, "
+			"completed, objectives:[{index, text, state}]}] } ('limit'); "
 			"'refs' → identify reference(s) sharing one shape { formId, formType, name, "
 			"editorId, base, position } — pass 'formId' for one form, 'selected'=true for the "
 			"console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid "
@@ -1221,7 +1282,7 @@ namespace dvb
 		inspect.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state", "vm", "scene", "mods", "player", "inventory", "refs", "extensions" }) }, { "description", "state | vm | scene | mods | player | inventory | refs | extensions (also a consumer-registered kind — see kind=extensions)" } } },
+								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state", "vm", "scene", "mods", "player", "inventory", "quests", "refs", "extensions" }) }, { "description", "state | vm | scene | mods | player | inventory | quests | refs | extensions (also a consumer-registered kind — see kind=extensions)" } } },
 								{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form; inventory: the container ref to read (default player) (hex formId, e.g. 0x14, or EditorID)" } } },
 								{ "selected", json{ { "type", "boolean" }, { "description", "refs: identify the console-selected / crosshair ref instead" } } },
 								{ "formType", json{ { "type", "string" }, { "description", "refs/inventory: keep only entries whose type matches (e.g. Actor, Weapon, Potion)" } } },
