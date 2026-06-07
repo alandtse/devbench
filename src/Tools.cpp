@@ -383,6 +383,28 @@ namespace dvb
 			return j;
 		}
 
+		// Normalize a form-type filter to a substring needle. The engine's type strings are 4-char
+		// codes (ACHR, NPC_, CONT, WEAP); map common friendly names ('actor', 'weapon') onto them so
+		// a substring match works (a longer friendly name like "weapon" never matches "weap"
+		// otherwise). A raw code or prefix ('ACH') still matches. Shared by 'refs' and 'inventory'.
+		std::string FormTypeNeedle(std::string a_filter)
+		{
+			std::transform(a_filter.begin(), a_filter.end(), a_filter.begin(),
+				[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+			static const std::unordered_map<std::string, std::string> kAlias{
+				{ "actor", "achr" }, { "npc", "npc_" }, { "container", "cont" },
+				{ "door", "door" }, { "weapon", "weap" }, { "armor", "armo" },
+				{ "book", "book" }, { "ingredient", "ingr" }, { "potion", "alch" },
+				{ "misc", "misc" }, { "light", "ligh" }, { "furniture", "furn" },
+				{ "activator", "acti" }, { "flora", "flor" }, { "tree", "tree" },
+				{ "static", "stat" }, { "key", "keym" }, { "scroll", "scrl" },
+				{ "ammo", "ammo" }, { "soulgem", "slgm" }
+			};
+			if (auto it = kAlias.find(a_filter); it != kAlias.end())
+				return it->second;
+			return a_filter;
+		}
+
 		// inspect: read live game state. The value-returning primitive — each read runs on the
 		// main thread and its result is returned synchronously. Built-in kinds: state | vm | scene |
 		// refs; a consumer-registered kind (C-ABI RegisterToolExtension "inspect") is dispatched too,
@@ -580,7 +602,7 @@ namespace dvb
 					if (!owner)
 						throw ToolError(404, "inspect inventory: owner ref not found");
 
-					const std::string needle = lower(typeFilter);
+					const std::string needle = FormTypeNeedle(typeFilter);
 					auto              inv = owner->GetInventory();
 					json              items = json::array();
 					int               total = 0;
@@ -674,26 +696,12 @@ namespace dvb
 					auto* tes = RE::TES::GetSingleton();
 					if (!tes)
 						throw ToolError(503, "TES unavailable (no loaded world?)");
-					// The engine's type strings are 4-char codes (ACHR, NPC_, CONT). Map common
-					// friendly names onto them so 'Actor'/'container' work, not just 'ACHR'; the
-					// match is also a substring, so a raw code or a prefix ('ACH') works too.
-					std::string needle = lower(typeFilter);
-					{
-						static const std::unordered_map<std::string, std::string> kAlias{
-							{ "actor", "achr" }, { "npc", "npc_" }, { "container", "cont" },
-							{ "door", "door" }, { "weapon", "weap" }, { "armor", "armo" },
-							{ "book", "book" }, { "ingredient", "ingr" }, { "potion", "alch" },
-							{ "misc", "misc" }, { "light", "ligh" }, { "furniture", "furn" },
-							{ "activator", "acti" }, { "flora", "flor" }, { "tree", "tree" },
-							{ "static", "stat" }, { "key", "keym" }, { "scroll", "scrl" },
-							{ "ammo", "ammo" }, { "soulgem", "slgm" }
-						};
-						if (auto it = kAlias.find(needle); it != kAlias.end())
-							needle = it->second;
-					}
-					json refs = json::array();
-					int  total = 0;
-					auto cb = [&](RE::TESObjectREFR* r) {
+					// Friendly type names ('Actor', 'weapon') map onto the engine's 4-char codes;
+					// raw codes/prefixes still substring-match. Shared with 'inventory'.
+					std::string needle = FormTypeNeedle(typeFilter);
+					json        refs = json::array();
+					int         total = 0;
+					auto        cb = [&](RE::TESObjectREFR* r) {
 						if (r && r->GetFormID() != 0) {
 							if (!needle.empty()) {
 								const std::string t = lower(std::string(RE::FormTypeToString(r->GetFormType())));
