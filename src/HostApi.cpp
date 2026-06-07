@@ -3,7 +3,7 @@
 #include "DevBenchAPI.h"
 #include "EventBus.h"
 #include "Json.h"
-#include "MenuExtensions.h"
+#include "ToolExtensions.h"
 #include "ToolRegistry.h"
 #include "Version.h"
 
@@ -69,7 +69,14 @@ namespace dvb::HostApi
 			bool RegisterMenuHandler(const char* a_menuName, const char* a_descriptorJson,
 				DevBenchAPI::ToolFn a_handler, void* a_ctx) override
 			{
-				if (!a_menuName || !*a_menuName || !a_handler)
+				// Menus are just the first base tool that accepts extensions — delegate.
+				return RegisterToolExtension("menu", a_menuName, a_descriptorJson, a_handler, a_ctx);
+			}
+
+			bool RegisterToolExtension(const char* a_baseTool, const char* a_key, const char* a_descriptorJson,
+				DevBenchAPI::ToolFn a_handler, void* a_ctx) override
+			{
+				if (!a_baseTool || !*a_baseTool || !a_key || !*a_key || !a_handler)
 					return false;
 				json desc = json::object();
 				if (a_descriptorJson) {
@@ -78,9 +85,9 @@ namespace dvb::HostApi
 					} catch (...) {
 					}
 				}
-				if (!desc.is_object())  // a scalar/array descriptor would break the `menu describe` object contract
+				if (!desc.is_object())  // a scalar/array descriptor would break the descriptor object contract
 					desc = json::object();
-				return MenuExtensions::Register(a_menuName, std::move(desc), MakeHandler(a_handler, a_ctx));
+				return ToolExtensions::Register(a_baseTool, a_key, std::move(desc), MakeHandler(a_handler, a_ctx));
 			}
 
 			void EmitEvent(const char* a_topic, const char* a_payloadJson) override
@@ -118,17 +125,24 @@ namespace dvb::HostApi
 					a_write(a_sink, out.c_str()); }, nullptr);
 		}
 
-		// Self-test the menu-extension path the same way: register a handler THROUGH the public
-		// interface so `menu invoke name=devbench.selftest` and `menu describe name=…` round-trip
-		// the C-callback without a separate consumer mod.
-		void RegisterMenuSelfTest()
+		// Shared echo handler for the extension self-tests (the ping pattern, one level down).
+		void EchoExtension(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 		{
-			static constexpr const char* desc =
-				R"({"description":"devbench menu-extension self-test; echoes its args."})";
-			g_interface.RegisterMenuHandler("devbench.selftest", desc, +[](void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write) {
-					const std::string args = (a_argsJson && *a_argsJson) ? a_argsJson : "{}";
-					const std::string out = R"({"invoked":true,"echo":)" + args + "}";
-					a_write(a_sink, out.c_str()); }, nullptr);
+			const std::string args = (a_argsJson && *a_argsJson) ? a_argsJson : "{}";
+			const std::string out = R"({"invoked":true,"echo":)" + args + "}";
+			a_write(a_sink, out.c_str());
+		}
+
+		// Self-test the extension path THROUGH the public interface under two base tools — `menu`
+		// (via the RegisterMenuHandler alias) and `inspect` (via the general RegisterToolExtension) —
+		// so `menu invoke name=devbench.selftest` and `inspect kind=devbench.selftest` round-trip the
+		// C-callback without a separate consumer mod, proving the mechanism generalizes.
+		void RegisterExtensionSelfTests()
+		{
+			g_interface.RegisterMenuHandler("devbench.selftest",
+				R"({"description":"devbench menu-extension self-test; echoes its args."})", &EchoExtension, nullptr);
+			g_interface.RegisterToolExtension("inspect", "devbench.selftest",
+				R"({"description":"devbench inspect-extension self-test; echoes its args."})", &EchoExtension, nullptr);
 		}
 	}
 
@@ -137,7 +151,7 @@ namespace dvb::HostApi
 		g_registry = &a_registry;
 		g_events = &a_events;
 		RegisterSelfTest();
-		RegisterMenuSelfTest();
+		RegisterExtensionSelfTests();
 	}
 
 	void OnInterfaceRequest(SKSE::MessagingInterface::Message* a_message)

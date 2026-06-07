@@ -139,20 +139,20 @@ how CS gates its server per-runtime, and lets users turn the bench on/off withou
   `kPostLoad` (ready before consumers' `kDataLoaded`) and a `nullptr`-sender listener (the
   MergeMapper idiom) so consumer dispatches arrive. **Clients VENDOR the API via the
   `devbench-api` vcpkg port (`DevBench::API`) — never copy the source** (MIT glue; plugin GPL-3.0).
-- **`RegisterToolExtension` — generalize "register under a base tool" (menu handler shipped as the
-  first consumer).** Today a mod can only register a whole new top-level tool (`RegisterTool`),
-  which grows the agent-facing surface one tool per mod. The cheaper shape is letting a mod register
-  a _handler under an existing base tool_, keyed by a string, so the footprint stays at the one base
-  tool. **Shipped slice — `RegisterMenuHandler(menuName, descriptor, fn, ctx)`:** the base `menu`
-  tool gains `action='invoke' name='<menu>'` that routes to the registered handler, `list` surfaces
-  them under `registered`, and `describe name='<menu>'` returns the handler's descriptor (dynamic
-  discovery, since a static `inputSchema` can't enumerate mod sub-actions). A `devbench.selftest`
-  menu handler registered through the public interface exercises the C-callback round-trip (the ping
-  pattern). **Generalization:** fold this into one `RegisterToolExtension(baseTool, key, descriptor,
-fn, ctx)` so the same mechanism extends any base tool — custom `inspect` kinds, `console`
-  sub-verbs, etc. — not just menus. Open questions: which base tools opt in (a tool advertises that
-  it accepts extensions), and whether `key` collides across mods (namespacing like tool names).
-  `RegisterMenuHandler` becomes a thin alias once the general form lands.
+- **`RegisterToolExtension` — register a handler under a base tool — DONE.** A mod adds a
+  sub-capability _under an existing base tool_, keyed by a string, instead of a whole new top-level
+  tool, so the agent-facing surface stays small. `RegisterToolExtension(baseTool, key, descriptor,
+fn, ctx)` (C-ABI, 1.5.0+) routes through a shared `(baseTool, key)` registry (`ToolExtensions`).
+  **Opted-in base tools:** `menu` (`menu invoke name=<key>`, surfaced by `menu list`'s `registered`
+  - `menu describe name=<key>`) and `inspect` (`inspect kind=<key>`, surfaced by
+    `inspect kind=extensions`). `RegisterMenuHandler` is now a thin alias for
+    `RegisterToolExtension("menu", …)`. A `devbench.selftest` handler is registered under both `menu`
+    and `inspect` through the public interface (the ping pattern) to prove it generalizes. Resolved
+    open questions: base tools opt in by consulting the registry (a generic dispatch wrapper wasn't
+    needed); `key` is namespaced by convention like tool names (`yourmod.x`); discovery is dynamic per
+    base tool (a static `inputSchema` can't enumerate mod keys). **Next consumers:** `skseloadtimeprofiler`
+    (load-timing data as `inspect kind=…`) and Open Shaders (frame/GPU timing) — in their repos.
+    Further base tools (`console` sub-verbs, etc.) can opt in the same way as needed.
 - **`EventBus` SSE stream** — `GET /api/events/stream` alongside the `?since=N` poll.
 
 (Note: an earlier idea to back-port the hook-side capture fence into CS's `RemoteControl` is
