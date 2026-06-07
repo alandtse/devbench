@@ -175,6 +175,27 @@ def test_inventory_formtype_filter(client, inspect):
         assert "armo" in (it.get("formType") or "").lower(), it
 
 
+@pytest.mark.requires_player
+def test_quests(client, inspect):
+    require_enum(inspect, "kind", "quests")
+    body = client.ok("inspect", {"kind": "quests"})
+    assert isinstance(body, dict), body
+    assert isinstance(body.get("count"), int), body
+    assert isinstance(body.get("truncated"), bool), body
+    quests = body.get("quests")
+    assert isinstance(quests, list), body
+    assert len(quests) == body.get("returned"), body
+    for q in quests:
+        assert isinstance(q.get("formId"), str), q
+        assert isinstance(q.get("stage"), int), q
+        assert isinstance(q.get("active"), bool) and isinstance(q.get("completed"), bool), q
+        objs = q.get("objectives")
+        assert isinstance(objs, list), q
+        for o in objs:
+            assert isinstance(o.get("index"), int), o
+            assert o.get("state") in {"displayed", "completed", "failed", "dormant"}, o
+
+
 def test_extensions_list_and_dispatch(client, inspect):
     # RegisterToolExtension lets a mod add a custom inspect kind. The host registers a
     # `devbench.selftest` inspect extension through the public C-ABI (the ping pattern),
