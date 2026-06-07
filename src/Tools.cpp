@@ -6,9 +6,9 @@
 #include "GameState.h"
 #include "Json.h"
 #include "MainThread.h"
-#include "MenuExtensions.h"
 #include "Papyrus.h"
 #include "Recording.h"
+#include "ToolExtensions.h"
 #include "ToolRegistry.h"
 #include "Version.h"
 
@@ -245,7 +245,7 @@ namespace dvb
 				return json{
 					{ "openMenus", std::move(open) },
 					{ "messageBoxOpen", messageBox },
-					{ "registered", MenuExtensions::Names() },
+					{ "registered", ToolExtensions::Keys("menu") },
 				};
 			}
 
@@ -256,7 +256,7 @@ namespace dvb
 				const std::string name = a_args.value("name", std::string{});
 				if (name.empty())
 					throw ToolError(400, "action 'invoke' requires a 'name' (a registered menu — see menu list .registered)");
-				auto entry = MenuExtensions::Find(name);
+				auto entry = ToolExtensions::Find("menu", name);
 				if (!entry)
 					throw ToolError(404, std::format("no handler registered for menu '{}' (see menu list .registered)", name));
 				return entry->handler(a_args, a_ctx);
@@ -303,7 +303,7 @@ namespace dvb
 				// With a `name`, report a consumer-registered menu's descriptor (what `invoke`
 				// accepts). Without one, fall back to the active MessageBoxMenu (the original use).
 				if (const std::string name = a_args.value("name", std::string{}); !name.empty()) {
-					auto entry = MenuExtensions::Find(name);
+					auto entry = ToolExtensions::Find("menu", name);
 					if (!entry)
 						throw ToolError(404, std::format("no handler registered for menu '{}' (see menu list .registered)", name));
 					return json{ { "registered", true }, { "name", name }, { "descriptor", entry->descriptor } };
@@ -384,8 +384,10 @@ namespace dvb
 		}
 
 		// inspect: read live game state. The value-returning primitive — each read runs on the
-		// main thread and its result is returned synchronously. kinds: state | vm | scene | refs.
-		json InspectHandler(const json& a_args, const ToolContext&)
+		// main thread and its result is returned synchronously. Built-in kinds: state | vm | scene |
+		// refs; a consumer-registered kind (C-ABI RegisterToolExtension "inspect") is dispatched too,
+		// and 'extensions' lists those.
+		json InspectHandler(const json& a_args, const ToolContext& a_ctx)
 		{
 			const std::string kind = a_args.value("kind", std::string("state"));
 
@@ -562,7 +564,23 @@ namespace dvb
 				});
 			}
 
-			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|refs)", kind));
+			// 'extensions' lists consumer-registered inspect kinds (C-ABI RegisterToolExtension).
+			if (kind == "extensions") {
+				json out = json::array();
+				for (const auto& k : ToolExtensions::Keys("inspect")) {
+					json e{ { "kind", k } };
+					if (auto entry = ToolExtensions::Find("inspect", k))
+						e["descriptor"] = entry->descriptor;
+					out.push_back(std::move(e));
+				}
+				return json{ { "extensions", std::move(out) } };
+			}
+
+			// A consumer-registered inspect kind — route to its handler (receives the full args).
+			if (auto entry = ToolExtensions::Find("inspect", kind))
+				return entry->handler(a_args, a_ctx);
+
+			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|refs|extensions, or a registered kind — see inspect kind=extensions)", kind));
 		}
 
 		// camera: read or set the player camera point of view, so a recording can capture the
@@ -1026,12 +1044,14 @@ namespace dvb
 			"weather }; 'refs' → identify reference(s) sharing one shape { formId, formType, name, "
 			"editorId, base, position } — pass 'formId' for one form, 'selected'=true for the "
 			"console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid "
-			"(optional 'formType' filter, 'radius' from player, 'limit' default 100).";
+			"(optional 'formType' filter, 'radius' from player, 'limit' default 100). A consumer mod "
+			"can add a custom kind via the C-ABI RegisterToolExtension (e.g. load-timing data); "
+			"'extensions' lists those registered kinds + descriptors, and kind=<registered> dispatches.";
 		inspect.readOnly = true;
 		inspect.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state", "vm", "scene", "refs" }) }, { "description", "state | vm | scene | refs" } } },
+								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state", "vm", "scene", "refs", "extensions" }) }, { "description", "state | vm | scene | refs | extensions (also a consumer-registered kind — see kind=extensions)" } } },
 								{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form (hex formId, e.g. 0x14, or EditorID)" } } },
 								{ "selected", json{ { "type", "boolean" }, { "description", "refs: identify the console-selected / crosshair ref instead" } } },
 								{ "formType", json{ { "type", "string" }, { "description", "refs enumerate: keep only refs whose type or base type matches (e.g. Actor, Container)" } } },

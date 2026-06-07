@@ -104,3 +104,28 @@ def test_refs_enumerate(client, inspect):
     assert isinstance(body.get("count"), int) and body["count"] > 0, body
     assert isinstance(body.get("refs"), list), body
     assert isinstance(body.get("truncated"), bool), body
+
+
+def test_extensions_list_and_dispatch(client, inspect):
+    # RegisterToolExtension lets a mod add a custom inspect kind. The host registers a
+    # `devbench.selftest` inspect extension through the public C-ABI (the ping pattern),
+    # so `kind=extensions` lists it and `kind=devbench.selftest` routes to it and echoes.
+    require_enum(inspect, "kind", "extensions")
+    listed = client.ok("inspect", {"kind": "extensions"})
+    exts = listed.get("extensions")
+    assert isinstance(exts, list), listed
+    kinds = [e.get("kind") for e in exts]
+    if "devbench.selftest" not in kinds:
+        pytest.skip("devbench.selftest inspect extension not registered on this build")
+    assert isinstance(next(e for e in exts if e["kind"] == "devbench.selftest").get("descriptor"), dict), exts
+
+    body = client.ok("inspect", {"kind": "devbench.selftest", "foo": 7})
+    assert body.get("invoked") is True, body
+    assert body.get("echo", {}).get("foo") == 7, body
+
+
+def test_unknown_kind_400(client, inspect):
+    require_enum(inspect, "kind", "extensions")  # feature present → unknown kind is a clean 400
+    status, body = client.call("inspect", {"kind": "NoSuchKindXYZ"})
+    assert status == 400, (status, body)
+    assert isinstance(body, dict) and "error" in body, body

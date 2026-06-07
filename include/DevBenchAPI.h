@@ -65,17 +65,26 @@ namespace DevBenchAPI
 		virtual void EmitEvent(const char* a_topic, const char* a_payloadJson) = 0;
 
 		// Register a handler for a custom menu, dispatched through the base `menu` tool as
-		// action='invoke', name='<menuName>' — so a mod exposes its menu's interaction WITHOUT
-		// adding a top-level tool (the agent-facing surface stays the single `menu` tool). Same
-		// handler contract as RegisterTool (args JSON in, result JSON out, runs on the listener
-		// thread — marshal to the main thread yourself). a_descriptorJson { "description", ... } is
-		// surfaced via `menu describe name='<menuName>'` so callers discover the accepted args.
-		// Returns false if it replaced an existing handler for that menu.
-		//
-		// ABI: appended after EmitEvent, so the vtable slot only exists on hosts that ship it —
-		// call this only when GetBuildNumber() >= 10400 (devbench 1.4.0).
+		// action='invoke', name='<menuName>'. Thin alias for RegisterToolExtension("menu", …) — kept
+		// for the 1.4.0 ABI. Same handler contract as RegisterTool. Returns false if it replaced an
+		// existing handler. ABI: vtable slot exists only on hosts that ship it — call only when
+		// GetBuildNumber() >= 10400 (devbench 1.4.0).
 		virtual bool RegisterMenuHandler(const char* a_menuName, const char* a_descriptorJson,
 			ToolFn a_handler, void* a_ctx) = 0;
+
+		// Register a handler that EXTENDS a built-in base tool, keyed by a string, so a mod adds a
+		// sub-capability WITHOUT a top-level tool (the agent-facing surface stays small). The base
+		// tool routes to it: `menu invoke name='<key>'`, `inspect kind='<key>'`. Same handler
+		// contract as RegisterTool (args JSON in — the full base-tool args — result JSON out, runs on
+		// the listener thread; marshal to the main thread yourself). a_descriptorJson
+		// { "description", … } is surfaced by the base tool's discovery path (`menu describe`,
+		// `inspect kind=extensions`). Opted-in base tools: `menu`, `inspect`. Returns false if it
+		// replaced an existing (baseTool, key) entry.
+		//
+		// ABI: appended after RegisterMenuHandler — call only when GetBuildNumber() >= 10500
+		// (devbench 1.5.0).
+		virtual bool RegisterToolExtension(const char* a_baseTool, const char* a_key,
+			const char* a_descriptorJson, ToolFn a_handler, void* a_ctx) = 0;
 	};
 }
 
