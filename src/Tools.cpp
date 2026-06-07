@@ -492,6 +492,59 @@ namespace dvb
 				});
 			}
 
+			// player: a deep snapshot of the player actor (0x14) beyond the generic refs shape — the
+			// stats a gameplay test reads constantly. Core actor values report current vs permanent
+			// (max), so a test can assert damage/restore without a second call.
+			if (kind == "player") {
+				return MainThread::RunAndWait([]() -> json {
+					auto* pc = RE::PlayerCharacter::GetSingleton();
+					if (!pc || !pc->Get3D())
+						return json{ { "playerLoaded", false } };
+					json j{
+						{ "playerLoaded", true },
+						{ "level", pc->GetLevel() },
+						{ "gold", pc->GetGoldAmount() },
+					};
+					if (const char* n = pc->GetName(); n && *n)
+						j["name"] = n;
+					if (auto* base = pc->GetActorBase()) {
+						switch (base->GetSex()) {
+						case RE::SEX::kMale:
+							j["sex"] = "male";
+							break;
+						case RE::SEX::kFemale:
+							j["sex"] = "female";
+							break;
+						default:
+							j["sex"] = "none";
+							break;
+						}
+					}
+					if (auto* race = pc->GetRace())
+						j["race"] = IdentifyForm(race);
+					if (auto* avo = pc->AsActorValueOwner()) {
+						auto av = [&](RE::ActorValue a) {
+							return json{
+								{ "current", avo->GetActorValue(a) },
+								{ "max", avo->GetPermanentActorValue(a) },
+							};
+						};
+						j["actorValues"] = json{
+							{ "health", av(RE::ActorValue::kHealth) },
+							{ "magicka", av(RE::ActorValue::kMagicka) },
+							{ "stamina", av(RE::ActorValue::kStamina) },
+							{ "carryWeight", av(RE::ActorValue::kCarryWeight) },
+						};
+					}
+					j["equipped"] = json{
+						{ "right", IdentifyForm(pc->GetEquippedObject(false)) },
+						{ "left", IdentifyForm(pc->GetEquippedObject(true)) },
+						{ "ammo", IdentifyForm(pc->GetCurrentAmmo()) },
+					};
+					return j;
+				});
+			}
+
 			// refs: consolidated form identification. One of three sources, one identify shape:
 			//   'formId'      → that one form (a placed ref gets base + position)
 			//   'selected'    → the console-selected / crosshair ref (set via prid/click)
@@ -614,7 +667,7 @@ namespace dvb
 			if (auto entry = ToolExtensions::Find("inspect", kind))
 				return entry->handler(a_args, a_ctx);
 
-			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|refs|extensions, or a registered kind — see inspect kind=extensions)", kind));
+			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|refs|extensions, or a registered kind — see inspect kind=extensions)", kind));
 		}
 
 		// camera: read or set the player camera point of view, so a recording can capture the
@@ -1076,7 +1129,9 @@ namespace dvb
 			"{ loadedTypes, attachedScripts, arrays, runningStacks, frozenStacks, overstressed }; "
 			"'scene' → player context { cell, worldspace, location, position, gameHour, daysPassed, "
 			"weather }; 'mods' → active load order { count, lightCount, total, plugins:[{index, name}], "
-			"lightPlugins:[…] }; 'refs' → identify reference(s) sharing one shape { formId, formType, name, "
+			"lightPlugins:[…] }; 'player' → player snapshot { name, level, sex, gold, race, "
+			"actorValues:{health,magicka,stamina,carryWeight each {current,max}}, equipped:{right,left,ammo} }; "
+			"'refs' → identify reference(s) sharing one shape { formId, formType, name, "
 			"editorId, base, position } — pass 'formId' for one form, 'selected'=true for the "
 			"console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid "
 			"(optional 'formType' filter, 'radius' from player, 'limit' default 100). A consumer mod "
@@ -1086,7 +1141,7 @@ namespace dvb
 		inspect.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state", "vm", "scene", "mods", "refs", "extensions" }) }, { "description", "state | vm | scene | mods | refs | extensions (also a consumer-registered kind — see kind=extensions)" } } },
+								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state", "vm", "scene", "mods", "player", "refs", "extensions" }) }, { "description", "state | vm | scene | mods | player | refs | extensions (also a consumer-registered kind — see kind=extensions)" } } },
 								{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form (hex formId, e.g. 0x14, or EditorID)" } } },
 								{ "selected", json{ { "type", "boolean" }, { "description", "refs: identify the console-selected / crosshair ref instead" } } },
 								{ "formType", json{ { "type", "string" }, { "description", "refs enumerate: keep only refs whose type or base type matches (e.g. Actor, Container)" } } },
