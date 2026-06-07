@@ -112,8 +112,8 @@ how CS gates its server per-runtime, and lets users turn the bench on/off withou
     binding registry once ~4–5 kinds expose the pattern; the curated kinds then delegate to it and
     the generic `read`/`eval` path opens as the escape hatch. The kinds aren't throwaway — they
     become the registry's first bindings. Done: `mods` (load order), `player` (deep actor snapshot),
-    `inventory` (player/container items). Next: `quests`, `effects`. (Perf/frame-timing stays out of
-    core — that's Tracy/consumer extensions.)
+    `inventory` (player/container items), `quests` (journal). Next: `effects`. (Perf/frame-timing
+    stays out of core — that's Tracy/consumer extensions.)
   - **First increment — the `papyrus` tool — done.** `list`/`describe` are the `search_api`
     discovery surface for the Papyrus VM (loaded classes, function signatures); `call` invokes a
     **global** function via `DispatchStaticCall` or a **member** function on any form (`self`) and
