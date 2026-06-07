@@ -670,14 +670,6 @@ namespace dvb
 						// player-facing quests, which carry a category type (MainQuest, Misc, …).
 						if (q->GetType() == RE::QUEST_DATA::Type::kNone)
 							continue;
-						++total;
-						if (static_cast<int>(quests.size()) >= limit)
-							continue;
-						json jq = IdentifyForm(q);
-						jq["stage"] = q->GetCurrentStageID();
-						jq["type"] = static_cast<int>(q->GetType());
-						jq["active"] = q->IsActive();
-						jq["completed"] = q->IsCompleted();
 						json objs = json::array();
 						for (auto* obj : q->objectives) {
 							if (!obj || obj->state.get() == RE::QUEST_OBJECTIVE_STATE::kDormant)
@@ -688,6 +680,19 @@ namespace dvb
 								{ "state", objState(obj->state.get()) },
 							});
 						}
+						// Require actual journal progress — drops radiant/encounter controllers (e.g.
+						// "Skooma Dealer") that sit at stage 0 with no objectives while "running".
+						const bool inJournal = q->GetCurrentStageID() > 0 || !objs.empty() || q->IsCompleted();
+						if (!inJournal)
+							continue;
+						++total;
+						if (static_cast<int>(quests.size()) >= limit)
+							continue;
+						json jq = IdentifyForm(q);
+						jq["stage"] = q->GetCurrentStageID();
+						jq["type"] = static_cast<int>(q->GetType());
+						jq["active"] = q->IsActive();
+						jq["completed"] = q->IsCompleted();
 						jq["objectives"] = std::move(objs);
 						quests.push_back(std::move(jq));
 					}
