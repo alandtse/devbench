@@ -196,6 +196,23 @@ def test_quests(client, inspect):
             assert o.get("state") in {"displayed", "completed", "failed", "dormant"}, o
 
 
+@pytest.mark.requires_player
+def test_effects(client, inspect):
+    require_enum(inspect, "kind", "effects")
+    body = client.ok("inspect", {"kind": "effects"})
+    assert isinstance(body, dict), body
+    target = body.get("target")
+    assert isinstance(target, dict) and target.get("formId") == "0x00000014", body
+    assert isinstance(body.get("count"), int), body
+    effects = body.get("activeEffects")
+    assert isinstance(effects, list), body
+    assert len(effects) == body["count"], body
+    for e in effects:
+        assert _is_number(e.get("magnitude")), e
+        assert _is_number(e.get("duration")), e
+        assert _is_number(e.get("elapsed")), e
+
+
 def test_extensions_list_and_dispatch(client, inspect):
     # RegisterToolExtension lets a mod add a custom inspect kind. The host registers a
     # `devbench.selftest` inspect extension through the public C-ABI (the ping pattern),
