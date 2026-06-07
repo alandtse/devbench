@@ -666,6 +666,10 @@ namespace dvb
 					for (auto* q : dh->GetFormArray<RE::TESQuest>()) {
 						if (!q || !(q->IsRunning() || q->IsCompleted()))
 							continue;
+						// Skip system/dialogue/scene quests (type kNone) — the journal only shows
+						// player-facing quests, which carry a category type (MainQuest, Misc, …).
+						if (q->GetType() == RE::QUEST_DATA::Type::kNone)
+							continue;
 						++total;
 						if (static_cast<int>(quests.size()) >= limit)
 							continue;
