@@ -738,27 +738,34 @@ namespace dvb
 					json effects = json::array();
 					// Reach MagicTarget via AsMagicTarget() (runtime-versioned cast), not the implicit
 					// Actor→MagicTarget upcast: in multi-runtime builds the compile-time base offset is
-					// wrong (it varies by runtime), so calling through `actor->` reads a bad subobject —
-					// that's what CTD'd the original list walk. With the correct pointer, iterate
-					// GetActiveEffectList(): the native persistent list on SE/AE, a thread-local snapshot
-					// on VR (CLib shim) — safe to walk immediately either way. (VisitActiveEffects /
-					// ForEachActiveEffect returned nothing on live AE, so it's not usable here.)
+					// wrong, so calling through `actor->` reads a bad subobject — that's what CTD'd the
+					// original walk. Then use each runtime's documented path: GetActiveEffectList() is
+					// the native list on SE/AE; on VR that's a limited shim (CLib notes the caveats),
+					// where VisitActiveEffects() is the robust traversal. VisitActiveEffects is empty on
+					// SE/AE (it's the VR pattern), so branch by runtime rather than pick one for both.
+					auto append = [&](RE::ActiveEffect* ae) {
+						if (!ae)
+							return;
+						json e{
+							{ "magnitude", ae->magnitude },
+							{ "duration", ae->duration },
+							{ "elapsed", ae->elapsedSeconds },
+						};
+						if (ae->spell)
+							e["spell"] = IdentifyForm(ae->spell);
+						if (auto* base = ae->GetBaseObject())
+							e["effect"] = IdentifyForm(base);
+						effects.push_back(std::move(e));
+					};
 					if (auto* mt = actor->AsMagicTarget()) {
-						if (auto* list = mt->GetActiveEffectList()) {
-							for (auto* ae : *list) {
-								if (!ae)
-									continue;
-								json e{
-									{ "magnitude", ae->magnitude },
-									{ "duration", ae->duration },
-									{ "elapsed", ae->elapsedSeconds },
-								};
-								if (ae->spell)
-									e["spell"] = IdentifyForm(ae->spell);
-								if (auto* base = ae->GetBaseObject())
-									e["effect"] = IdentifyForm(base);
-								effects.push_back(std::move(e));
-							}
+						if (REL::Module::IsVR()) {
+							mt->VisitActiveEffects([&](RE::ActiveEffect* ae) {
+								append(ae);
+								return RE::BSContainer::ForEachResult::kContinue;
+							});
+						} else if (auto* list = mt->GetActiveEffectList()) {
+							for (auto* ae : *list)
+								append(ae);
 						}
 					}
 					return json{
