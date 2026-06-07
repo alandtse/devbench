@@ -736,21 +736,31 @@ namespace dvb
 						throw ToolError(404, "inspect effects: actor not found");
 
 					json effects = json::array();
-					actor->VisitActiveEffects([&](RE::ActiveEffect* ae) {
-						if (ae) {
-							json e{
-								{ "magnitude", ae->magnitude },
-								{ "duration", ae->duration },
-								{ "elapsed", ae->elapsedSeconds },
-							};
-							if (ae->spell)
-								e["spell"] = IdentifyForm(ae->spell);
-							if (auto* base = ae->GetBaseObject())
-								e["effect"] = IdentifyForm(base);
-							effects.push_back(std::move(e));
+					// Reach MagicTarget via AsMagicTarget() (runtime-versioned cast), not the implicit
+					// Actor→MagicTarget upcast: in multi-runtime builds the compile-time base offset is
+					// wrong (it varies by runtime), so calling through `actor->` reads a bad subobject —
+					// that's what CTD'd the original list walk. With the correct pointer, iterate
+					// GetActiveEffectList(): the native persistent list on SE/AE, a thread-local snapshot
+					// on VR (CLib shim) — safe to walk immediately either way. (VisitActiveEffects /
+					// ForEachActiveEffect returned nothing on live AE, so it's not usable here.)
+					if (auto* mt = actor->AsMagicTarget()) {
+						if (auto* list = mt->GetActiveEffectList()) {
+							for (auto* ae : *list) {
+								if (!ae)
+									continue;
+								json e{
+									{ "magnitude", ae->magnitude },
+									{ "duration", ae->duration },
+									{ "elapsed", ae->elapsedSeconds },
+								};
+								if (ae->spell)
+									e["spell"] = IdentifyForm(ae->spell);
+								if (auto* base = ae->GetBaseObject())
+									e["effect"] = IdentifyForm(base);
+								effects.push_back(std::move(e));
+							}
 						}
-						return RE::BSContainer::ForEachResult::kContinue;
-					});
+					}
 					return json{
 						{ "target", IdentifyForm(actor) },
 						{ "count", static_cast<int>(effects.size()) },
