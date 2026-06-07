@@ -458,6 +458,40 @@ namespace dvb
 				});
 			}
 
+			// mods: the active load order — the environment fingerprint a repro/CI run pins against.
+			// Full (ESM/ESP) and light (ESL/.esl, FE slot) plugins are separate index spaces, so they
+			// are reported separately with their load-order index. Uses the TESDataHandler accessors
+			// (not the raw collection) so VR's ESL redirection is handled.
+			if (kind == "mods") {
+				return MainThread::RunAndWait([]() -> json {
+					auto* dh = RE::TESDataHandler::GetSingleton();
+					if (!dh)
+						throw ToolError(503, "TESDataHandler unavailable (no data loaded?)");
+					auto enumerate = [](const RE::TESFile* const* files, std::size_t count, bool light) {
+						json arr = json::array();
+						for (std::size_t i = 0; i < count; ++i) {
+							const auto* f = files[i];
+							if (!f)
+								continue;
+							arr.push_back(json{
+								{ "index", light ? f->GetSmallFileCompileIndex() : f->GetCompileIndex() },
+								{ "name", std::string(f->GetFilename()) },
+							});
+						}
+						return arr;
+					};
+					const std::uint8_t  full = dh->GetLoadedModCount();
+					const std::uint16_t light = dh->GetLoadedLightModCount();
+					return json{
+						{ "count", full },
+						{ "lightCount", light },
+						{ "total", static_cast<int>(full) + static_cast<int>(light) },
+						{ "plugins", enumerate(dh->GetLoadedMods(), full, false) },
+						{ "lightPlugins", enumerate(dh->GetLoadedLightMods(), light, true) },
+					};
+				});
+			}
+
 			// refs: consolidated form identification. One of three sources, one identify shape:
 			//   'formId'      → that one form (a placed ref gets base + position)
 			//   'selected'    → the console-selected / crosshair ref (set via prid/click)
@@ -580,7 +614,7 @@ namespace dvb
 			if (auto entry = ToolExtensions::Find("inspect", kind))
 				return entry->handler(a_args, a_ctx);
 
-			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|refs|extensions, or a registered kind — see inspect kind=extensions)", kind));
+			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|refs|extensions, or a registered kind — see inspect kind=extensions)", kind));
 		}
 
 		// camera: read or set the player camera point of view, so a recording can capture the
@@ -1041,7 +1075,8 @@ namespace dvb
 			"'state' → { plugin, version, vr, playerLoaded, frame }; 'vm' → Papyrus VM health "
 			"{ loadedTypes, attachedScripts, arrays, runningStacks, frozenStacks, overstressed }; "
 			"'scene' → player context { cell, worldspace, location, position, gameHour, daysPassed, "
-			"weather }; 'refs' → identify reference(s) sharing one shape { formId, formType, name, "
+			"weather }; 'mods' → active load order { count, lightCount, total, plugins:[{index, name}], "
+			"lightPlugins:[…] }; 'refs' → identify reference(s) sharing one shape { formId, formType, name, "
 			"editorId, base, position } — pass 'formId' for one form, 'selected'=true for the "
 			"console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid "
 			"(optional 'formType' filter, 'radius' from player, 'limit' default 100). A consumer mod "
@@ -1051,7 +1086,7 @@ namespace dvb
 		inspect.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state", "vm", "scene", "refs", "extensions" }) }, { "description", "state | vm | scene | refs | extensions (also a consumer-registered kind — see kind=extensions)" } } },
+								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state", "vm", "scene", "mods", "refs", "extensions" }) }, { "description", "state | vm | scene | mods | refs | extensions (also a consumer-registered kind — see kind=extensions)" } } },
 								{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form (hex formId, e.g. 0x14, or EditorID)" } } },
 								{ "selected", json{ { "type", "boolean" }, { "description", "refs: identify the console-selected / crosshair ref instead" } } },
 								{ "formType", json{ { "type", "string" }, { "description", "refs enumerate: keep only refs whose type or base type matches (e.g. Actor, Container)" } } },
