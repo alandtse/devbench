@@ -707,7 +707,10 @@ namespace dvb
 
 			// effects: active magic effects on the player (default) or any actor ('formId') — what
 			// buff/debuff/combat state is live. Each effect is its source spell + base effect setting
-			// with magnitude, duration, and elapsed seconds. GetActiveEffectList has a VR shim in CLib.
+			// with magnitude, duration, and elapsed seconds. Iterate via MagicTarget::VisitActiveEffects
+			// (the engine's own traversal) rather than walking GetActiveEffectList() by hand — the
+			// latter CTDs in multi-runtime builds (Actor's override is SE/AE-only; the cross-runtime
+			// path needs the visitor, which also handles VR's snapshot + locking).
 			if (kind == "effects") {
 				const std::string formId = a_args.value("formId", std::string{});
 				return MainThread::RunAndWait([=]() -> json {
@@ -733,22 +736,21 @@ namespace dvb
 						throw ToolError(404, "inspect effects: actor not found");
 
 					json effects = json::array();
-					if (auto* list = actor->GetActiveEffectList()) {
-						for (auto* ae : *list) {
-							if (!ae)
-								continue;
+					actor->VisitActiveEffects([&](RE::ActiveEffect* ae) {
+						if (ae) {
 							json e{
 								{ "magnitude", ae->magnitude },
 								{ "duration", ae->duration },
 								{ "elapsed", ae->elapsedSeconds },
 							};
 							if (ae->spell)
-								e["spell"] = IdentifyForm(ae->spell->As<RE::TESForm>());
+								e["spell"] = IdentifyForm(ae->spell);
 							if (auto* base = ae->GetBaseObject())
 								e["effect"] = IdentifyForm(base);
 							effects.push_back(std::move(e));
 						}
-					}
+						return RE::BSContainer::ForEachResult::kContinue;
+					});
 					return json{
 						{ "target", IdentifyForm(actor) },
 						{ "count", static_cast<int>(effects.size()) },
