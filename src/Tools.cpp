@@ -383,6 +383,28 @@ namespace dvb
 			return j;
 		}
 
+		// Normalize a form-type filter to a substring needle. The engine's type strings are 4-char
+		// codes (ACHR, NPC_, CONT, WEAP); map common friendly names ('actor', 'weapon') onto them so
+		// a substring match works (a longer friendly name like "weapon" never matches "weap"
+		// otherwise). A raw code or prefix ('ACH') still matches. Shared by 'refs' and 'inventory'.
+		std::string FormTypeNeedle(std::string a_filter)
+		{
+			std::transform(a_filter.begin(), a_filter.end(), a_filter.begin(),
+				[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+			static const std::unordered_map<std::string, std::string> kAlias{
+				{ "actor", "achr" }, { "npc", "npc_" }, { "container", "cont" },
+				{ "door", "door" }, { "weapon", "weap" }, { "armor", "armo" },
+				{ "book", "book" }, { "ingredient", "ingr" }, { "potion", "alch" },
+				{ "misc", "misc" }, { "light", "ligh" }, { "furniture", "furn" },
+				{ "activator", "acti" }, { "flora", "flor" }, { "tree", "tree" },
+				{ "static", "stat" }, { "key", "keym" }, { "scroll", "scrl" },
+				{ "ammo", "ammo" }, { "soulgem", "slgm" }
+			};
+			if (auto it = kAlias.find(a_filter); it != kAlias.end())
+				return it->second;
+			return a_filter;
+		}
+
 		// inspect: read live game state. The value-returning primitive — each read runs on the
 		// main thread and its result is returned synchronously. Built-in kinds: state | vm | scene |
 		// refs; a consumer-registered kind (C-ABI RegisterToolExtension "inspect") is dispatched too,
@@ -545,6 +567,76 @@ namespace dvb
 				});
 			}
 
+			// inventory: items held by the player (default) or any container ref ('formId'). Each item
+			// is the form's identity plus count, equipped/worn, and value/weight when the base carries
+			// them. Optional 'formType' substring filter and 'limit' (default 100), mirroring 'refs'.
+			if (kind == "inventory") {
+				const std::string formId = a_args.value("formId", std::string{});
+				const std::string typeFilter = a_args.value("formType", std::string{});
+				const int         limit = a_args.value("limit", 100);
+				if (limit < 0)
+					throw ToolError(400, "inspect inventory: 'limit' must be >= 0");
+				return MainThread::RunAndWait([=]() -> json {
+					auto lower = [](std::string s) {
+						std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+						return s;
+					};
+					RE::TESObjectREFR* owner = nullptr;
+					if (formId.empty()) {
+						owner = RE::PlayerCharacter::GetSingleton();
+					} else {
+						RE::TESForm* f = RE::TESForm::LookupByEditorID(formId);
+						if (!f) {
+							std::size_t        consumed = 0;
+							unsigned long long id = 0;
+							const std::string  hex = (formId.size() > 2 && formId[0] == '0' && (formId[1] == 'x' || formId[1] == 'X')) ? formId.substr(2) : formId;
+							try {
+								id = std::stoull(hex, &consumed, 16);
+							} catch (...) {
+							}
+							if (consumed == hex.size() && id <= 0xFFFFFFFFull)
+								f = RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
+						}
+						owner = f ? f->As<RE::TESObjectREFR>() : nullptr;
+					}
+					if (!owner)
+						throw ToolError(404, "inspect inventory: owner ref not found");
+
+					const std::string needle = FormTypeNeedle(typeFilter);
+					auto              inv = owner->GetInventory();
+					json              items = json::array();
+					int               total = 0;
+					for (auto& [obj, entry] : inv) {
+						if (!obj || entry.first <= 0)
+							continue;
+						if (!needle.empty()) {
+							const std::string t = lower(std::string(RE::FormTypeToString(obj->GetFormType())));
+							if (t.find(needle) == std::string::npos)
+								continue;
+						}
+						++total;
+						if (static_cast<int>(items.size()) >= limit)
+							continue;
+						json item = IdentifyForm(obj);
+						item["count"] = entry.first;
+						if (auto* v = obj->As<RE::TESValueForm>())
+							item["value"] = v->value;
+						if (auto* w = obj->As<RE::TESWeightForm>())
+							item["weight"] = w->weight;
+						if (entry.second)
+							item["equipped"] = entry.second->IsWorn();
+						items.push_back(std::move(item));
+					}
+					return json{
+						{ "owner", IdentifyForm(owner) },
+						{ "count", total },
+						{ "returned", static_cast<int>(items.size()) },
+						{ "truncated", total > static_cast<int>(items.size()) },
+						{ "items", std::move(items) },
+					};
+				});
+			}
+
 			// refs: consolidated form identification. One of three sources, one identify shape:
 			//   'formId'      → that one form (a placed ref gets base + position)
 			//   'selected'    → the console-selected / crosshair ref (set via prid/click)
@@ -604,26 +696,12 @@ namespace dvb
 					auto* tes = RE::TES::GetSingleton();
 					if (!tes)
 						throw ToolError(503, "TES unavailable (no loaded world?)");
-					// The engine's type strings are 4-char codes (ACHR, NPC_, CONT). Map common
-					// friendly names onto them so 'Actor'/'container' work, not just 'ACHR'; the
-					// match is also a substring, so a raw code or a prefix ('ACH') works too.
-					std::string needle = lower(typeFilter);
-					{
-						static const std::unordered_map<std::string, std::string> kAlias{
-							{ "actor", "achr" }, { "npc", "npc_" }, { "container", "cont" },
-							{ "door", "door" }, { "weapon", "weap" }, { "armor", "armo" },
-							{ "book", "book" }, { "ingredient", "ingr" }, { "potion", "alch" },
-							{ "misc", "misc" }, { "light", "ligh" }, { "furniture", "furn" },
-							{ "activator", "acti" }, { "flora", "flor" }, { "tree", "tree" },
-							{ "static", "stat" }, { "key", "keym" }, { "scroll", "scrl" },
-							{ "ammo", "ammo" }, { "soulgem", "slgm" }
-						};
-						if (auto it = kAlias.find(needle); it != kAlias.end())
-							needle = it->second;
-					}
-					json refs = json::array();
-					int  total = 0;
-					auto cb = [&](RE::TESObjectREFR* r) {
+					// Friendly type names ('Actor', 'weapon') map onto the engine's 4-char codes;
+					// raw codes/prefixes still substring-match. Shared with 'inventory'.
+					std::string needle = FormTypeNeedle(typeFilter);
+					json        refs = json::array();
+					int         total = 0;
+					auto        cb = [&](RE::TESObjectREFR* r) {
 						if (r && r->GetFormID() != 0) {
 							if (!needle.empty()) {
 								const std::string t = lower(std::string(RE::FormTypeToString(r->GetFormType())));
@@ -667,7 +745,7 @@ namespace dvb
 			if (auto entry = ToolExtensions::Find("inspect", kind))
 				return entry->handler(a_args, a_ctx);
 
-			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|refs|extensions, or a registered kind — see inspect kind=extensions)", kind));
+			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|inventory|refs|extensions, or a registered kind — see inspect kind=extensions)", kind));
 		}
 
 		// camera: read or set the player camera point of view, so a recording can capture the
@@ -1131,6 +1209,8 @@ namespace dvb
 			"weather }; 'mods' → active load order { count, lightCount, total, plugins:[{index, name}], "
 			"lightPlugins:[…] }; 'player' → player snapshot { name, level, sex, gold, race, "
 			"actorValues:{health,magicka,stamina,carryWeight each {current,max}}, equipped:{right,left,ammo} }; "
+			"'inventory' → items held by the player (or a container 'formId') { owner, count, items:[{formId, "
+			"name, formType, count, value, weight, equipped}] } (filters: 'formType', 'limit'); "
 			"'refs' → identify reference(s) sharing one shape { formId, formType, name, "
 			"editorId, base, position } — pass 'formId' for one form, 'selected'=true for the "
 			"console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid "
@@ -1141,12 +1221,12 @@ namespace dvb
 		inspect.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state", "vm", "scene", "mods", "player", "refs", "extensions" }) }, { "description", "state | vm | scene | mods | player | refs | extensions (also a consumer-registered kind — see kind=extensions)" } } },
-								{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form (hex formId, e.g. 0x14, or EditorID)" } } },
+								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state", "vm", "scene", "mods", "player", "inventory", "refs", "extensions" }) }, { "description", "state | vm | scene | mods | player | inventory | refs | extensions (also a consumer-registered kind — see kind=extensions)" } } },
+								{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form; inventory: the container ref to read (default player) (hex formId, e.g. 0x14, or EditorID)" } } },
 								{ "selected", json{ { "type", "boolean" }, { "description", "refs: identify the console-selected / crosshair ref instead" } } },
-								{ "formType", json{ { "type", "string" }, { "description", "refs enumerate: keep only refs whose type or base type matches (e.g. Actor, Container)" } } },
+								{ "formType", json{ { "type", "string" }, { "description", "refs/inventory: keep only entries whose type matches (e.g. Actor, Weapon, Potion)" } } },
 								{ "radius", json{ { "type", "number" }, { "description", "refs enumerate: only refs within this distance of the player (0 = whole loaded grid)" } } },
-								{ "limit", json{ { "type", "integer" }, { "description", "refs enumerate: max refs to return (default 100)" } } },
+								{ "limit", json{ { "type", "integer" }, { "description", "refs/inventory: max entries to return (default 100)" } } },
 							} },
 		};
 		a_registry.Register(std::move(inspect), &InspectHandler);
