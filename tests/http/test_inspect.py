@@ -149,6 +149,32 @@ def test_player(client, inspect):
         assert hand in equipped, equipped  # may be null when nothing is equipped
 
 
+@pytest.mark.requires_player
+def test_inventory_player(client, inspect):
+    require_enum(inspect, "kind", "inventory")
+    body = client.ok("inspect", {"kind": "inventory"})
+    assert isinstance(body, dict), body
+    owner = body.get("owner")
+    assert isinstance(owner, dict) and owner.get("formId") == "0x00000014", body
+    assert isinstance(body.get("count"), int), body
+    assert isinstance(body.get("truncated"), bool), body
+    items = body.get("items")
+    assert isinstance(items, list), body
+    assert len(items) == body.get("returned"), body
+    for it in items:
+        assert isinstance(it.get("formId"), str), it
+        assert isinstance(it.get("count"), int) and it["count"] > 0, it
+
+
+@pytest.mark.requires_player
+def test_inventory_formtype_filter(client, inspect):
+    require_enum(inspect, "kind", "inventory")
+    body = client.ok("inspect", {"kind": "inventory", "formType": "Armor", "limit": 50})
+    assert isinstance(body.get("items"), list), body
+    for it in body["items"]:
+        assert "armo" in (it.get("formType") or "").lower(), it
+
+
 def test_extensions_list_and_dispatch(client, inspect):
     # RegisterToolExtension lets a mod add a custom inspect kind. The host registers a
     # `devbench.selftest` inspect extension through the public C-ABI (the ping pattern),
