@@ -674,6 +674,58 @@ namespace dvb
 				});
 			}
 
+			// effects: active magic effects on the player (default) or any actor ('formId') — what
+			// buff/debuff/combat state is live. Each effect is its source spell + base effect setting
+			// with magnitude, duration, and elapsed seconds. GetActiveEffectList has a VR shim in CLib.
+			if (kind == "effects") {
+				const std::string formId = a_args.value("formId", std::string{});
+				return MainThread::RunAndWait([=]() -> json {
+					RE::Actor* actor = nullptr;
+					if (formId.empty()) {
+						actor = RE::PlayerCharacter::GetSingleton();
+					} else {
+						RE::TESForm* f = RE::TESForm::LookupByEditorID(formId);
+						if (!f) {
+							std::size_t        consumed = 0;
+							unsigned long long id = 0;
+							const std::string  hex = (formId.size() > 2 && formId[0] == '0' && (formId[1] == 'x' || formId[1] == 'X')) ? formId.substr(2) : formId;
+							try {
+								id = std::stoull(hex, &consumed, 16);
+							} catch (...) {
+							}
+							if (consumed == hex.size() && id <= 0xFFFFFFFFull)
+								f = RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
+						}
+						actor = f ? f->As<RE::Actor>() : nullptr;
+					}
+					if (!actor)
+						throw ToolError(404, "inspect effects: actor not found");
+
+					json effects = json::array();
+					if (auto* list = actor->GetActiveEffectList()) {
+						for (auto* ae : *list) {
+							if (!ae)
+								continue;
+							json e{
+								{ "magnitude", ae->magnitude },
+								{ "duration", ae->duration },
+								{ "elapsed", ae->elapsedSeconds },
+							};
+							if (ae->spell)
+								e["spell"] = IdentifyForm(ae->spell->As<RE::TESForm>());
+							if (auto* base = ae->GetBaseObject())
+								e["effect"] = IdentifyForm(base);
+							effects.push_back(std::move(e));
+						}
+					}
+					return json{
+						{ "target", IdentifyForm(actor) },
+						{ "count", static_cast<int>(effects.size()) },
+						{ "activeEffects", std::move(effects) },
+					};
+				});
+			}
+
 			// refs: consolidated form identification. One of three sources, one identify shape:
 			//   'formId'      → that one form (a placed ref gets base + position)
 			//   'selected'    → the console-selected / crosshair ref (set via prid/click)
@@ -796,7 +848,7 @@ namespace dvb
 			if (auto entry = ToolExtensions::Find("inspect", kind))
 				return entry->handler(a_args, a_ctx);
 
-			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|inventory|quests|refs|extensions, or a registered kind — see inspect kind=extensions)", kind));
+			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|inventory|quests|effects|refs|extensions, or a registered kind — see inspect kind=extensions)", kind));
 		}
 
 		// camera: read or set the player camera point of view, so a recording can capture the
@@ -1264,6 +1316,8 @@ namespace dvb
 			"name, formType, count, value, weight, equipped}] } (filters: 'formType', 'limit'); "
 			"'quests' → journal (running/completed) { count, quests:[{formId, name, stage, type, active, "
 			"completed, objectives:[{index, text, state}]}] } ('limit'); "
+			"'effects' → active magic effects on the player (or an actor 'formId') { target, count, "
+			"activeEffects:[{spell, effect, magnitude, duration, elapsed}] }; "
 			"'refs' → identify reference(s) sharing one shape { formId, formType, name, "
 			"editorId, base, position } — pass 'formId' for one form, 'selected'=true for the "
 			"console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid "
@@ -1274,8 +1328,8 @@ namespace dvb
 		inspect.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state", "vm", "scene", "mods", "player", "inventory", "quests", "refs", "extensions" }) }, { "description", "state | vm | scene | mods | player | inventory | quests | refs | extensions (also a consumer-registered kind — see kind=extensions)" } } },
-								{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form; inventory: the container ref to read (default player) (hex formId, e.g. 0x14, or EditorID)" } } },
+								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state", "vm", "scene", "mods", "player", "inventory", "quests", "effects", "refs", "extensions" }) }, { "description", "state | vm | scene | mods | player | inventory | quests | effects | refs | extensions (also a consumer-registered kind — see kind=extensions)" } } },
+								{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form; inventory: the container ref to read (default player); effects: the actor to read (default player) (hex formId, e.g. 0x14, or EditorID)" } } },
 								{ "selected", json{ { "type", "boolean" }, { "description", "refs: identify the console-selected / crosshair ref instead" } } },
 								{ "formType", json{ { "type", "string" }, { "description", "refs/inventory: keep only entries whose type matches (e.g. Actor, Weapon, Potion)" } } },
 								{ "radius", json{ { "type", "number" }, { "description", "refs enumerate: only refs within this distance of the player (0 = whole loaded grid)" } } },
