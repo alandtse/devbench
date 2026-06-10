@@ -289,10 +289,14 @@ if (dvb->GetBuildNumber() >= 10500)                                 // RegisterT
 ```
 
 Driven as `inspect kind="yourmod.loadtimes"` (same handler contract — it receives the full base-tool
-args), discovered via `inspect kind=extensions`. For menus, `RegisterToolExtension("menu", name, …)`
-(or the older `RegisterMenuHandler`, 1.4.0+) registers a `menu invoke name=<name>` handler, listed
-under `menu list`'s `registered`. Opening/closing/listing menus already works generically — only
-custom interaction/data needs a handler.
+args). **Discoverable on the first call:** registering a kind rebuilds the `inspect` tool so your key
+appears in its `kind` enum + description in `tools/list` (a `notifications/tools/list_changed` is
+emitted, so a client that connected before your mod loaded refreshes) — no `kind=extensions` round-trip
+needed. Pass a `"description"` in the descriptor; it's shown inline. For menus,
+`RegisterToolExtension("menu", name, …)` (or the older `RegisterMenuHandler`, 1.4.0+) registers a
+`menu invoke name=<name>` handler — also surfaced in the `menu` tool's description and `menu list`'s
+`registered`; `menu open` on a registered name returns a 400 pointing you at `invoke`. Opening/closing/
+listing engine menus already works generically — only custom interaction/data needs a handler.
 
 ### Design your tools the agentic-renderdoc way
 

@@ -272,6 +272,10 @@ namespace dvb
 				const std::string name = a_args.value("name", std::string{});
 				if (name.empty())
 					throw ToolError(400, "action 'open' requires a 'name' (menu to show)");
+				// 'open' is engine menus only. A registered (mod) menu isn't an engine menu — point at
+				// 'invoke' so the first wrong guess names the right call instead of silently no-op'ing.
+				if (ToolExtensions::Find("menu", name))
+					throw ToolError(400, std::format("'{}' is a registered (mod) menu — use action='invoke', name='{}' (not 'open')", name, name));
 				auto* task = SKSE::GetTaskInterface();
 				if (!task)
 					throw ToolError(500, "SKSE TaskInterface unavailable");
@@ -1281,6 +1285,107 @@ namespace dvb
 		}
 	}
 
+	namespace
+	{
+		// A human summary of the registered (mod) extension keys for a base tool, appended to that
+		// tool's description so a registered kind/menu is discoverable on the FIRST call (it shows in
+		// tools/list) instead of via a separate discovery round-trip. Empty when nothing is registered.
+		std::string RegisteredExtensionSummary(std::string_view a_baseTool, std::string_view a_noun)
+		{
+			const auto keys = ToolExtensions::Keys(a_baseTool);
+			if (keys.empty())
+				return {};
+			std::string s = std::format(" Registered (mod) {}: ", a_noun);
+			for (std::size_t i = 0; i < keys.size(); ++i) {
+				std::string desc;
+				if (auto e = ToolExtensions::Find(a_baseTool, keys[i]))
+					desc = e->descriptor.value("description", std::string{});
+				s += keys[i];
+				if (!desc.empty())
+					s += " — " + desc;
+				s += (i + 1 < keys.size()) ? "; " : ".";
+			}
+			return s;
+		}
+
+		// inspect/menu descriptors are REBUILT (not frozen at startup) so registered keys appear in
+		// tools/list. RegisterCoreTools registers these initially; the ToolExtensions change-listener
+		// re-registers them when a mod adds a kind/menu (which also fires tools/list_changed).
+		ToolDescriptor BuildInspectDescriptor()
+		{
+			ToolDescriptor inspect;
+			inspect.name = "inspect";
+			inspect.description =
+				"Read live game/plugin state. Runs on the main thread and returns the value "
+				"synchronously (times out if the game is mid-load / not pumping tasks). kinds: "
+				"'state' → { plugin, version, vr, playerLoaded, frame }; 'vm' → Papyrus VM health "
+				"{ loadedTypes, attachedScripts, arrays, runningStacks, frozenStacks, overstressed }; "
+				"'scene' → player context { cell, worldspace, location, position, gameHour, daysPassed, "
+				"weather }; 'mods' → active load order { count, lightCount, total, plugins:[{index, name}], "
+				"lightPlugins:[…] }; 'player' → player snapshot { name, level, sex, gold, race, "
+				"actorValues:{health,magicka,stamina,carryWeight each {current,max}}, equipped:{right,left,ammo} }; "
+				"'inventory' → items held by the player (or a container 'formId') { owner, count, items:[{formId, "
+				"name, formType, count, value, weight, equipped}] } (filters: 'formType', 'limit'); "
+				"'quests' → journal (running/completed) { count, quests:[{formId, name, stage, type, active, "
+				"completed, objectives:[{index, text, state}]}] } ('limit'); "
+				"'effects' → active magic effects on the player (or an actor 'formId') { target, count, "
+				"activeEffects:[{spell, effect, magnitude, duration, elapsed}] }; "
+				"'refs' → identify reference(s) sharing one shape { formId, formType, name, "
+				"editorId, base, position } — pass 'formId' for one form, 'selected'=true for the "
+				"console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid "
+				"(optional 'formType' filter, 'radius' from player, 'limit' default 100). A consumer mod "
+				"can add a custom kind via the C-ABI RegisterToolExtension (e.g. load-timing data); "
+				"'extensions' lists those registered kinds + descriptors, and kind=<registered> dispatches.";
+			inspect.description += RegisteredExtensionSummary("inspect", "kinds");
+			inspect.readOnly = true;
+			json kinds = json::array({ "state", "vm", "scene", "mods", "player", "inventory", "quests", "effects", "refs", "extensions" });
+			for (const auto& k : ToolExtensions::Keys("inspect"))
+				kinds.push_back(k);
+			inspect.inputSchema = json{
+				{ "type", "object" },
+				{ "properties", json{
+									{ "kind", json{ { "type", "string" }, { "enum", kinds }, { "description", "state | vm | scene | mods | player | inventory | quests | effects | refs | extensions (or a registered mod kind — listed here + via kind=extensions)" } } },
+									{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form; inventory: the container ref to read (default player); effects: the actor to read (default player) (hex formId, e.g. 0x14, or EditorID)" } } },
+									{ "selected", json{ { "type", "boolean" }, { "description", "refs: identify the console-selected / crosshair ref instead" } } },
+									{ "formType", json{ { "type", "string" }, { "description", "refs/inventory: keep only entries whose type matches (e.g. Actor, Weapon, Potion)" } } },
+									{ "radius", json{ { "type", "number" }, { "description", "refs enumerate: only refs within this distance of the player (0 = whole loaded grid)" } } },
+									{ "limit", json{ { "type", "integer" }, { "description", "refs/inventory: max entries to return (default 100)" } } },
+								} },
+			};
+			return inspect;
+		}
+
+		ToolDescriptor BuildMenuDescriptor()
+		{
+			ToolDescriptor menu;
+			menu.name = "menu";
+			menu.description =
+				"Inspect, open, answer, or dismiss menus. action='list' returns { openMenus, "
+				"messageBoxOpen, registered } tracked live from menu open/close events. 'describe' returns the "
+				"active MessageBoxMenu as { messageBoxOpen, bodyText, buttons:[…], cancelIndex } (read "
+				"the buttons, then pick one), or with a 'name' the registered menu's descriptor. 'accept' "
+				"answers a MessageBoxMenu by button 'index' "
+				"(default 0) — runs its callback and dismisses it (this is how you clear a Yes/No modal, "
+				"e.g. the content-mismatch dialog gating a load; kHide does NOT). 'open' shows an ENGINE menu by "
+				"'name' via the UI queue (kShow) — opens hub menus from a plain name (TweenMenu, "
+				"'Journal Menu', MagicMenu, MapMenu, StatsMenu, InventoryMenu, FavoritesMenu); context "
+				"menus that need a target ref (ContainerMenu/BarterMenu/BookMenu) won't open this way. "
+				"'close' hides a menu by 'name' via the UI queue (kHide). 'invoke' dispatches to a "
+				"consumer-registered (mod) menu by 'name' — NOT 'open' (mod menus aren't engine menus). A mod "
+				"exposes its menu via the C-ABI RegisterMenuHandler; 'list' returns those under 'registered'.";
+			menu.description += RegisteredExtensionSummary("menu", "menus (invoke with action='invoke', name=<x>)");
+			menu.inputSchema = json{
+				{ "type", "object" },
+				{ "properties", json{
+									{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "open", "close", "invoke" }) }, { "description", "list | describe | accept | open | close | invoke" } } },
+									{ "name", json{ { "type", "string" }, { "description", "open/close: ENGINE menu to show/hide (e.g. TweenMenu). invoke/describe: a registered mod menu (see list .registered, or this tool's description)." } } },
+									{ "index", json{ { "type", "integer" }, { "description", "accept: 0-based button index to select (default 0). See describe's buttons/cancelIndex." } } },
+								} },
+			};
+			return menu;
+		}
+	}
+
 	void RegisterCoreTools(ToolRegistry& a_registry, EventBus& a_events)
 	{
 		ToolDescriptor console;
@@ -1337,68 +1442,22 @@ namespace dvb
 		};
 		a_registry.Register(std::move(camera), &CameraHandler);
 
-		ToolDescriptor inspect;
-		inspect.name = "inspect";
-		inspect.description =
-			"Read live game/plugin state. Runs on the main thread and returns the value "
-			"synchronously (times out if the game is mid-load / not pumping tasks). kinds: "
-			"'state' → { plugin, version, vr, playerLoaded, frame }; 'vm' → Papyrus VM health "
-			"{ loadedTypes, attachedScripts, arrays, runningStacks, frozenStacks, overstressed }; "
-			"'scene' → player context { cell, worldspace, location, position, gameHour, daysPassed, "
-			"weather }; 'mods' → active load order { count, lightCount, total, plugins:[{index, name}], "
-			"lightPlugins:[…] }; 'player' → player snapshot { name, level, sex, gold, race, "
-			"actorValues:{health,magicka,stamina,carryWeight each {current,max}}, equipped:{right,left,ammo} }; "
-			"'inventory' → items held by the player (or a container 'formId') { owner, count, items:[{formId, "
-			"name, formType, count, value, weight, equipped}] } (filters: 'formType', 'limit'); "
-			"'quests' → journal (running/completed) { count, quests:[{formId, name, stage, type, active, "
-			"completed, objectives:[{index, text, state}]}] } ('limit'); "
-			"'effects' → active magic effects on the player (or an actor 'formId') { target, count, "
-			"activeEffects:[{spell, effect, magnitude, duration, elapsed}] }; "
-			"'refs' → identify reference(s) sharing one shape { formId, formType, name, "
-			"editorId, base, position } — pass 'formId' for one form, 'selected'=true for the "
-			"console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid "
-			"(optional 'formType' filter, 'radius' from player, 'limit' default 100). A consumer mod "
-			"can add a custom kind via the C-ABI RegisterToolExtension (e.g. load-timing data); "
-			"'extensions' lists those registered kinds + descriptors, and kind=<registered> dispatches.";
-		inspect.readOnly = true;
-		inspect.inputSchema = json{
-			{ "type", "object" },
-			{ "properties", json{
-								{ "kind", json{ { "type", "string" }, { "enum", json::array({ "state", "vm", "scene", "mods", "player", "inventory", "quests", "effects", "refs", "extensions" }) }, { "description", "state | vm | scene | mods | player | inventory | quests | effects | refs | extensions (also a consumer-registered kind — see kind=extensions)" } } },
-								{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form; inventory: the container ref to read (default player); effects: the actor to read (default player) (hex formId, e.g. 0x14, or EditorID)" } } },
-								{ "selected", json{ { "type", "boolean" }, { "description", "refs: identify the console-selected / crosshair ref instead" } } },
-								{ "formType", json{ { "type", "string" }, { "description", "refs/inventory: keep only entries whose type matches (e.g. Actor, Weapon, Potion)" } } },
-								{ "radius", json{ { "type", "number" }, { "description", "refs enumerate: only refs within this distance of the player (0 = whole loaded grid)" } } },
-								{ "limit", json{ { "type", "integer" }, { "description", "refs/inventory: max entries to return (default 100)" } } },
-							} },
-		};
-		a_registry.Register(std::move(inspect), &InspectHandler);
+		// inspect/menu are rebuilt (not frozen) so registered mod kinds/menus show in tools/list.
+		a_registry.Register(BuildInspectDescriptor(), &InspectHandler);
+		a_registry.Register(BuildMenuDescriptor(), &MenuHandler);
 
-		ToolDescriptor menu;
-		menu.name = "menu";
-		menu.description =
-			"Inspect, open, answer, or dismiss menus. action='list' returns { openMenus, "
-			"messageBoxOpen } tracked live from menu open/close events. 'describe' returns the "
-			"active MessageBoxMenu as { messageBoxOpen, bodyText, buttons:[…], cancelIndex } (read "
-			"the buttons, then pick one). 'accept' answers a MessageBoxMenu by button 'index' "
-			"(default 0) — runs its callback and dismisses it (this is how you clear a Yes/No modal, "
-			"e.g. the content-mismatch dialog gating a load; kHide does NOT). 'open' shows a menu by "
-			"'name' via the UI queue (kShow) — opens hub menus from a plain name (TweenMenu, "
-			"'Journal Menu', MagicMenu, MapMenu, StatsMenu, InventoryMenu, FavoritesMenu); context "
-			"menus that need a target ref (ContainerMenu/BarterMenu/BookMenu) won't open this way. "
-			"'close' hides a menu by 'name' via the UI queue (kHide). 'invoke' dispatches to a "
-			"consumer-registered menu handler by 'name' (a mod exposes its menu's interaction via the "
-			"C-ABI RegisterMenuHandler instead of adding its own tool); 'list' returns those under "
-			"'registered', and 'describe' with a 'name' returns that handler's descriptor.";
-		menu.inputSchema = json{
-			{ "type", "object" },
-			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "open", "close", "invoke" }) }, { "description", "list | describe | accept | open | close | invoke" } } },
-								{ "name", json{ { "type", "string" }, { "description", "open/close: menu to show/hide (e.g. TweenMenu). invoke: a registered menu (see list .registered). describe: a registered menu to return its descriptor." } } },
-								{ "index", json{ { "type", "integer" }, { "description", "accept: 0-based button index to select (default 0). See describe's buttons/cancelIndex." } } },
-							} },
-		};
-		a_registry.Register(std::move(menu), &MenuHandler);
+		// When a mod registers a kind/menu, rebuild that base tool's descriptor so the new key is
+		// discoverable on the first call (the registry's registration path re-registers it with the
+		// adapters and fires tools/list_changed). Captures the registry by pointer — it outlives this
+		// function (owned by the Server).
+		ToolExtensions::SetChangeListener([reg = &a_registry](const std::string& a_baseTool) {
+			std::string base = a_baseTool;
+			std::transform(base.begin(), base.end(), base.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+			if (base == "inspect")
+				reg->Register(BuildInspectDescriptor(), &InspectHandler);
+			else if (base == "menu")
+				reg->Register(BuildMenuDescriptor(), &MenuHandler);
+		});
 
 		ToolDescriptor papyrus;
 		papyrus.name = "papyrus";

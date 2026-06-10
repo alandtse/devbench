@@ -25,6 +25,13 @@ namespace dvb::ToolExtensions
 	/// Returns false if it replaced an existing entry. Thread-safe.
 	bool Register(std::string a_baseTool, std::string a_key, json a_descriptor, ToolHandler a_handler);
 
+	/// Notified (with the original-cased base-tool name) after each successful Register, so the host
+	/// can rebuild that base tool's descriptor — the registered keys then surface in `tools/list`
+	/// (enum + description) instead of only via a runtime discovery call. Called outside the internal
+	/// lock. Set once at startup; thread-safe.
+	using ChangeListener = std::function<void(const std::string& a_baseTool)>;
+	void SetChangeListener(ChangeListener a_listener);
+
 	/// The entry registered under (`baseTool`, `key`), or nullopt. Thread-safe.
 	std::optional<Entry> Find(std::string_view a_baseTool, std::string_view a_key);
 

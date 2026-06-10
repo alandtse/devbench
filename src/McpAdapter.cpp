@@ -40,6 +40,12 @@ namespace dvb
 				// only surfaces what(), so fold the status code into the message.
 				throw std::runtime_error("[" + std::to_string(r.errorCode) + "] " + r.errorMessage);
 			});
+
+			// A tool was added or replaced (e.g. a mod registered an inspect kind / menu, which also
+			// re-registers the enriched base-tool descriptor). Tell connected clients to re-list.
+			if (m_announceChanges)
+				m_server.broadcast_notification(mcp::request::create_notification(
+					"notifications/tools/list_changed", json::object()));
 		};
 
 		for (const auto& desc : m_registry.List())
@@ -49,6 +55,7 @@ namespace dvb
 		// call register_tool from the main/message thread post-start; safe in practice
 		// because consumers register at kPostLoad, before any MCP client connects.
 		m_registry.SetRegistrationListener(registerOne);
+		m_announceChanges = true;  // past initial wiring — future (re)registrations notify clients
 
 		// Forward bus events to connected MCP clients as notifications.
 		m_sub = m_events.Subscribe([this](const EventBus::Event& a_ev) {

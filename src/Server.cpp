@@ -86,7 +86,10 @@ namespace dvb
 
 		m_mcp = std::make_unique<mcp::server>(cfg);
 		m_mcp->set_server_info(cfg.name, cfg.version);
-		m_mcp->set_capabilities(json{ { "tools", json::object() }, { "logging", json::object() } });
+		// tools.listChanged: tools are added at runtime (cross-plugin consumers register kinds/menus),
+		// so advertise the capability and emit notifications/tools/list_changed when the set changes —
+		// a client that connected before a mod (or the game) finished loading then refreshes its list.
+		m_mcp->set_capabilities(json{ { "tools", json{ { "listChanged", true } } }, { "logging", json::object() } });
 
 		// MCP tools + notifications.
 		m_mcpAdapter = std::make_unique<McpAdapter>(m_registry, m_events, *m_mcp);

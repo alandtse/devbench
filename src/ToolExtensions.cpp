@@ -24,17 +24,32 @@ namespace dvb::ToolExtensions
 
 		std::mutex                              g_mutex;
 		std::unordered_map<std::string, Bucket> g_tools;  // lowercased baseTool → Bucket
+		ChangeListener                          g_onChange;
+	}
+
+	void SetChangeListener(ChangeListener a_listener)
+	{
+		std::lock_guard<std::mutex> lock(g_mutex);
+		g_onChange = std::move(a_listener);
 	}
 
 	bool Register(std::string a_baseTool, std::string a_key, json a_descriptor, ToolHandler a_handler)
 	{
-		const std::string           tool = Lower(a_baseTool);
-		const std::string           key = Lower(a_key);
-		std::lock_guard<std::mutex> lock(g_mutex);
-		Bucket&                     b = g_tools[tool];
-		const bool                  replaced = b.byKey.find(key) != b.byKey.end();
-		b.byKey[key] = Entry{ std::move(a_descriptor), std::move(a_handler) };
-		b.displayKey[key] = std::move(a_key);
+		const std::string original = a_baseTool;
+		const std::string tool = Lower(a_baseTool);
+		const std::string key = Lower(a_key);
+		ChangeListener    onChange;
+		bool              replaced;
+		{
+			std::lock_guard<std::mutex> lock(g_mutex);
+			Bucket&                     b = g_tools[tool];
+			replaced = b.byKey.find(key) != b.byKey.end();
+			b.byKey[key] = Entry{ std::move(a_descriptor), std::move(a_handler) };
+			b.displayKey[key] = std::move(a_key);
+			onChange = g_onChange;
+		}
+		if (onChange)
+			onChange(original);  // outside the lock — listener re-enters the registry
 		return !replaced;
 	}
 

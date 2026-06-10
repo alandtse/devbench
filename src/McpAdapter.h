@@ -33,5 +33,8 @@ namespace dvb
 		EventBus&     m_events;
 		mcp::server&  m_server;
 		uint64_t      m_sub = 0;
+		// Initial wiring registers every existing tool; only AFTER that do (re)registrations mean a
+		// real change worth a notifications/tools/list_changed broadcast. Set true at the end of Wire().
+		bool m_announceChanges = false;
 	};
 }
