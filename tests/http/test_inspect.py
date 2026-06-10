@@ -231,6 +231,19 @@ def test_extensions_list_and_dispatch(client, inspect):
     assert body.get("echo", {}).get("foo") == 7, body
 
 
+def test_kind_enum_includes_registered_extension(client, inspect):
+    # The host registers a `devbench.selftest` inspect extension via RegisterToolExtension. The
+    # inspect tool's `kind` enum is REBUILT to include registered keys, so they're discoverable in
+    # tools/list (first-call-correct) instead of only via a kind=extensions round-trip.
+    enum = inspect.get("inputSchema", {}).get("properties", {}).get("kind", {}).get("enum", [])
+    assert isinstance(enum, list) and enum, inspect
+    if "devbench.selftest" not in enum:
+        pytest.skip("devbench.selftest inspect extension not registered on this build")
+    assert "devbench.selftest" in enum, enum
+    # and the static built-in kinds are still present
+    assert {"state", "mods", "refs", "extensions"}.issubset(set(enum)), enum
+
+
 def test_unknown_kind_400(client, inspect):
     require_enum(inspect, "kind", "extensions")  # feature present → unknown kind is a clean 400
     status, body = client.call("inspect", {"kind": "NoSuchKindXYZ"})
