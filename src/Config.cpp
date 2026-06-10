@@ -47,7 +47,12 @@ namespace dvb
 
 	Config LoadConfig()
 	{
-		Config                      cfg;
+		Config cfg;
+		// Deterministic default port per runtime so a fixed MCP client URL never moves: SE/AE 8920,
+		// VR 8921. The two games run from separate Data dirs, so per-runtime ports never collide —
+		// register both client entries (devbench-se :8920, devbench-vr :8921); the game that's off
+		// just shows disconnected. An explicit "port" in config.json overrides this.
+		cfg.port = REL::Module::IsVR() ? 8921 : 8920;
 		const std::filesystem::path path = "Data/SKSE/Plugins/devbench/config.json";
 
 		std::ifstream file(path);

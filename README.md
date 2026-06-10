@@ -95,7 +95,7 @@ Missing → auto-created with defaults. Invalid → defaults (logged). All keys 
 ```jsonc
 {
   "enabled": true, // start the MCP/REST server at all (default true)
-  "port": 8920, // localhost port; auto-iterates if busy (default 8920)
+  "port": 8920, // localhost port for /mcp and /api. Default is per-runtime — SE/AE 8920, VR 8921 — so a fixed MCP client URL is stable; set explicitly to override. Iterates only if the chosen port is busy (rare; logged), bound port in runtime.json.
   "logLevel": "info", // trace|debug|info|warn|error (default "info")
 
   // In-game hotkeys (DXScanCode integers; 0 = disabled). Ignored while the console is open.
@@ -133,9 +133,27 @@ Missing → auto-created with defaults. Invalid → defaults (logged). All keys 
 ```
 
 `enabled: false` skips starting the server entirely. Bind address is fixed to `127.0.0.1`.
-`port` is the _starting_ port: if it's busy devbench auto-iterates to the next free port and
-writes the bound port to `Data/SKSE/Plugins/devbench/runtime.json` (`{ "port": N }`) so
-fixed-URL clients can discover it.
+The port is **deterministic per runtime** — **SE/AE `8920`, VR `8921`** — so a fixed MCP client URL
+never moves; set `port` explicitly to override. If the chosen port is already taken (e.g. a second
+instance of the same runtime), devbench iterates to the next free port (logged) and writes the bound
+port to `Data/SKSE/Plugins/devbench/runtime.json` (`{ "port": N }`) for discovery.
+
+## Connect an MCP client
+
+devbench serves **streamable-HTTP MCP at `POST http://127.0.0.1:<port>/mcp`** — most clients connect
+natively, no extra process:
+
+```sh
+# Claude Code — register both games; the one that's running has live tools, the other shows disconnected
+claude mcp add --transport http devbench-se http://127.0.0.1:8920/mcp   # SE/AE
+claude mcp add --transport http devbench-vr http://127.0.0.1:8921/mcp   # VR
+```
+
+For a **stdio-only** client, bridge with the off-the-shelf `mcp-remote` (no devbench-specific binary):
+`{ "command": "npx", "args": ["-y", "mcp-remote", "http://127.0.0.1:8920/mcp", "--allow-http"] }`. Plain
+HTTP scripts/CI use REST (`/api/tool/<name>`) and need no client config. devbench advertises
+`tools.listChanged` and emits `notifications/tools/list_changed`, so tools that register after connect
+(a mod loading, or the game finishing load) surface without reconnecting.
 
 ## Built-in tools
 
