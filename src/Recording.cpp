@@ -540,10 +540,16 @@ namespace dvb::Recording
 		bool restored = false;
 		if (restoreScene && tier != "worldspace" && !kind.empty() && kind != "unknown") {
 			if (kind == "save" && !value.empty()) {
-				// game load (by name) skips the content-mismatch modal and is a full teardown +
-				// loading screen on its own. Wait on postLoadGame, not playerLoaded: reloading the
-				// save we're already in, playerLoaded reads true before the reload cycles.
-				steps.push_back(json{ { "tool", "game" }, { "args", json{ { "action", "load" }, { "name", value } } } });
+				// Quicksave/autosave names are rolling — the slot name changes on every save, so
+				// the recorded value stales. Load most-recent instead. Named saves are stable.
+				// Wait postLoadGame not playerLoaded: if already in-game, playerLoaded is true
+				// before the reload completes.
+				const bool isRollingSlot =
+					value.compare(0, 9, "Quicksave") == 0 || value.compare(0, 8, "Autosave") == 0;
+				if (isRollingSlot)
+					steps.push_back(json{ { "tool", "game" }, { "args", json{ { "action", "loadLast" } } } });
+				else
+					steps.push_back(json{ { "tool", "game" }, { "args", json{ { "action", "load" }, { "name", value } } } });
 				steps.push_back(json{ { "waitFor", "postLoadGame" }, { "timeoutMs", 60000 } });
 				restored = true;
 			} else if (kind == "coc" && !value.empty()) {
