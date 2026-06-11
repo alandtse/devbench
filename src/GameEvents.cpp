@@ -47,6 +47,9 @@ namespace dvb
 
 		// Player's parent-cell formID, to tell a real cell change from a neighbor preloading.
 		std::atomic<std::uint32_t> g_lastPlayerCell{ 0 };
+		// Previous cell's interior flag and worldspace — needed to classify the transition type.
+		std::atomic<bool>          g_lastCellInterior{ false };
+		std::atomic<std::uint32_t> g_lastPlayerWorldspace{ 0 };
 
 		// Sink for cell loads — the authoritative "player entered cell X" signal, whether they
 		// walked through a door, typed coc, or fast-travelled. Publishes scene.cellLoaded and
@@ -73,15 +76,21 @@ namespace dvb
 				if (g_bus)
 					g_bus->Publish("scene.cellLoaded", json{ { "cell", editorId }, { "formID", id }, { "interior", interior } });
 
-				// Build the reproducible transition command. Interiors have unique editor ids, so
-				// coc works. Exteriors share generic editor ids ("Wilderness") across worldspaces,
-				// so coc is AMBIGUOUS (it lands in the wrong worldspace — e.g. Soul Cairn) — use
-				// cow <worldspace> <gridX> <gridY> instead; the trajectory's setpos then refines.
+				// Interiors: coc (unique editor ids). Exteriors: cow <ws> <gx> <gy> — exterior
+				// editor ids repeat across worldspaces so coc is ambiguous (e.g. Soul Cairn).
+				// Same-worldspace exterior→exterior: no cow; setpos handles the crossing.
+				auto*               ws = interior ? nullptr : pc->GetWorldspace();
+				const std::uint32_t wsId = ws ? ws->GetFormID() : 0;
+				const bool          prevInterior = g_lastCellInterior.exchange(interior);
+				const std::uint32_t prevWsId = g_lastPlayerWorldspace.exchange(wsId);
+
 				std::string cmd;
 				if (interior) {
 					if (!editorId.empty())
 						cmd = "coc " + editorId;
-				} else if (auto* ws = pc->GetWorldspace()) {
+				} else if (!prevInterior && wsId != 0 && wsId == prevWsId) {
+					// same-worldspace exterior→exterior: streaming handles it, no cow
+				} else if (ws) {
 					if (const char* wsEid = ws->GetFormEditorID(); wsEid && *wsEid) {
 						const auto pos = pc->GetPosition();
 						cmd = std::format("cow {} {} {}", wsEid,
