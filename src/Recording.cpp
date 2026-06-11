@@ -191,6 +191,9 @@ namespace dvb::Recording
 					if (g_replaying.load(std::memory_order_relaxed))
 						continue;  // devbench is teleporting; the replay's setpos commands (captured
 								   // via the console hook) are the trajectory — don't re-sample it
+					// Wall-clock offset so BuildScenario can use real inter-sample deltas as
+					// wait values — RunAndWait latency inflates actual intervals above intervalMs.
+					pose["tMs"] = duration_cast<milliseconds>(steady_clock::now() - startTick).count();
 					std::lock_guard lock(mtx);
 					samples.push_back(std::move(pose));
 				}
@@ -220,7 +223,8 @@ namespace dvb::Recording
 			std::string                lastPov;     // emit a camera step only when the POV changes
 			std::array<std::string, 5> lastMove{};  // previous setpos/setangle block
 			bool                       haveMove = false;
-			size_t                     cmdIdx = 0;  // drain console commands captured up to each sample's frame
+			size_t                     cmdIdx = 0;    // drain console commands captured up to each sample's frame
+			long                       prevTMs = -1;  // previous sample's wall-clock offset for delta waits
 			for (const auto& s : a_rec.samples) {
 				// Replay console commands the user/agent ran during recording at the point in the
 				// trajectory they were issued (ordered by frame), so value-setting is reproduced.
@@ -248,7 +252,10 @@ namespace dvb::Recording
 					lastMove = move;
 					haveMove = true;
 				}
-				steps.push_back(json{ { "wait", a_rec.intervalMs } });
+				const long tMs = s.value("tMs", static_cast<long>(-1));
+				const long waitMs = (tMs > 0 && prevTMs >= 0) ? std::max(1L, tMs - prevTMs) : a_rec.intervalMs;
+				steps.push_back(json{ { "wait", waitMs } });
+				prevTMs = tMs;
 			}
 			// Trailing commands issued after the final pose sample.
 			for (; cmdIdx < a_rec.commands.size(); ++cmdIdx)
