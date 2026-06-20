@@ -186,6 +186,10 @@ The `record` tool captures a manual play-through as a replayable scenario file:
    (doors/`coc`/`cow`), and any console commands you type are all captured. Then call `record`
    with `action='stop'` (or press the hotkey again). The trajectory is written to
    `Data/SKSE/Plugins/devbench/recordings/recording_<stamp>.json` and the path is returned.
+   A fresh install ships a ready-to-replay default recording in that same dir —
+   `GuardianStonesToWhiterun.json`, a Guardian Stones → Whiterun run that clears the survival
+   menu and enables `tgm` before moving — so you can benchmark without recording one first.
+
 4. Replay with `record action='replay' path='<file>'`. With `restoreScene=true` (default for
    hotkey replay), devbench first re-establishes the entry point (loads the save / `coc`s the
    cell) and waits for the player before running the trajectory. How tightly it reproduces the
