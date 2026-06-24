@@ -105,14 +105,13 @@ jobs:
           set -euo pipefail
           tag="${{ needs.semantic-release.outputs.new_release_git_tag }}"
           stage="devbench-${tag}"
-          mkdir -p "$stage/SKSE/Plugins" "$stage/Developer"
+          # User archive ships only the plugin; docs/license live in the repo and the
+          # GitHub Release page, and the C-ABI dev API is consumed from source, not from
+          # the Nexus download.
+          mkdir -p "$stage/SKSE/Plugins"
           cp bin/devbench.dll bin/devbench.pdb "$stage/SKSE/Plugins/"
           # No config.json: the plugin auto-creates a self-documenting one on first run,
           # so shipping one would only risk clobbering a user's settings on reinstall.
-          # Docs + license for the in-mod folder.
-          cp README.md ROADMAP.md COPYING EXCEPTIONS "$stage/"
-          # MIT C-ABI glue for developers who want to register their own tools.
-          cp include/DevBenchAPI.h include/DevBenchAPI.cpp include/DevBenchAPI.LICENSE.txt "$stage/Developer/"
           7z a -t7z -mx=9 "${stage}.7z" "$stage"
           echo "archive=${stage}.7z" >> "$GITHUB_OUTPUT"
           echo "Built ${stage}.7z:"
