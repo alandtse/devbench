@@ -15,7 +15,7 @@ includes("xmake/cpp-mcp.lua")
 set_project("devbench")
 set_license("GPL-3.0")
 
-local version = "1.8.2"
+local version = "1.9.0"
 local ver = version:split("%.")
 set_version(version)
 
