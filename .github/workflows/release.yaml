@@ -110,6 +110,10 @@ jobs:
           # the Nexus download.
           mkdir -p "$stage/SKSE/Plugins"
           cp bin/devbench.dll bin/devbench.pdb "$stage/SKSE/Plugins/"
+          # Bundle the default recordings straight into the recordings dir so a fresh
+          # install ships a ready-to-replay benchmark (e.g. Guardian Stones -> Whiterun).
+          mkdir -p "$stage/SKSE/Plugins/devbench/recordings"
+          cp default_recordings/*.json "$stage/SKSE/Plugins/devbench/recordings/"
           # No config.json: the plugin auto-creates a self-documenting one on first run,
           # so shipping one would only risk clobbering a user's settings on reinstall.
           7z a -t7z -mx=9 "${stage}.7z" "$stage"
