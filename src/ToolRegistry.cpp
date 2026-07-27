@@ -78,6 +78,13 @@ namespace dvb
 		} catch (const ToolError& e) {
 			logs::warn("tool '{}' failed [{}]: {}", a_name, e.code, e.what());
 			return ToolResult::Failure(e.code, e.what());
+		} catch (const json::type_error& e) {
+			// .value()/.get<T>() throwing type_error specifically means the caller sent an
+			// argument of the wrong JSON type — a 400, not a 500. Deliberately NOT the broader
+			// json::exception (parse_error/out_of_range/other_error can mean something server-
+			// side actually broke, which the generic 500 path below should still catch).
+			logs::warn("tool '{}' bad args: {}", a_name, e.what());
+			return ToolResult::Failure(400, std::format("invalid arguments: {}", e.what()));
 		} catch (const std::exception& e) {
 			logs::warn("tool '{}' threw: {}", a_name, e.what());
 			return ToolResult::Failure(500, e.what());
