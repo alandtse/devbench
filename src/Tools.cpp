@@ -1024,18 +1024,27 @@ namespace dvb
 			const std::string pov = a_args.value("pov", std::string{});
 			if (pov != "first" && pov != "third" && pov != "vanity")
 				throw ToolError(400, std::format("invalid pov '{}' (first|third|vanity)", pov));
-			task->AddTask([pov]() {
+			// Apply and read back on the SAME main-thread tick (not fire-and-forget), so the
+			// result reflects reality, not a queue promise Skyrim's idle-vanity timer may revert.
+			return MainThread::RunAndWait([pov]() -> json {
 				auto* cam = RE::PlayerCamera::GetSingleton();
 				if (!cam)
-					return;
+					throw ToolError(500, "PlayerCamera unavailable");
 				if (pov == "first")
 					cam->ForceFirstPerson();
 				else if (pov == "third")
 					cam->ForceThirdPerson();
 				else  // vanity has no Force* helper; push the state by its (runtime-mapped) enum
 					cam->PushCameraState(RE::CameraState::kAutoVanity);
+				std::string applied = "other";
+				if (cam->IsInFirstPerson())
+					applied = "first";
+				else if (cam->IsInThirdPerson())
+					applied = "third";
+				else if (cam->currentState && cam->currentState->id == RE::CameraState::kAutoVanity)
+					applied = "vanity";
+				return json{ { "action", "setPov" }, { "requestedPov", pov }, { "pov", applied } };
 			});
-			return json{ { "queued", true }, { "action", "setPov" }, { "pov", pov } };
 		}
 
 		// ---- scenario: server-side timed replay of a step list -------------------
@@ -1597,16 +1606,28 @@ namespace dvb
 		ToolDescriptor camera;
 		camera.name = "camera";
 		camera.description =
-			"Read or set the player camera point of view. action='get' returns { pov } where pov "
-			"is first | third | vanity | other, read live on the main thread. action='setPov' "
-			"queues a switch (param 'pov': first | third | vanity) onto the main thread "
-			"(fire-and-forget). Recordings capture the POV per sample and replay restores it via "
-			"this tool, since what is rendered (and benchmarked) differs by POV.";
+			"Read or set the player camera. action='get' (default) returns { pov, freeCam, camX, "
+			"camY, camZ, camPitch, camYaw } read live on the main thread, where pov is first | "
+			"third | vanity | other. action='setPov' applies a switch (param 'pov': first | third "
+			"| vanity) on the main thread and returns { pov: <applied>, requestedPov } read back "
+			"the same tick — Skyrim's idle-vanity timer can still override it a few ticks later "
+			"while the player is stationary, so poll action='get' if you need certainty after "
+			"idling. action='freecam' (param 'on', default true) toggles free-camera mode; enter "
+			"it before 'drive'. action='drive' (params 'x','y','z','pitch','yaw', all default 0) "
+			"sets the free camera's world transform — requires free-cam mode already on. "
+			"Recordings capture the POV per sample and replay restores it via this tool, since "
+			"what is rendered (and benchmarked) differs by POV.";
 		camera.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "get", "setPov" }) }, { "description", "get (default) | setPov" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "get", "setPov", "freecam", "drive" }) }, { "description", "get (default) | setPov | freecam | drive" } } },
 								{ "pov", json{ { "type", "string" }, { "enum", json::array({ "first", "third", "vanity" }) }, { "description", "setPov: target point of view" } } },
+								{ "on", json{ { "type", "boolean" }, { "description", "freecam: enable (default) or disable free-camera mode" } } },
+								{ "x", json{ { "type", "number" }, { "description", "drive: world X (requires free-cam mode)" } } },
+								{ "y", json{ { "type", "number" }, { "description", "drive: world Y (requires free-cam mode)" } } },
+								{ "z", json{ { "type", "number" }, { "description", "drive: world Z (requires free-cam mode)" } } },
+								{ "pitch", json{ { "type", "number" }, { "description", "drive: free-cam pitch" } } },
+								{ "yaw", json{ { "type", "number" }, { "description", "drive: free-cam yaw" } } },
 							} },
 		};
 		a_registry.Register(std::move(camera), &CameraHandler);
