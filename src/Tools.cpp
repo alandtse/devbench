@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <optional>
 #include <thread>
@@ -208,6 +209,125 @@ namespace dvb
 			"async — watch lifecycle 'postLoadGame' / inspect playerLoaded for completion. "
 			"A content-mismatch MessageBoxMenu (Yes/No) may gate it; check `menu` action=list.";
 
+		// A Pascal-style string in the .ess header: uint16 length + that many raw (non-UTF16,
+		// despite the community name "wstring") bytes.
+		std::optional<std::string> ReadPString(std::ifstream& a_in)
+		{
+			std::uint16_t len = 0;
+			if (!a_in.read(reinterpret_cast<char*>(&len), sizeof(len)))
+				return std::nullopt;
+			std::string s(len, '\0');
+			if (len > 0 && !a_in.read(s.data(), len))
+				return std::nullopt;
+			return s;
+		}
+
+		template <class T>
+		std::optional<T> ReadPod(std::ifstream& a_in)
+		{
+			T value{};
+			if (!a_in.read(reinterpret_cast<char*>(&value), sizeof(value)))
+				return std::nullopt;
+			return value;
+		}
+
+		struct EssHeader
+		{
+			std::string   characterName, location, playTime, race;
+			std::uint32_t level = 0, saveNumber = 0, shotWidth = 0, shotHeight = 0;
+			float         curExp = 0.0f, requiredExp = 0.0f;
+			std::uint64_t fileTime = 0;
+		};
+
+		// Reads the fixed-layout header every Skyrim SE .ess starts with — the same bytes the
+		// vanilla Load menu reads to show name/level/location without loading anything. Verified
+		// byte-for-byte against a live save; stops right after shotHeight (screenshot pixels,
+		// plugin list, and the (possibly compressed) form data that follow are never read).
+		std::optional<EssHeader> ReadEssHeader(const fs::path& a_path)
+		{
+			std::ifstream in(a_path, std::ios::binary);
+			if (!in)
+				return std::nullopt;
+			char magic[13];
+			if (!in.read(magic, sizeof(magic)) || std::string_view(magic, sizeof(magic)) != "TESV_SAVEGAME")
+				return std::nullopt;
+			if (!ReadPod<std::uint32_t>(in) || !ReadPod<std::uint32_t>(in))  // headerSize, version — unused
+				return std::nullopt;
+			EssHeader  h;
+			const auto saveNumber = ReadPod<std::uint32_t>(in);
+			const auto name = ReadPString(in);
+			const auto level = ReadPod<std::uint32_t>(in);
+			const auto location = ReadPString(in);
+			const auto playTime = ReadPString(in);
+			const auto race = ReadPString(in);
+			const auto sex = ReadPod<std::uint16_t>(in);
+			const auto curExp = ReadPod<float>(in);
+			const auto requiredExp = ReadPod<float>(in);
+			const auto fileTime = ReadPod<std::uint64_t>(in);
+			const auto shotWidth = ReadPod<std::uint32_t>(in);
+			const auto shotHeight = ReadPod<std::uint32_t>(in);
+			if (!saveNumber || !name || !level || !location || !playTime || !race || !sex || !curExp || !requiredExp || !fileTime || !shotWidth || !shotHeight)
+				return std::nullopt;
+			h.saveNumber = *saveNumber;
+			h.characterName = *name;
+			h.level = *level;
+			h.location = *location;
+			h.playTime = *playTime;
+			h.race = *race;
+			h.curExp = *curExp;
+			h.requiredExp = *requiredExp;
+			h.fileTime = *fileTime;
+			h.shotWidth = *shotWidth;
+			h.shotHeight = *shotHeight;
+			return h;
+		}
+
+		// FILETIME is 100ns ticks since 1601-01-01; unix epoch is 11644473600s later.
+		std::int64_t FileTimeToUnix(std::uint64_t a_ft)
+		{
+			return static_cast<std::int64_t>(a_ft / 10'000'000ULL) - 11644473600LL;
+		}
+
+		// Enriches `a_saves` (parallel to `a_entries`) by reading each save's own .ess header —
+		// pure file I/O, no engine call, so it works in every game state including the main menu
+		// before anything has ever loaded (BGSSaveLoadManager's API does not: it crashed reading
+		// saveGameList from a pristine main menu, and gave WRONG data — the save's own filename as
+		// "location" — for custom-named saves, once a session existed to call it safely at all).
+		void AttachSaveDetail(const fs::path& a_dir, const std::vector<SaveEntry>& a_entries, json& a_saves, json& a_out)
+		{
+			bool any = false;
+			for (size_t i = 0; i < a_entries.size(); ++i) {
+				const auto header = ReadEssHeader(a_dir / (a_entries[i].name + ".ess"));
+				if (!header)
+					continue;
+				any = true;
+				// saveType isn't stored in the header; infer it from the filename the same way
+				// the game names its own saves (unambiguous prefixes only, else "save").
+				const std::string lower = Lower(a_entries[i].name);
+				const char*       saveType = lower.starts_with("autosave") ? "autosave" : lower.starts_with("quicksave") ? "quicksave" :
+				                                                                                                           "save";
+				a_saves[i]["meta"] = json{
+					{ "characterName", header->characterName },
+					{ "location", header->location },
+					{ "playTime", header->playTime },
+					{ "race", header->race },
+					{ "level", header->level },
+					{ "experience", json{ { "current", header->curExp }, { "required", header->requiredExp } } },
+					{ "saveNumber", header->saveNumber },
+					{ "saveType", saveType },
+					{ "screenshot", json{ { "width", header->shotWidth }, { "height", header->shotHeight } } },
+					{ "fileTimeUnix", header->fileTime ? json(FileTimeToUnix(header->fileTime)) : json(nullptr) },
+				};
+			}
+			a_out["metaAvailable"] = any;
+			if (any)
+				a_out["metaNote"] = nullptr;
+			else if (a_entries.empty())
+				a_out["metaNote"] = "no saves matched 'filter'/'limit' — nothing to read";
+			else
+				a_out["metaNote"] = "none of the matched saves' .ess headers could be read";
+		}
+
 		// game: programmatic save / load / list via BGSSaveLoadManager. loadLast gives a
 		// settled real-save state for testing WITHOUT coc's heavy new-game init. Mutating
 		// actions run on the main thread and are async — see kLoadNote.
@@ -238,10 +358,13 @@ namespace dvb
 				}
 				// {count, returned, truncated} mirrors inspect's inventory/refs/quests convention:
 				// count is post-filter (how many exist), returned is post-limit (what's in `saves`).
-				return json{ { "dir", saveDir.string() }, { "count", matched }, { "returned", saves.size() },
+				json out{ { "dir", saveDir.string() }, { "count", matched }, { "returned", saves.size() },
 					{ "truncated", matched > saves.size() },
-					{ "note", "sorted newest-first; saves[0] is the most recent (loadLast uses it). Pass 'limit' to cap the count." },
-					{ "saves", std::move(saves) } };
+					{ "note", "sorted newest-first; saves[0] is the most recent (loadLast uses it). Pass 'limit' to cap the count." } };
+				if (a_args.value("detail", false))
+					AttachSaveDetail(saveDir, entries, saves, out);
+				out["saves"] = std::move(saves);
+				return out;
 			}
 
 			auto* task = SKSE::GetTaskInterface();
@@ -1619,10 +1742,15 @@ namespace dvb
 			"[{name, mtimeUnix}, ...] }, sorted newest-first (saves[0] is what 'loadLast' loads) — "
 			"count is post-filter (how many matched), returned/saves are post-limit. 'filter' keeps "
 			"only names containing a substring (case-insensitive; save names embed the location, "
-			"e.g. 'Whiterun'), 'limit' caps how many are returned; 'loadLast' loads the most recent save (a settled "
-			"real-game state — avoids coc's heavy new-game init); 'load'/'save' take a 'name' "
-			"('load' skips the mod-mismatch confirmation modal). All but 'list' are fire-and-forget; "
-			"watch lifecycle events / inspect playerLoaded for completion.";
+			"e.g. 'Whiterun'), 'limit' caps how many are returned, 'detail'=true adds a 'meta' "
+			"object per matched save (characterName, location, race, level, experience, playTime, saveNumber, "
+			"saveType [inferred from the filename], screenshot, fileTimeUnix — read directly from "
+			"the save's own .ess header, same bytes the vanilla Load menu shows, so it works even "
+			"before anything has loaded) plus top-level metaAvailable/metaNote if none parsed; "
+			"'loadLast' loads the most recent save (a settled real-game state — avoids coc's "
+			"heavy new-game init); 'load'/'save' take a 'name' ('load' skips the mod-mismatch "
+			"confirmation modal). All but 'list' are fire-and-forget; watch lifecycle events / "
+			"inspect playerLoaded for completion.";
 		game.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
