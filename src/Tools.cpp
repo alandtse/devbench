@@ -1370,12 +1370,14 @@ namespace dvb
 				std::string error;
 			};
 
-			// runId is a monotonic counter, so the smallest key is the oldest run.
+			// runId is a monotonic counter, so the smallest key is the oldest run. Never erase an
+			// in-flight (!done) one — Finish/Fail would recreate it via operator[], and a poll in
+			// between would 404 on a run that's actually still executing.
 			void Prune()
 			{
 				constexpr size_t kRetention = 128;  // shared by two tools now; headroom over the old 64
-				while (m_runs.size() > kRetention)
-					m_runs.erase(m_runs.begin());
+				for (auto it = m_runs.begin(); m_runs.size() > kRetention && it != m_runs.end();)
+					it = it->second.done ? m_runs.erase(it) : std::next(it);
 			}
 
 			std::atomic<uint64_t>     m_seq{ 0 };
