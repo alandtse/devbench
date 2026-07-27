@@ -1784,7 +1784,7 @@ namespace dvb
 			{ "properties", json{
 								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast" }) }, { "description", "list | save | load | loadLast" } } },
 								{ "name", json{ { "type", "string" }, { "description", "save file name (required for save/load; from action='list')" } } },
-								{ "dir", json{ { "type", "string" }, { "description", "list only: override the saves directory (default resolves from sLocalSavePath)" } } },
+								{ "dir", json{ { "type", "string" }, { "description", "list/load/loadLast: override the saves directory (default resolves from sLocalSavePath)" } } },
 								{ "filter", json{ { "type", "string" }, { "description", "list only: case-insensitive substring to match against save names" } } },
 								{ "limit", json{ { "type", "integer" }, { "description", "list only: cap the number of saves returned (newest-first); must be > 0 if given" } } },
 								{ "detail", json{ { "type", "boolean" }, { "description", "list only: add per-save character/location/level metadata (default false)" } } },
@@ -1801,8 +1801,9 @@ namespace dvb
 			"| vanity) on the main thread and returns { pov: <applied>, requestedPov } read back "
 			"the same tick — Skyrim's idle-vanity timer can still override it a few ticks later "
 			"while the player is stationary, so poll action='get' if you need certainty after "
-			"idling. action='freecam' (param 'on', default true) toggles free-camera mode; enter "
-			"it before 'drive'. action='drive' (params 'x','y','z','pitch','yaw', all default 0) "
+			"idling. action='freecam' (param 'on', default true) queues toggling free-camera mode "
+			"(fire-and-forget, takes effect a tick later) — poll action='get'.freeCam until true "
+			"before 'drive'. action='drive' (params 'x','y','z','pitch','yaw', all default 0) "
 			"sets the free camera's world transform — requires free-cam mode already on. "
 			"Recordings capture the POV per sample and replay restores it via this tool, since "
 			"what is rendered (and benchmarked) differs by POV.";
