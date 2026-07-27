@@ -101,9 +101,14 @@ namespace dvb
 		// REST facade on the same httplib server (constructed in mcp::server's ctor,
 		// so http() is valid here; cpp-mcp adds its own routes during start()).
 		m_restAdapter = std::make_unique<RestAdapter>(m_registry, m_events);
-		if (auto* http = m_mcp->http())
+		if (auto* http = m_mcp->http()) {
+			// httplib's default 5s read timeout applies even to a bodyless POST (no
+			// Content-Length/chunked header) — it waits for a body that will never come
+			// before giving up with an empty 400. Shorten this so that mistake fails fast
+			// instead of stalling; GET /api/health is the real fix for liveness checks.
+			http->set_read_timeout(2, 0);
 			m_restAdapter->Mount(*http);
-		else
+		} else
 			logs::warn("devbench: cpp-mcp http() returned null; REST facade unavailable");
 
 		const bool ok = m_mcp->start(false);  // non-blocking; spawns the listener thread

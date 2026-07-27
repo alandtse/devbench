@@ -51,6 +51,16 @@ namespace dvb
 				WriteJson(res, r.errorCode ? r.errorCode : 500, json{ { "error", r.errorMessage }, { "code", r.errorCode } });
 		});
 
+		// Deliberately GET, not POST: a bodyless POST stalls on httplib's read timeout (see
+		// Server::Start). lastLifecycle tells "listening" from "game data loaded" in one call.
+		a_http.Get("/api/health", [this](const httplib::Request&, httplib::Response& res) {
+			json lastLifecycle;
+			for (const auto& ev : m_events.Since(0))
+				if (ev.topic == "lifecycle")
+					lastLifecycle = ev.payload.value("event", std::string{});
+			WriteJson(res, 200, json{ { "ok", true }, { "lastLifecycle", lastLifecycle } });
+		});
+
 		// Poll recent events (the SSE stream is a later addition).
 		a_http.Get("/api/events", [this](const httplib::Request& req, httplib::Response& res) {
 			uint64_t since = 0;
