@@ -1288,19 +1288,31 @@ namespace dvb
 			throw ToolError(400, std::format("unknown waitUntil condition '{}' (playerLoaded|noModal|noMenu)", a_cond));
 		}
 
-		// Tracks in-flight/completed async replay runs (record{action:"replay"}, async by default)
-		// so a caller can poll record{action:"status", runId:…} instead of blocking the HTTP
-		// request for the run's duration — mirrors game{action:"load"}'s queued/poll convention.
-		// Entries are pruned once the retention cap is hit so a caller that never polls a
-		// finished run doesn't leak state across a long-lived session.
-		class ReplayRunRegistry
+		// Caller must already know a_args["runId"] is present. A bare get<uint64_t>() on a
+		// negative or non-numeric value throws json::type_error deep inside a handler — this
+		// gives a clean 400 naming the actual bad value instead.
+		uint64_t ParseRunId(const json& a_args)
+		{
+			const json& v = a_args["runId"];
+			if (!v.is_number_unsigned() && !(v.is_number_integer() && v.get<int64_t>() >= 0))
+				throw ToolError(400, std::format("invalid runId '{}' (must be a non-negative integer)", v.dump()));
+			return v.get<uint64_t>();
+		}
+
+		// Tracks in-flight/completed async runs — record{action:"replay"} (async by default) and
+		// scenario{action:"run", async:true} share this registry and its runId space, so a runId
+		// from either polls correctly via either tool's action="status". Entries are pruned once
+		// the retention cap is hit so a caller that never polls a finished run doesn't leak state.
+		class RunRegistry
 		{
 		public:
-			static ReplayRunRegistry& Get()
+			static RunRegistry& Get()
 			{
-				static ReplayRunRegistry inst;
+				static RunRegistry inst;
 				return inst;
 			}
+
+			uint64_t NextId() { return ++m_seq; }
 
 			void Start(uint64_t a_runId)
 			{
@@ -1309,13 +1321,17 @@ namespace dvb
 				Prune();
 			}
 
+			// `st.ok` reflects the result's own "ok" field when present (a scenario/replay run
+			// that completed without throwing but failed an assertion has result.ok=false — that
+			// must not be reported as a top-level ok:true) rather than just "didn't throw".
 			void Finish(uint64_t a_runId, json a_result)
 			{
 				std::lock_guard lock(m_mtx);
 				State&          st = m_runs[a_runId];
 				st.done = true;
-				st.ok = true;
+				st.ok = a_result.is_object() ? a_result.value("ok", true) : true;
 				st.result = std::move(a_result);
+				st.hasResult = true;
 			}
 
 			void Fail(uint64_t a_runId, std::string a_error)
@@ -1327,6 +1343,9 @@ namespace dvb
 				st.error = std::move(a_error);
 			}
 
+			// hasResult (Finish, even with ok:false — a failed assertion, not a thrown exception)
+			// vs error-only (Fail — the run itself threw) are distinct outcomes; conflating them
+			// on `ok` alone would discard the actual transcript for a failed-but-completed run.
 			std::optional<json> Status(uint64_t a_runId)
 			{
 				std::lock_guard lock(m_mtx);
@@ -1336,9 +1355,9 @@ namespace dvb
 				const State& st = it->second;
 				if (!st.done)
 					return json{ { "runId", a_runId }, { "done", false } };
-				if (st.ok)
-					return json{ { "runId", a_runId }, { "done", true }, { "ok", true }, { "result", st.result } };
-				return json{ { "runId", a_runId }, { "done", true }, { "ok", false }, { "error", st.error } };
+				json out{ { "runId", a_runId }, { "done", true }, { "ok", st.ok } };
+				out[st.hasResult ? "result" : "error"] = st.hasResult ? st.result : json(st.error);
+				return out;
 			}
 
 		private:
@@ -1346,6 +1365,7 @@ namespace dvb
 			{
 				bool        done = false;
 				bool        ok = false;
+				bool        hasResult = false;
 				json        result;
 				std::string error;
 			};
@@ -1353,11 +1373,12 @@ namespace dvb
 			// runId is a monotonic counter, so the smallest key is the oldest run.
 			void Prune()
 			{
-				constexpr size_t kRetention = 64;
+				constexpr size_t kRetention = 128;  // shared by two tools now; headroom over the old 64
 				while (m_runs.size() > kRetention)
 					m_runs.erase(m_runs.begin());
 			}
 
+			std::atomic<uint64_t>     m_seq{ 0 };
 			std::mutex                m_mtx;
 			std::map<uint64_t, State> m_runs;
 		};
@@ -1376,13 +1397,10 @@ namespace dvb
 				throw ToolError(400, "repeat capped at 1000");
 			const bool continueOnError = a_args.value("continueOnError", false);
 
-			// Correlates this run's scenario.step / replay.* events: concurrent
-			// runs interleave on the bus, and the id keys them apart. A caller
-			// (the replay wrapper) may pass its own id; standalone runs mint one.
-			static std::atomic<uint64_t> s_runSeq{ 0 };
-			const uint64_t               runId = a_args.value("runId", static_cast<uint64_t>(0)) ?
-			                                         a_args.value("runId", static_cast<uint64_t>(0)) :
-			                                         ++s_runSeq;
+			// Correlates this run's scenario.step / replay.* events: concurrent runs
+			// interleave on the bus, and the id keys them apart. Both callers (the
+			// scenario tool wrapper and record.replay) always supply one.
+			const uint64_t runId = a_args.value("runId", static_cast<uint64_t>(0));
 
 			json       results = json::array();
 			const auto t0 = steady_clock::now();
@@ -1584,6 +1602,16 @@ namespace dvb
 						r["errorCode"] = e.code;
 						r["error"] = e.what();
 						stepFailed = true;
+					} catch (const std::exception& e) {
+						// A malformed step (e.g. non-numeric "wait") throws outside ToolError —
+						// catch it here too so it fails this step, not the whole (possibly
+						// detached-thread) run.
+						if (!r.contains("kind"))
+							r["kind"] = "error";
+						r["ok"] = false;
+						r["errorCode"] = 500;
+						r["error"] = e.what();
+						stepFailed = true;
 					}
 
 					r["elapsedMs"] = duration_cast<milliseconds>(steady_clock::now() - stepStart).count();
@@ -1759,6 +1787,7 @@ namespace dvb
 								{ "dir", json{ { "type", "string" }, { "description", "list only: override the saves directory (default resolves from sLocalSavePath)" } } },
 								{ "filter", json{ { "type", "string" }, { "description", "list only: case-insensitive substring to match against save names" } } },
 								{ "limit", json{ { "type", "integer" }, { "description", "list only: cap the number of saves returned (newest-first); must be > 0 if given" } } },
+								{ "detail", json{ { "type", "boolean" }, { "description", "list only: add per-save character/location/level metadata (default false)" } } },
 							} },
 		};
 		a_registry.Register(std::move(game), &GameHandler);
@@ -1844,7 +1873,8 @@ namespace dvb
 		scenario.name = "scenario";
 		scenario.description =
 			"Run a timed sequence of steps server-side (reproducible tests/benchmarks) and "
-			"return a per-step transcript. Each step is one of: "
+			"return a per-step transcript. action='run' (default, requires 'steps'). Each step is "
+			"one of: "
 			"{\"tool\":\"<name>\",\"args\":{…}} dispatch any registered tool (e.g. console, game); "
 			"{\"wait\":<ms>} fixed pacing; "
 			"{\"waitFor\":<event>,…} block on a Skyrim EVENT — string shorthand "
@@ -1852,23 +1882,77 @@ namespace dvb
 			"\"menuOpened\"/\"menuClosed\" with a \"name\"), or {\"topic\":\"…\",\"match\":{…}}; "
 			"{\"waitUntil\":\"playerLoaded\"|\"noModal\"|\"noMenu\"} poll live state. "
 			"PREFER waitFor over a fixed wait — e.g. wait for postLoadGame to know a load truly "
-			"finished. Optional top-level: repeat (≤1000), continueOnError. waitFor/waitUntil take "
-			"timeoutMs + pollMs. Blocks the request for the run's duration (seconds); keep "
-			"per-step timeouts sane. Publishes a scenario.step event (index/total/kind/tool) "
-			"before each step — poll GET /api/events to follow a blocking run; if the game "
-			"wedges mid-run, the last scenario.step names the culprit step.";
+			"finished. Optional: repeat (≤1000), continueOnError, async. By default action='run' "
+			"BLOCKS the request for the run's duration and returns the transcript directly — the "
+			"primary use is asserting against that return value in the same call. Pass async=true "
+			"to instead get {queued:true, runId, steps} immediately and poll "
+			"action='status'+runId (returns {done:false} while running, or {done:true, ok, "
+			"result} / {done:true, ok:false, error} once finished — runId is shared with "
+			"record{action:'replay'}, so either tool's status action resolves either tool's "
+			"runId). Publishes scenario.started/scenario.step/scenario.finished events (index/"
+			"total/kind/tool on each step) in both modes — poll GET /api/events to follow a run; "
+			"if the game wedges mid-run, the last scenario.step names the culprit step.";
 		scenario.inputSchema = json{
 			{ "type", "object" },
-			{ "required", json::array({ "steps" }) },
 			{ "properties", json{
-								{ "steps", json{ { "type", "array" }, { "description", "ordered steps; each is one of tool/wait/waitFor/waitUntil (see description)" }, { "items", json{ { "type", "object" } } } } },
-								{ "repeat", json{ { "type", "integer" }, { "description", "run the whole step list N times (default 1, max 1000)" } } },
-								{ "continueOnError", json{ { "type", "boolean" }, { "description", "keep going after a failed/timed-out step instead of aborting (default false)" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "run", "status" }) }, { "description", "run (default, requires 'steps') | status (requires 'runId')" } } },
+								{ "steps", json{ { "type", "array" }, { "description", "run: ordered steps; each is one of tool/wait/waitFor/waitUntil (see description)" }, { "items", json{ { "type", "object" } } } } },
+								{ "repeat", json{ { "type", "integer" }, { "description", "run: run the whole step list N times (default 1, max 1000)" } } },
+								{ "continueOnError", json{ { "type", "boolean" }, { "description", "run: keep going after a failed/timed-out step instead of aborting (default false)" } } },
+								{ "async", json{ { "type", "boolean" }, { "description", "run: return {queued:true, runId} immediately and run in the background (default false); true does not block" } } },
+								{ "runId", json{ { "type", "integer" }, { "description", "status: poll an async run started earlier (from run's 'runId')" } } },
 							} },
 		};
 		a_registry.Register(std::move(scenario),
-			[&a_registry, &a_events](const json& a_args, const ToolContext& a_ctx) {
-				return ScenarioHandler(a_args, a_ctx, a_registry, a_events);
+			[&a_registry, &a_events](const json& a_args, const ToolContext& a_ctx) -> json {
+				const std::string action = a_args.value("action", std::string("run"));
+				if (action == "status") {
+					if (!a_args.contains("runId"))
+						throw ToolError(400, "action='status' requires 'runId'");
+					const uint64_t runId = ParseRunId(a_args);
+					if (auto st = RunRegistry::Get().Status(runId))
+						return *st;
+					throw ToolError(404, std::format("unknown scenario runId {}", runId));
+				}
+				if (action != "run")
+					throw ToolError(400, std::format("unknown action '{}' (run|status)", action));
+				if (!a_args.contains("steps") || !a_args["steps"].is_array())
+					throw ToolError(400, "action='run' requires a 'steps' array");
+
+				uint64_t runId = a_args.value("runId", static_cast<uint64_t>(0));
+				if (!runId)
+					runId = RunRegistry::Get().NextId();
+				json argsWithId = a_args;
+				argsWithId["runId"] = runId;
+				const size_t numSteps = argsWithId["steps"].size();
+
+				// scenario.started/finished bracket EVERY exit path (thrown or not) in both sync
+				// and async modes, so a poller waiting on the event can never hang.
+				auto runScenario = [&a_registry, &a_events, a_ctx, argsWithId, runId]() -> json {
+					a_events.Publish("scenario.started", json{ { "runId", runId }, { "steps", argsWithId["steps"].size() }, { "repeat", argsWithId.value("repeat", 1) } });
+					json result;
+					try {
+						result = ScenarioHandler(argsWithId, a_ctx, a_registry, a_events);
+					} catch (const std::exception& e) {
+						a_events.Publish("scenario.finished", json{ { "runId", runId }, { "ok", false }, { "error", e.what() } });
+						throw;
+					}
+					a_events.Publish("scenario.finished", json{ { "runId", runId }, { "ok", result.value("ok", false) }, { "stepsRun", result.value("stepsRun", 0) } });
+					return result;
+				};
+
+				if (!a_args.value("async", false))
+					return runScenario();
+
+				RunRegistry::Get().Start(runId);
+				std::thread([runScenario, runId]() {
+					try {
+						RunRegistry::Get().Finish(runId, runScenario());
+					} catch (const std::exception& e) {
+						RunRegistry::Get().Fail(runId, e.what());
+					}
+				}).detach();
+				return json{ { "queued", true }, { "runId", runId }, { "steps", numSteps } };
 			});
 
 		ToolDescriptor record;
@@ -1896,8 +1980,10 @@ namespace dvb
 			"ASYNC BY DEFAULT — mirroring game{action:'load'} — and returns {queued:true, runId, steps, "
 			"estMs} immediately; poll completion via record{action:'status', runId} (returns {done, ok, "
 			"result} once finished, {done:false} while running) or watch replay.started / "
-			"replay.finished on GET /api/events (both carry runId). Pass async:false to block the "
-			"request for the run's duration and get the result object directly instead.";
+			"replay.finished on GET /api/events (both carry runId; the runId space is shared with "
+			"scenario, so a replay's runId also resolves via scenario{action:'status'}). Pass "
+			"async:false to block the request for the run's duration and get the result object "
+			"directly instead.";
 		record.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
@@ -1924,8 +2010,7 @@ namespace dvb
 					for (const auto& s : steps)
 						if (s.contains("wait"))
 							estMs += s["wait"].get<long>();
-					static std::atomic<uint64_t> s_replaySeq{ 0 };
-					const uint64_t               runId = ++s_replaySeq;
+					const uint64_t runId = RunRegistry::Get().NextId();
 					Recording::Notify(std::format("devbench: replaying {} steps (~{:.1f}s)", steps.size(), estMs / 1000.0));
 					logs::info("devbench: replay starting — {} steps, ~{}ms", steps.size(), estMs);
 					a_events.Publish("replay.started", json{ { "runId", runId }, { "steps", steps.size() }, { "estMs", estMs }, { "path", a_args.value("path", std::string{}) } });
@@ -1953,19 +2038,19 @@ namespace dvb
 					if (!a_args.value("async", true))
 						return runReplay();
 
-					ReplayRunRegistry::Get().Start(runId);
+					RunRegistry::Get().Start(runId);
 					std::thread([runReplay, runId]() {
 						try {
-							ReplayRunRegistry::Get().Finish(runId, runReplay());
+							RunRegistry::Get().Finish(runId, runReplay());
 						} catch (const std::exception& e) {
-							ReplayRunRegistry::Get().Fail(runId, e.what());
+							RunRegistry::Get().Fail(runId, e.what());
 						}
 					}).detach();
 					return json{ { "queued", true }, { "runId", runId }, { "steps", steps.size() }, { "estMs", estMs } };
 				}
 				if (action == "status" && a_args.contains("runId")) {
 					const uint64_t runId = a_args["runId"].get<uint64_t>();
-					if (auto st = ReplayRunRegistry::Get().Status(runId))
+					if (auto st = RunRegistry::Get().Status(runId))
 						return *st;
 					throw ToolError(404, std::format("unknown replay runId {}", runId));
 				}
