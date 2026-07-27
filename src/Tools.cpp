@@ -2049,7 +2049,7 @@ namespace dvb
 					return json{ { "queued", true }, { "runId", runId }, { "steps", steps.size() }, { "estMs", estMs } };
 				}
 				if (action == "status" && a_args.contains("runId")) {
-					const uint64_t runId = a_args["runId"].get<uint64_t>();
+					const uint64_t runId = ParseRunId(a_args);
 					if (auto st = RunRegistry::Get().Status(runId))
 						return *st;
 					throw ToolError(404, std::format("unknown replay runId {}", runId));
