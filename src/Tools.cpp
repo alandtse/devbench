@@ -154,6 +154,12 @@ namespace dvb
 
 		namespace fs = std::filesystem;
 
+		std::string Lower(std::string a_s)
+		{
+			std::transform(a_s.begin(), a_s.end(), a_s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+			return a_s;
+		}
+
 		// Resolve the saves directory: explicit `dir` arg wins (escape hatch for exotic
 		// setups); else <My Games game folder> / sLocalSavePath (read from the INI; the
 		// 's' prefix guarantees a string), supporting an absolute setting. Running
@@ -211,10 +217,31 @@ namespace dvb
 
 			if (action == "list") {
 				const fs::path saveDir = ResolveSaveDir(a_args);
-				json           saves = json::array();
-				for (const auto& s : EnumerateSaves(saveDir))
-					saves.push_back(s.name);
-				return json{ { "dir", saveDir.string() }, { "count", saves.size() }, { "saves", std::move(saves) } };
+				auto           entries = EnumerateSaves(saveDir);  // already newest-first by mtime
+				if (const std::string filter = a_args.value("filter", std::string{}); !filter.empty()) {
+					const std::string needle = Lower(filter);
+					std::erase_if(entries, [&](const SaveEntry& s) { return Lower(s.name).find(needle) == std::string::npos; });
+				}
+				const size_t matched = entries.size();  // post-filter, pre-limit — see count/truncated below
+				if (a_args.contains("limit")) {
+					const int limit = a_args["limit"].get<int>();
+					if (limit <= 0)
+						throw ToolError(400, std::format("invalid limit '{}' (must be > 0)", limit));
+					if (static_cast<size_t>(limit) < entries.size())
+						entries.resize(limit);
+				}
+				json saves = json::array();
+				for (const auto& s : entries) {
+					const auto sys = std::chrono::clock_cast<std::chrono::system_clock>(s.mtime);
+					saves.push_back(json{ { "name", s.name },
+						{ "mtimeUnix", std::chrono::duration_cast<std::chrono::seconds>(sys.time_since_epoch()).count() } });
+				}
+				// {count, returned, truncated} mirrors inspect's inventory/refs/quests convention:
+				// count is post-filter (how many exist), returned is post-limit (what's in `saves`).
+				return json{ { "dir", saveDir.string() }, { "count", matched }, { "returned", saves.size() },
+					{ "truncated", matched > saves.size() },
+					{ "note", "sorted newest-first; saves[0] is the most recent (loadLast uses it). Pass 'limit' to cap the count." },
+					{ "saves", std::move(saves) } };
 			}
 
 			auto* task = SKSE::GetTaskInterface();
@@ -1588,17 +1615,22 @@ namespace dvb
 		ToolDescriptor game;
 		game.name = "game";
 		game.description =
-			"Save/load and list saves. action='list' enumerates the saves directory and "
-			"returns save names (use one as 'name' for load); 'loadLast' loads the most recent "
-			"save (a settled real-game state — avoids coc's heavy new-game init); 'load'/'save' "
-			"take a 'name' ('load' skips the mod-mismatch confirmation modal). All but 'list' "
-			"are fire-and-forget; watch lifecycle events / inspect playerLoaded for completion.";
+			"Save/load and list saves. action='list' returns { count, returned, truncated, saves: "
+			"[{name, mtimeUnix}, ...] }, sorted newest-first (saves[0] is what 'loadLast' loads) — "
+			"count is post-filter (how many matched), returned/saves are post-limit. 'filter' keeps "
+			"only names containing a substring (case-insensitive; save names embed the location, "
+			"e.g. 'Whiterun'), 'limit' caps how many are returned; 'loadLast' loads the most recent save (a settled "
+			"real-game state — avoids coc's heavy new-game init); 'load'/'save' take a 'name' "
+			"('load' skips the mod-mismatch confirmation modal). All but 'list' are fire-and-forget; "
+			"watch lifecycle events / inspect playerLoaded for completion.";
 		game.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
 								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast" }) }, { "description", "list | save | load | loadLast" } } },
 								{ "name", json{ { "type", "string" }, { "description", "save file name (required for save/load; from action='list')" } } },
 								{ "dir", json{ { "type", "string" }, { "description", "list only: override the saves directory (default resolves from sLocalSavePath)" } } },
+								{ "filter", json{ { "type", "string" }, { "description", "list only: case-insensitive substring to match against save names" } } },
+								{ "limit", json{ { "type", "integer" }, { "description", "list only: cap the number of saves returned (newest-first); must be > 0 if given" } } },
 							} },
 		};
 		a_registry.Register(std::move(game), &GameHandler);
