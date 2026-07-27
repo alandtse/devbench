@@ -350,14 +350,19 @@ namespace dvb::Recording
 			const json     scenario = BuildScenario(rec, recordedMs);
 			const fs::path path = WriteScenarioFile(scenario);
 
-			a_events.Publish("record.stopped", json{ { "sampleCount", rec.samples.size() }, { "path", path.string() } });
+			// generic_string(), not string(): a bare `dir / filename` join uses the native
+			// separator (backslash on Windows) while the `dir` literal above keeps its forward
+			// slashes verbatim, so string() mixed both in one path — fragile for callers that
+			// split on '/'. generic_string() normalizes the whole path to forward slashes.
+			const std::string pathStr = path.generic_string();
+			a_events.Publish("record.stopped", json{ { "sampleCount", rec.samples.size() }, { "path", pathStr } });
 			Notify(std::format("devbench: recording stopped — {} samples, {:.1f}s", rec.samples.size(), recordedMs / 1000.0));
-			logs::info("devbench: recording stopped — {} samples, {}ms -> {}", rec.samples.size(), recordedMs, path.string());
+			logs::info("devbench: recording stopped — {} samples, {}ms -> {}", rec.samples.size(), recordedMs, pathStr);
 			return json{
 				{ "action", "stop" },
 				{ "sampleCount", rec.samples.size() },
 				{ "recordedMs", recordedMs },
-				{ "path", path.string() },
+				{ "path", pathStr },
 				{ "meta", scenario["meta"] },
 			};
 		}
