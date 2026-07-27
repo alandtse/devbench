@@ -17,9 +17,52 @@ namespace dvb
 		}
 	}
 
+	namespace
+	{
+		// A malformed lifecycle payload must never clear an already-known-good value —
+		// skip it rather than let .value() throw or silently store an empty string.
+		std::optional<std::string> LifecycleEventName(const json& a_payload)
+		{
+			if (!a_payload.is_object())
+				return std::nullopt;
+			const auto it = a_payload.find("event");
+			if (it == a_payload.end() || !it->is_string())
+				return std::nullopt;
+			return it->get<std::string>();
+		}
+	}
+
 	RestAdapter::RestAdapter(ToolRegistry& a_registry, EventBus& a_events) :
 		m_registry(a_registry), m_events(a_events)
-	{}
+	{
+		// Track the latest lifecycle event directly rather than scanning Since(0) on every
+		// /api/health call: the bus's ring buffer caps at 256 events, so under enough traffic
+		// a real lifecycle event scrolls out and health would wrongly report null even though
+		// one had occurred. Subscribe() only delivers FUTURE events, so also seed from
+		// Since(0) once here — today's call order (Start() before InstallGameEvents) means no
+		// lifecycle event can precede this subscription, but seeding removes that as a silent
+		// invariant this constructor depends on.
+		for (const auto& ev : m_events.Since(0))
+			if (ev.topic == "lifecycle")
+				if (auto name = LifecycleEventName(ev.payload))
+					m_lastLifecycle = std::move(name);
+
+		m_lifecycleSub = m_events.Subscribe([this](const EventBus::Event& a_ev) {
+			if (a_ev.topic != "lifecycle")
+				return;
+			auto name = LifecycleEventName(a_ev.payload);
+			if (!name)
+				return;
+			std::lock_guard lock(m_lifecycleMtx);
+			m_lastLifecycle = std::move(name);
+		});
+	}
+
+	RestAdapter::~RestAdapter()
+	{
+		if (m_lifecycleSub)
+			m_events.Unsubscribe(m_lifecycleSub);
+	}
 
 	void RestAdapter::Mount(httplib::Server& a_http)
 	{
@@ -54,11 +97,12 @@ namespace dvb
 		// Deliberately GET, not POST: a bodyless POST stalls on httplib's read timeout (see
 		// Server::Start). lastLifecycle tells "listening" from "game data loaded" in one call.
 		a_http.Get("/api/health", [this](const httplib::Request&, httplib::Response& res) {
-			json lastLifecycle;
-			for (const auto& ev : m_events.Since(0))
-				if (ev.topic == "lifecycle")
-					lastLifecycle = ev.payload.value("event", std::string{});
-			WriteJson(res, 200, json{ { "ok", true }, { "lastLifecycle", lastLifecycle } });
+			std::optional<std::string> lifecycle;
+			{
+				std::lock_guard lock(m_lifecycleMtx);
+				lifecycle = m_lastLifecycle;
+			}
+			WriteJson(res, 200, json{ { "ok", true }, { "lastLifecycle", lifecycle ? json(*lifecycle) : json(nullptr) } });
 		});
 
 		// Poll recent events (the SSE stream is a later addition).

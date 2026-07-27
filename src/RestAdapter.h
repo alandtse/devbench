@@ -1,5 +1,10 @@
 #pragma once
 
+#include <cstdint>
+#include <mutex>
+#include <optional>
+#include <string>
+
 namespace httplib
 {
 	class Server;
@@ -17,16 +22,22 @@ namespace dvb
 	///
 	///   GET  /api/tools            → registry descriptors (discovery + docs)
 	///   POST /api/tool/<name>      → invoke; body is the arguments object
+	///   GET  /api/health           → {ok, lastLifecycle} liveness/readiness
 	///   GET  /api/events?since=N   → recent event ring (poll)
 	class RestAdapter
 	{
 	public:
 		RestAdapter(ToolRegistry& a_registry, EventBus& a_events);
+		// Unsubscribe from the bus before we're destroyed — mirrors McpAdapter's cutoff.
+		~RestAdapter();
 
 		void Mount(httplib::Server& a_http);
 
 	private:
-		ToolRegistry& m_registry;
-		EventBus&     m_events;
+		ToolRegistry&              m_registry;
+		EventBus&                  m_events;
+		uint64_t                   m_lifecycleSub = 0;
+		mutable std::mutex         m_lifecycleMtx;
+		std::optional<std::string> m_lastLifecycle;
 	};
 }
