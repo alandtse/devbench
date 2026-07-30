@@ -15,8 +15,8 @@ Discovery order for the base URL (first hit wins):
   2. runtime.json under known Skyrim SE / VR Data paths ({"port": <int>})
   3. probe 127.0.0.1:8920..8925
 
-Liveness is confirmed by POSTing {"kind":"state"} to /api/tool/inspect and
-checking the response is JSON carrying a `plugin` field.
+Liveness is confirmed by GET /api/health returning JSON with ok:true — answered
+off the main thread, so discovery doesn't stall behind a busy main thread.
 """
 
 from __future__ import annotations
@@ -77,29 +77,28 @@ def _read_runtime_port() -> int | None:
 
 
 def _is_live(base_url: str) -> bool:
-    """True if base_url's inspect{kind:state} returns JSON with a `plugin` field.
+    """True if base_url's GET /api/health returns JSON with ok:true.
 
-    Retried a few times: a connection *refused* fails fast (no server), but a
-    live main thread stalled mid-frame can exceed a single probe timeout.
+    Uses /api/health, not inspect{kind:state}: health is answered on the listener
+    thread with no RunAndWait, so it keeps returning while the main thread is busy
+    (the discovery probe shouldn't eat a RunAndWait timeout just to find the server).
+    Retried a few times: a connection *refused* fails fast (no server); a transient
+    timeout retries. Backward compatible with pre-#56 builds ({ok, lastLifecycle}).
     """
     for _ in range(PROBE_RETRIES + 1):
         try:
-            resp = requests.post(
-                f"{base_url}/api/tool/inspect",
-                json={"kind": "state"},
-                timeout=PROBE_TIMEOUT,
-            )
+            resp = requests.get(f"{base_url}/api/health", timeout=PROBE_TIMEOUT)
         except requests.ConnectionError:
             return False  # nothing listening — no point retrying this URL
         except requests.RequestException:
-            continue  # timeout/other — main thread may be busy, retry
+            continue  # transient — retry
         if resp.status_code != 200:
             return False
         try:
             body = resp.json()
         except ValueError:
             return False
-        return isinstance(body, dict) and "plugin" in body
+        return isinstance(body, dict) and body.get("ok") is True
     return False
 
 
