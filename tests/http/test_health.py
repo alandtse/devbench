@@ -45,3 +45,17 @@ def test_health_identity_matches_inspect(base_url, client):
     state = client.ok("inspect", {"kind": "state"})
     for key in ("pid", "port", "exe", "vr"):
         assert health.get(key) == state.get(key), (key, health.get(key), state.get(key))
+
+
+def test_inspect_health_kind_mirrors_rest(base_url, client):
+    """inspect{kind:health} is the MCP-reachable, off-thread liveness kind — it must mirror
+    GET /api/health's liveness+identity core. lastLifecycle stays REST-only (MCP gets
+    lifecycle via push), so it must NOT appear here."""
+    rest = _health(base_url)
+    kind = client.ok("inspect", {"kind": "health"})
+    for key in ("pid", "port", "exe", "vr"):
+        assert kind.get(key) == rest.get(key), (key, kind.get(key), rest.get(key))
+    for key in ("frame", "lastTaskFrame", "pendingTasks"):
+        assert isinstance(kind.get(key), int) and not isinstance(kind[key], bool), (key, kind.get(key))
+    assert kind["pendingTasks"] >= 0, kind
+    assert "lastLifecycle" not in kind, "inspect health is MCP-facing; lastLifecycle is REST-only"

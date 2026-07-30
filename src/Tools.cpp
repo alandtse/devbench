@@ -600,12 +600,28 @@ namespace dvb
 		}
 
 		// inspect: read live game state. The value-returning primitive — each read runs on the
-		// main thread and its result is returned synchronously. Built-in kinds: state | vm | scene |
-		// refs; a consumer-registered kind (C-ABI RegisterToolExtension "inspect") is dispatched too,
-		// and 'extensions' lists those.
+		// main thread and its result is returned synchronously, EXCEPT kind=health, which is
+		// answered off-thread for liveness (it must not depend on the main thread it reports on).
+		// Built-in kinds: state | health | vm | scene | refs; a consumer-registered kind (C-ABI
+		// RegisterToolExtension "inspect") is dispatched too, and 'extensions' lists those.
 		json InspectHandler(const json& a_args, const ToolContext& a_ctx)
 		{
 			const std::string kind = a_args.value("kind", std::string("state"));
+
+			// The one inspect kind answered WITHOUT RunAndWait — it's the "is the main thread
+			// even responsive" probe, so it must not itself depend on the main thread (mirrors
+			// GET /api/health). frame advancing = busy but alive; frozen = hung/paused/loading
+			// (not proof of a hang); pendingTasks > 0 with a stuck lastTaskFrame = starved
+			// queue. lastLifecycle is REST-only (MCP clients get lifecycle via notifications).
+			if (kind == "health") {
+				json out{
+					{ "frame", game::CurrentFrame() },
+					{ "lastTaskFrame", MainThread::LastCompletedFrame() },
+					{ "pendingTasks", MainThread::PendingTasks() },
+				};
+				out.update(InstanceIdentity());  // pid, port, exe, vr
+				return out;
+			}
 
 			if (kind == "state") {
 				json out = MainThread::RunAndWait([]() -> json {
@@ -1678,13 +1694,13 @@ namespace dvb
 				"'extensions' lists those registered kinds + descriptors, and kind=<registered> dispatches.";
 			inspect.description += RegisteredExtensionSummary("inspect", "kinds");
 			inspect.readOnly = true;
-			json kinds = json::array({ "state", "vm", "scene", "mods", "player", "inventory", "quests", "effects", "refs", "extensions" });
+			json kinds = json::array({ "state", "health", "vm", "scene", "mods", "player", "inventory", "quests", "effects", "refs", "extensions" });
 			for (const auto& k : ToolExtensions::Keys("inspect"))
 				kinds.push_back(k);
 			inspect.inputSchema = json{
 				{ "type", "object" },
 				{ "properties", json{
-									{ "kind", json{ { "type", "string" }, { "enum", kinds }, { "description", "state | vm | scene | mods | player | inventory | quests | effects | refs | extensions (or a registered mod kind — listed here + via kind=extensions)" } } },
+									{ "kind", json{ { "type", "string" }, { "enum", kinds }, { "description", "state | health | vm | scene | mods | player | inventory | quests | effects | refs | extensions (health answers off-thread for liveness+identity; or a registered mod kind — listed here + via kind=extensions)" } } },
 									{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form; inventory: the container ref to read (default player); effects: the actor to read (default player) (hex formId, e.g. 0x14, or EditorID)" } } },
 									{ "selected", json{ { "type", "boolean" }, { "description", "refs: identify the console-selected / crosshair ref instead" } } },
 									{ "formType", json{ { "type", "string" }, { "description", "refs/inventory: keep only entries whose type matches (e.g. Actor, Weapon, Potion)" } } },
