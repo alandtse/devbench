@@ -25,18 +25,6 @@ namespace dvb
 {
 	namespace
 	{
-		// Basename of the running exe (SkyrimSE.exe / SkyrimVR.exe), for inspect{kind:"state"} —
-		// with multiple game instances each on their own port, this plus pid/port lets a caller
-		// confirm which one it's actually talking to instead of a silent misattach (devbench#16).
-		std::string ExecutableName()
-		{
-			char        path[MAX_PATH]{};
-			const DWORD len = ::GetModuleFileNameA(nullptr, path, MAX_PATH);
-			if (len == 0 || len == MAX_PATH)
-				return {};
-			return std::filesystem::path(path).filename().string();
-		}
-
 		bool Truthy(const json& a_v)
 		{
 			if (a_v.is_boolean())
@@ -626,17 +614,14 @@ namespace dvb
 					return json{
 						{ "plugin", "devbench" },
 						{ "version", DEVBENCH_VERSION_STRING },
-						{ "vr", REL::Module::IsVR() },
 						{ "playerLoaded", loaded },
 						{ "frame", game::CurrentFrame() },
 					};
 				});
-				// pid/port/exe identify which instance answered — with multiple games
-				// running on adjacent auto-iterated ports, a caller can confirm it's
-				// talking to the intended one instead of silently misattaching.
-				out["pid"] = ::GetCurrentProcessId();
-				out["port"] = BoundPort();
-				out["exe"] = ExecutableName();
+				// pid/port/exe/vr identify which instance answered — with multiple games on
+				// adjacent auto-iterated ports, a caller can confirm it's talking to the
+				// intended one instead of silently misattaching. Shared with /api/health.
+				out.update(InstanceIdentity());
 				return out;
 			}
 

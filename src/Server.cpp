@@ -4,6 +4,7 @@
 #include "RestAdapter.h"
 #include "Version.h"
 
+#include <RE/Skyrim.h>  // REL::Module::IsVR
 #include <httplib.h>
 #include <mcp_server.h>
 
@@ -141,5 +142,25 @@ namespace dvb
 	int BoundPort()
 	{
 		return g_boundPort.load();
+	}
+
+	std::string ExecutableName()
+	{
+		char        path[MAX_PATH]{};
+		const DWORD len = ::GetModuleFileNameA(nullptr, path, MAX_PATH);
+		if (len == 0 || len == MAX_PATH)
+			return {};
+		return std::filesystem::path(path).filename().string();
+	}
+
+	json InstanceIdentity()
+	{
+		// pid/exe/vr are constant for the process lifetime — compute once. /api/health is
+		// polled frequently, so avoid a GetModuleFileNameA + path + string alloc per call;
+		// only the bound port (an atomic) is read live.
+		static const int         pid = static_cast<int>(::GetCurrentProcessId());
+		static const std::string exe = ExecutableName();
+		static const bool        vr = REL::Module::IsVR();
+		return json{ { "pid", pid }, { "port", BoundPort() }, { "exe", exe }, { "vr", vr } };
 	}
 }

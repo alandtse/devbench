@@ -4,6 +4,7 @@
 #include <string>
 
 #include "EventBus.h"
+#include "Json.h"
 #include "ToolRegistry.h"
 
 namespace mcp
@@ -52,4 +53,12 @@ namespace dvb
 	/// game instances each on their own port, a caller can tell which one it's actually
 	/// talking to instead of silently misattaching (devbench#16).
 	int BoundPort();
+
+	/// Basename of the running executable (SkyrimSE.exe / SkyrimVR.exe). Process-constant.
+	std::string ExecutableName();
+
+	/// { pid, port, exe, vr } identifying the instance that answered — computed off the main
+	/// thread (pid/exe/vr cached once, port read live) so /api/health and inspect{kind:"state"}
+	/// share one identity source and a caller can tell which game instance replied (devbench#16).
+	json InstanceIdentity();
 }
