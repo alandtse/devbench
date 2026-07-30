@@ -3,8 +3,19 @@
 #include "GameState.h"     // dvb::game::CurrentFrame
 #include "ToolRegistry.h"  // dvb::ToolError
 
+#include <atomic>
 #include <future>
 #include <memory>
+
+namespace
+{
+	// Liveness markers read off the listener thread (via MainThread::LastCompletedFrame /
+	// PendingTasks) so /api/health can tell "task queue draining" from "starved" without a
+	// RunAndWait round-trip: g_lastTaskFrame is the engine frame when the most recent queued
+	// task finished ON the main thread; g_pendingTasks is queued-but-not-yet-finished.
+	std::atomic<int> g_lastTaskFrame{ -1 };
+	std::atomic<int> g_pendingTasks{ 0 };
+}
 
 namespace dvb::MainThread
 {
@@ -19,7 +30,19 @@ namespace dvb::MainThread
 		auto promise = std::make_shared<std::promise<json>>();
 		auto future = promise->get_future();
 
+		g_pendingTasks.fetch_add(1, std::memory_order_relaxed);
 		task->AddTask([fn = std::move(a_fn), promise]() {
+			// Stamp completion + drop the pending count on the main thread whether fn()
+			// returns or throws — a routine ToolError must not leave the markers looking
+			// like a stalled queue.
+			struct Finally
+			{
+				~Finally()
+				{
+					g_lastTaskFrame.store(game::CurrentFrame(), std::memory_order_relaxed);
+					g_pendingTasks.fetch_sub(1, std::memory_order_relaxed);
+				}
+			} finally;
 			try {
 				promise->set_value(fn());
 			} catch (...) {
@@ -48,5 +71,15 @@ namespace dvb::MainThread
 		}
 
 		return future.get();  // rethrows the handler's exception on the listener thread
+	}
+
+	int LastCompletedFrame()
+	{
+		return g_lastTaskFrame.load(std::memory_order_relaxed);
+	}
+
+	int PendingTasks()
+	{
+		return g_pendingTasks.load(std::memory_order_relaxed);
 	}
 }

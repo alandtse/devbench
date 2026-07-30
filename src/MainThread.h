@@ -20,4 +20,13 @@ namespace dvb::MainThread
 	/// main thread would deadlock — the task can never run while this blocks.
 	json RunAndWait(std::function<json()> a_fn,
 		std::chrono::milliseconds         a_timeout = std::chrono::milliseconds(5000));
+
+	/// Engine frame at which the most recently queued main-thread task finished (success or
+	/// throw), or -1 if none has run yet. Lock-free; safe to call from the listener thread.
+	/// Paired with PendingTasks() it distinguishes a busy-but-draining queue from a starved
+	/// one: PendingTasks() > 0 while this stops advancing = tasks aren't completing.
+	int LastCompletedFrame();
+
+	/// Main-thread tasks queued via RunAndWait but not yet finished. Lock-free; listener-safe.
+	int PendingTasks();
 }
