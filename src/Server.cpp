@@ -113,17 +113,23 @@ namespace dvb
 			logs::warn("devbench: cpp-mcp http() returned null; REST facade unavailable");
 
 		// Publish the chosen port before start() spawns the listener, so a health/inspect
-		// hit racing startup reads the right port rather than 0. On failure we must undo it
-		// (below): Start() doesn't call Stop() on a failed start, so a stale non-zero port
-		// would otherwise advertise a live bridge for a server that never came up.
+		// hit racing startup reads the right port rather than 0.
 		g_boundPort.store(chosen);
 		const bool ok = m_mcp->start(false);  // non-blocking; spawns the listener thread
 		if (ok) {
 			WriteRuntimeInfo(chosen);
 			if (chosen != m_port)
 				logs::info("devbench: configured port {} busy → bound {}", m_port, chosen);
-		} else
+		} else {
+			// Tear down the constructed-but-not-listening members: the `if (m_mcp)` guard at
+			// the top treats a non-null m_mcp as "already started", so leaving them set would
+			// make a later Start() return true without a live listener. Reset the port too, or
+			// it would advertise a live bridge for a server that never came up.
 			g_boundPort.store(0);
+			m_restAdapter.reset();
+			m_mcpAdapter.reset();
+			m_mcp.reset();
+		}
 		logs::info("devbench: server on {}:{} — {}", m_host, chosen, ok ? "listening (mcp + rest)" : "FAILED to start");
 		return ok;
 	}
