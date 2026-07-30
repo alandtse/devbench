@@ -22,7 +22,8 @@ namespace dvb
 	///
 	///   GET  /api/tools            → registry descriptors (discovery + docs)
 	///   POST /api/tool/<name>      → invoke; body is the arguments object
-	///   GET  /api/health           → {ok, lastLifecycle} liveness/readiness
+	///   GET  /api/health           → {ok, lastLifecycle, frame, lastTaskFrame, pendingTasks,
+	///                                 pid, port, exe, vr} — off-thread liveness + identity
 	///   GET  /api/events?since=N   → recent event ring (poll)
 	class RestAdapter
 	{

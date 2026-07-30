@@ -1,7 +1,10 @@
 #include "RestAdapter.h"
 
 #include "EventBus.h"
+#include "GameState.h"  // game::CurrentFrame
 #include "Json.h"
+#include "MainThread.h"  // LastCompletedFrame / PendingTasks
+#include "Server.h"      // InstanceIdentity
 #include "ToolRegistry.h"
 
 #include <httplib.h>
@@ -95,14 +98,27 @@ namespace dvb
 		});
 
 		// Deliberately GET, not POST: a bodyless POST stalls on httplib's read timeout (see
-		// Server::Start). lastLifecycle tells "listening" from "game data loaded" in one call.
+		// Server::Start). Answered entirely on the listener thread — no RunAndWait — so it
+		// keeps returning while the main thread is legitimately busy (e.g. a long synchronous
+		// shader compile after a deploy), letting a caller tell "busy but alive" from "hung"
+		// (devbench#56) and see which instance replied (devbench#16) in one always-answering
+		// call. frame < 0 = counter unresolved / not in-game; a frozen frame can also mean
+		// paused or loading, so it is not proof of a hang on its own.
 		a_http.Get("/api/health", [this](const httplib::Request&, httplib::Response& res) {
 			std::optional<std::string> lifecycle;
 			{
 				std::lock_guard lock(m_lifecycleMtx);
 				lifecycle = m_lastLifecycle;
 			}
-			WriteJson(res, 200, json{ { "ok", true }, { "lastLifecycle", lifecycle ? json(*lifecycle) : json(nullptr) } });
+			json body{
+				{ "ok", true },
+				{ "lastLifecycle", lifecycle ? json(*lifecycle) : json(nullptr) },
+				{ "frame", game::CurrentFrame() },
+				{ "lastTaskFrame", MainThread::LastCompletedFrame() },
+				{ "pendingTasks", MainThread::PendingTasks() },
+			};
+			body.update(InstanceIdentity());  // pid, port, exe, vr
+			WriteJson(res, 200, body);
 		});
 
 		// Poll recent events (the SSE stream is a later addition).
