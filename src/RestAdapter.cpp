@@ -97,13 +97,10 @@ namespace dvb
 				WriteJson(res, r.errorCode ? r.errorCode : 500, json{ { "error", r.errorMessage }, { "code", r.errorCode } });
 		});
 
-		// Deliberately GET, not POST: a bodyless POST stalls on httplib's read timeout (see
-		// Server::Start). Answered entirely on the listener thread — no RunAndWait — so it
-		// keeps returning while the main thread is legitimately busy (e.g. a long synchronous
-		// shader compile after a deploy), letting a caller tell "busy but alive" from "hung"
-		// (devbench#56) and see which instance replied (devbench#16) in one always-answering
-		// call. frame < 0 = counter unresolved / not in-game; a frozen frame can also mean
-		// paused or loading, so it is not proof of a hang on its own.
+		// Deliberately GET, not POST (a bodyless POST stalls on httplib's read timeout; see
+		// Server::Start). Answered on the listener thread — no RunAndWait — so it keeps
+		// replying while the main thread is busy (#56) and shows which instance replied (#16).
+		// Reading the fields (busy vs hung, frame < 0, etc.): see the README.
 		a_http.Get("/api/health", [this](const httplib::Request&, httplib::Response& res) {
 			std::optional<std::string> lifecycle;
 			{

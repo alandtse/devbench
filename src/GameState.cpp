@@ -17,10 +17,9 @@ namespace dvb::game
 				return nullptr;
 			}
 		}();
-		// The engine's main loop writes this global every frame; we read it off the
-		// listener thread. Read through atomic_ref so the access is well-defined (not a
-		// torn/hoisted read) rather than a raw *counter, which is a formal data race and
-		// lets the compiler cache the value across calls.
+		// The engine main loop writes this global while we read it off the listener thread;
+		// atomic_ref makes that read well-defined (a raw *counter is a formal data race the
+		// compiler may cache/hoist).
 		return counter ? std::atomic_ref<int32_t>(*counter).load(std::memory_order_relaxed) : -1;
 	}
 }

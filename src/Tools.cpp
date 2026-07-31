@@ -608,11 +608,9 @@ namespace dvb
 		{
 			const std::string kind = a_args.value("kind", std::string("state"));
 
-			// The one inspect kind answered WITHOUT RunAndWait — it's the "is the main thread
-			// even responsive" probe, so it must not itself depend on the main thread (mirrors
-			// GET /api/health). frame advancing = busy but alive; frozen = hung/paused/loading
-			// (not proof of a hang); pendingTasks > 0 with a stuck lastTaskFrame = starved
-			// queue. lastLifecycle is REST-only (MCP clients get lifecycle via notifications).
+			// The one inspect kind answered WITHOUT RunAndWait: it probes the main thread's
+			// responsiveness, so it must not depend on it (mirrors GET /api/health).
+			// lastLifecycle is REST-only — MCP clients get lifecycle via notifications.
 			if (kind == "health") {
 				json out{
 					{ "frame", game::CurrentFrame() },
