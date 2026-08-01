@@ -274,6 +274,7 @@ namespace dvb::Recording
 			meta["sampleCount"] = a_rec.samples.size();
 			meta["commandCount"] = a_rec.commands.size();
 			meta["recordedMs"] = a_recordedMs;
+			meta["recordedAt"] = static_cast<long long>(std::time(nullptr));  // record-time epoch, for tooling
 			return json{ { "meta", std::move(meta) }, { "steps", std::move(steps) } };
 		}
 
@@ -481,18 +482,29 @@ namespace dvb::Recording
 	{
 		std::string path = a_args.value("path", std::string{});
 		if (path.empty()) {
-			// No path → replay the most recent recording (convenient for the replay hotkey
-			// and quick API calls).
-			const fs::path     dir = "Data/SKSE/Plugins/devbench/recordings";
-			std::error_code    ec;
-			fs::path           newest;
-			fs::file_time_type best{};
+			// No path → replay the most recently RECORDED recording (for the replay hotkey and
+			// quick calls). Rank by the record-time epoch in the auto-generated
+			// `recording_<epoch>.json` name, NOT the filesystem mtime: a copy / deploy / git
+			// checkout re-timestamps files, so an mtime rank lets a shipped or freshly-copied
+			// default (e.g. GuardianStonesToWhiterun.json) shadow the user's real last recording.
+			// A named file with no epoch stamp sorts oldest, so it never hijacks "last".
+			const fs::path  dir = "Data/SKSE/Plugins/devbench/recordings";
+			std::error_code ec;
+			fs::path        newest;
+			long long       bestStamp = -1;
 			for (const auto& e : fs::directory_iterator(dir, ec)) {
 				if (e.path().extension() != ".json")
 					continue;
-				const auto t = e.last_write_time(ec);
-				if (newest.empty() || t > best) {
-					best = t;
+				const std::string stem = e.path().stem().string();
+				long long         stamp = 0;
+				if (stem.starts_with("recording_")) {
+					try {
+						stamp = std::stoll(stem.substr(10));
+					} catch (...) {
+					}
+				}
+				if (newest.empty() || stamp > bestStamp) {
+					bestStamp = stamp;
 					newest = e.path();
 				}
 			}
