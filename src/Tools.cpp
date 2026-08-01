@@ -1200,8 +1200,10 @@ namespace dvb
 		// Runs on the listener thread, so it may sleep/poll directly and marshal each
 		// action to the main thread. Steps are one of: { "tool", "args" } (dispatch a
 		// registered tool — so any tool, incl. consumer-registered ones, is replayable),
-		// { "wait": ms } (fixed pacing), { "waitFor": ... } (block on a Skyrim EVENT),
-		// or { "waitUntil": cond } (poll live state). Prefer waitFor over wait: it keys
+		// { "pose": [x,y,z,yawDeg,pitchDeg], "wait": ms } (a compact trajectory sample —
+		// expands to player.setpos/setangle; recordings use it to avoid five console steps
+		// per frame), { "wait": ms } (fixed pacing), { "waitFor": ... } (block on a Skyrim
+		// EVENT), or { "waitUntil": cond } (poll live state). Prefer waitFor over wait: it keys
 		// off the real signal (e.g. a load is done when lifecycle:postLoadGame fires).
 
 		using namespace std::chrono;
@@ -1434,12 +1436,12 @@ namespace dvb
 					// Trajectory replays run tens of thousands of setpos/wait
 					// steps; sample those so they don't flood the event ring,
 					// but always mark gate steps and the first of a pass.
-					const bool routineStep = step.contains("tool") || step.contains("wait");
+					const bool routineStep = step.contains("tool") || step.contains("wait") || step.contains("pose");
 					if (!routineStep || i == 0 || (i % 100) == 0) {
 						json prog{ { "runId", runId }, { "index", static_cast<int>(i) }, { "total", static_cast<int>(steps.size()) } };
 						if (repeat > 1)
 							prog["repeat"] = rep;
-						for (const char* kind : { "tool", "wait", "waitFor", "waitUntil", "assert" })
+						for (const char* kind : { "pose", "tool", "wait", "waitFor", "waitUntil", "assert" })
 							if (step.contains(kind)) {
 								prog["kind"] = kind;
 								break;
@@ -1450,7 +1452,44 @@ namespace dvb
 					}
 
 					try {
-						if (step.contains("wait")) {
+						if (step.contains("pose")) {
+							// Compact trajectory sample [x, y, z, yawDeg, pitchDeg] — expands to the
+							// same player.setpos/setangle console commands a recording used to store as
+							// five separate steps (see Recording::BuildScenario), then honors the row's
+							// own wait. Keeps replay behavior identical while cutting ~5 command objects
+							// per sample on disk.
+							const json& p = step["pose"];
+							r["kind"] = "pose";
+							if (!p.is_array() || p.size() < 5)
+								throw ToolError(400, "pose step needs [x, y, z, yawDeg, pitchDeg]");
+							ToolContext stepCtx = a_ctx;
+							stepCtx.internal = true;
+							for (int k = 0; k < 5; ++k) {
+								const double v = p.at(k).get<double>();
+								std::string  cmd;
+								switch (k) {
+								case 0:
+									cmd = std::format("player.setpos x {:.2f}", v);
+									break;
+								case 1:
+									cmd = std::format("player.setpos y {:.2f}", v);
+									break;
+								case 2:
+									cmd = std::format("player.setpos z {:.2f}", v);
+									break;
+								case 3:
+									cmd = std::format("player.setangle z {:.2f}", v);
+									break;
+								default:
+									cmd = std::format("player.setangle x {:.2f}", v);
+									break;  // pitch
+								}
+								a_registry.Invoke("console", json{ { "action", "exec" }, { "command", cmd } }, stepCtx);
+							}
+							r["ok"] = true;
+							if (step.contains("wait"))
+								std::this_thread::sleep_for(milliseconds(step["wait"].get<long>()));
+						} else if (step.contains("wait")) {
 							const long ms = step["wait"].get<long>();
 							r["kind"] = "wait";
 							r["ms"] = ms;
