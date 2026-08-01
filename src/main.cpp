@@ -99,10 +99,13 @@ namespace
 		if (a_msg->type == SKSE::MessagingInterface::kInputLoaded && g_server)
 			dvb::InstallInputHotkeys(g_server->Tools(), g_config);
 
-		// Register the optional in-game menu at kDataLoaded (SMF is up by then). Inert if SMF is
-		// not installed; it drives devbench via dvb::RunTool, so it needs the server (g_server).
-		if (a_msg->type == SKSE::MessagingInterface::kDataLoaded && g_server)
+		// Register the optional in-game menus at kDataLoaded (the frameworks are up by then). Each
+		// is inert if its framework isn't installed; both drive devbench via dvb::RunTool, so they
+		// need the server (g_server). SMF and FUCK are independent — host either, both, or neither.
+		if (a_msg->type == SKSE::MessagingInterface::kDataLoaded && g_server) {
 			dvb::UI::Register();
+			dvb::UI::RegisterFuck();
+		}
 
 		if (g_server) {
 			// Publish lifecycle events (dataLoaded and later load/save/new-game).
