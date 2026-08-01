@@ -122,7 +122,12 @@ namespace dvb::Recording
 		// weather), plus the anchor pose and runtime. MUST run on the main thread.
 		json ReadManifest()
 		{
-			json m{ { "vr", REL::Module::IsVR() } };
+			const bool isVR = REL::Module::IsVR();
+			json       m{ { "vr", isVR } };
+			// runtime.compat: a flat setpos/setangle path replays on SE+AE, but VR drives pitch and
+			// culling from the HMD, so a VR recording is its own bucket. Replay gates on this.
+			m["runtime"] = json{ { "recordedOnVR", isVR },
+				{ "compat", isVR ? json::array({ "vr" }) : json::array({ "se", "ae" }) } };
 			if (auto* cal = RE::Calendar::GetSingleton())
 				m["gameHour"] = cal->GetHour();
 			if (auto* sky = RE::Sky::GetSingleton(); sky && sky->currentWeather) {
@@ -220,12 +225,12 @@ namespace dvb::Recording
 				return json{ { "tool", "camera" }, { "args", json{ { "action", "setPov" }, { "pov", a_pov } } } };
 			};
 
-			json                       steps = json::array();
-			std::string                lastPov;     // emit a camera step only when the POV changes
-			std::array<std::string, 5> lastMove{};  // previous setpos/setangle block
-			bool                       haveMove = false;
-			size_t                     cmdIdx = 0;    // drain console commands captured up to each sample's frame
-			long                       prevTMs = -1;  // previous sample's wall-clock offset for delta waits
+			json                  steps = json::array();
+			std::string           lastPov;     // emit a camera step only when the POV changes
+			std::array<double, 5> lastPose{};  // previous emitted pose (round-2); a repeat → bare wait
+			bool                  havePose = false;
+			size_t                cmdIdx = 0;    // drain console commands captured up to each sample's frame
+			long                  prevTMs = -1;  // previous sample's wall-clock offset for delta waits
 			for (const auto& s : a_rec.samples) {
 				// Replay console commands the user/agent ran during recording at the point in the
 				// trajectory they were issued (ordered by frame), so value-setting is reproduced.
@@ -237,25 +242,26 @@ namespace dvb::Recording
 					steps.push_back(cameraStep(pov));
 					lastPov = pov;
 				}
-				// Collapse: skip the per-axis setpos/setangle block when the rounded pose is
-				// unchanged from the last one emitted (standing still at a 10ms interval is a long
-				// run of identical samples) — just advance time with the wait.
-				const std::array<std::string, 5> move{
-					std::format("player.setpos x {:.2f}", s.value("x", 0.0)),
-					std::format("player.setpos y {:.2f}", s.value("y", 0.0)),
-					std::format("player.setpos z {:.2f}", s.value("z", 0.0)),
-					std::format("player.setangle z {:.2f}", s.value("angleZ", 0.0) * kRadToDeg),
-					std::format("player.setangle x {:.2f}", s.value("angleX", 0.0) * kRadToDeg),  // pitch
+				// One compact pose row per changed sample; a bare wait for a run of identical
+				// (standing-still) samples. Store the 2-decimal values the setpos/setangle replay
+				// uses, so the row carries no precision the replay would drop anyway.
+				const auto                  r2 = [](double v) { return std::round(v * 100.0) / 100.0; };
+				const std::array<double, 5> pose{
+					r2(s.value("x", 0.0)),
+					r2(s.value("y", 0.0)),
+					r2(s.value("z", 0.0)),
+					r2(s.value("angleZ", 0.0) * kRadToDeg),
+					r2(s.value("angleX", 0.0) * kRadToDeg),  // pitch
 				};
-				if (!haveMove || move != lastMove) {
-					for (const auto& cmd : move)
-						steps.push_back(consoleStep(cmd));
-					lastMove = move;
-					haveMove = true;
-				}
 				const long tMs = s.value("tMs", static_cast<long>(-1));
 				const long waitMs = (tMs > 0 && prevTMs >= 0) ? std::max(1L, tMs - prevTMs) : a_rec.intervalMs;
-				steps.push_back(json{ { "wait", waitMs } });
+				if (!havePose || pose != lastPose) {
+					steps.push_back(json{ { "pose", pose }, { "wait", waitMs } });
+					lastPose = pose;
+					havePose = true;
+				} else {
+					steps.push_back(json{ { "wait", waitMs } });
+				}
 				prevTMs = tMs;
 			}
 			// Trailing commands issued after the final pose sample.
@@ -263,7 +269,7 @@ namespace dvb::Recording
 				steps.push_back(consoleStep(a_rec.commands[cmdIdx].value("command", std::string{})));
 
 			json meta = a_rec.manifest;
-			meta["format"] = "devbench-recording-1";
+			meta["format"] = "devbench-recording-2";
 			meta["intervalMs"] = a_rec.intervalMs;
 			meta["sampleCount"] = a_rec.samples.size();
 			meta["commandCount"] = a_rec.commands.size();
@@ -535,6 +541,22 @@ namespace dvb::Recording
 		// `force`: proceed even if the scene doesn't match — the scene assert below becomes a
 		// reported warning instead of an abort. The consumer explicitly opted into "may not work".
 		const bool force = a_args.value("force", false);
+
+		// Runtime gate: a flat setpos/setangle recording gives non-comparable frames on VR (HMD
+		// drives pitch + culling), and a VR recording won't drive a flat game. Abort on a runtime
+		// the recording wasn't marked for; force downgrades it to a warning. Unmarked (v1) = ungated.
+		if (const json compat = meta.value("runtime", json::object()).value("compat", json::array()); !compat.empty()) {
+			const bool curVR = REL::Module::IsVR();
+			bool       ok = false;
+			for (const auto& c : compat)
+				if (const std::string t = c.get<std::string>(); curVR ? t == "vr" : (t == "se" || t == "ae")) {
+					ok = true;
+					break;
+				}
+			if (!ok && !force)
+				throw ToolError(409, std::format("recording is for runtimes {} but this game is {} — pass force to replay anyway",
+										 compat.dump(), curVR ? "vr" : "flat (se/ae)"));
+		}
 
 		const bool restoreScene = a_args.value("restoreScene", false);
 		const long settleMs = a_args.value("settleMs", static_cast<long>(g_loadSettleMs));
