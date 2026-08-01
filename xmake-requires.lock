@@ -61,6 +61,12 @@
             },
             version = "v4.25"
         },
+        ["skse-menu-framework-api 3.7.0#31fecfc4"] = {
+            repo = {
+                url = "xmake-pkgs"
+            },
+            version = "3.7.0"
+        },
         ["spdlog v1.16.0#9c36f0a9"] = {
             branch = "v1.16.0",
             repo = {
