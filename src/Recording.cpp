@@ -278,6 +278,19 @@ namespace dvb::Recording
 		}
 
 		// Data/SKSE/Plugins/devbench/recordings/recording_<epoch>.json
+		// One compact step per line (meta pretty-printed): a pose-row recording stays
+		// hand-editable and git-diffable one sample at a time, instead of dump(2) exploding
+		// every pose array across ~9 indented lines.
+		std::string SerializeRecording(const json& a_scenario)
+		{
+			std::string s = "{\n\"meta\": " + a_scenario.value("meta", json::object()).dump(2) + ",\n\"steps\": [\n";
+			const json& steps = a_scenario.value("steps", json::array());
+			for (size_t i = 0; i < steps.size(); ++i)
+				s += steps[i].dump() + (i + 1 < steps.size() ? ",\n" : "\n");
+			s += "]\n}\n";
+			return s;
+		}
+
 		fs::path WriteScenarioFile(const json& a_scenario)
 		{
 			const fs::path  dir = "Data/SKSE/Plugins/devbench/recordings";
@@ -286,7 +299,7 @@ namespace dvb::Recording
 			const auto     stamp = static_cast<long long>(std::time(nullptr));
 			const fs::path path = dir / std::format("recording_{}.json", stamp);
 			if (std::ofstream out(path, std::ios::trunc); out)
-				out << a_scenario.dump(2) << '\n';
+				out << SerializeRecording(a_scenario);
 			return path;
 		}
 	}
