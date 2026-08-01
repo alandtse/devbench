@@ -2097,5 +2097,28 @@ namespace dvb
 				}
 				return Recording::Handle(a_args, a_events);
 			});
+
+		ToolDescriptor recordings;
+		recordings.name = "recordings";
+		recordings.description =
+			"Manage the on-disk recording library — the data layer an in-game menu (SMF / FUCK / "
+			"built-in) sits on. action='list' returns every recording with its meta {file, name, "
+			"format, cell, worldspace, interior, sampleCount, recordedMs, recordedAt, runtime, "
+			"validated, entry}, newest-recorded first. 'describe' {file} returns one recording's full "
+			"meta. 'validate' {file, value?} sets meta.validated (default true) and re-saves. 'delete' "
+			"{file} removes a recording. 'file' is a bare name inside the recordings dir (path "
+			"traversal rejected). Replay one via record{action:'replay', path}.";
+		recordings.inputSchema = json{
+			{ "type", "object" },
+			{ "properties", json{
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "validate", "delete" }) }, { "description", "list | describe | validate | delete" } } },
+								{ "file", json{ { "type", "string" }, { "description", "describe/validate/delete: bare recording file name (no path)" } } },
+								{ "value", json{ { "type", "boolean" }, { "description", "validate: the validated flag to set (default true)" } } },
+							} },
+		};
+		a_registry.Register(std::move(recordings),
+			[](const json& a_args, const ToolContext&) {
+				return Recording::ManageRecordings(a_args);
+			});
 	}
 }

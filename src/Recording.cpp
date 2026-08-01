@@ -7,6 +7,7 @@
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -695,5 +696,102 @@ namespace dvb::Recording
 							  { "forced", force },
 						  } },
 		};
+	}
+
+	json ManageRecordings(const json& a_args)
+	{
+		const fs::path    dir = "Data/SKSE/Plugins/devbench/recordings";
+		const std::string action = a_args.value("action", std::string("list"));
+
+		// Resolve a caller-supplied name INSIDE the recordings dir; reject a path separator or ".."
+		// so a tool call can't read or delete outside the library.
+		const auto safePath = [&](const std::string& a_file) -> fs::path {
+			if (a_file.empty())
+				throw ToolError(400, "'file' is required");
+			const fs::path name(a_file);
+			if (name.has_parent_path() || a_file.find("..") != std::string::npos)
+				throw ToolError(400, "'file' must be a bare recording name (no path)");
+			return dir / name;
+		};
+
+		// Summarize one recording's meta for the library list; a bad/half-written file is reported,
+		// not fatal -- the list must still return.
+		const auto summarize = [](const fs::path& a_p) -> json {
+			json          out{ { "file", a_p.filename().string() } };
+			std::ifstream in(a_p);
+			json          rec;
+			try {
+				in >> rec;
+			} catch (...) {
+				out["error"] = "unreadable / invalid JSON";
+				return out;
+			}
+			const json m = rec.value("meta", json::object());
+			for (const char* k : { "name", "format", "cell", "worldspace", "interior",
+					 "sampleCount", "recordedMs", "recordedAt", "validated" })
+				if (m.contains(k))
+					out[k] = m[k];
+			out["runtime"] = m.value("runtime", json::object()).value("compat", json::array());
+			out["entry"] = m.value("entryPoint", json::object());
+			return out;
+		};
+
+		const auto load = [&](const fs::path& a_p) -> json {
+			std::ifstream in(a_p);
+			if (!in)
+				throw ToolError(404, std::format("recording not found: {}", a_p.filename().string()));
+			json rec;
+			try {
+				in >> rec;
+			} catch (const std::exception& e) {
+				throw ToolError(400, std::format("invalid recording JSON: {}", e.what()));
+			}
+			return rec;
+		};
+
+		if (action == "list") {
+			std::error_code   ec;
+			std::vector<json> items;
+			for (const auto& e : fs::directory_iterator(dir, ec))
+				if (e.path().extension() == ".json")
+					items.push_back(summarize(e.path()));
+			// newest recorded first; files without recordedAt (v1) sort last.
+			std::sort(items.begin(), items.end(), [](const json& a, const json& b) {
+				return a.value("recordedAt", 0LL) > b.value("recordedAt", 0LL);
+			});
+			json arr = json::array();
+			for (auto& it : items)
+				arr.push_back(std::move(it));
+			return json{ { "dir", dir.string() }, { "count", arr.size() }, { "recordings", std::move(arr) } };
+		}
+
+		if (action == "describe") {
+			const fs::path p = safePath(a_args.value("file", std::string{}));
+			return json{ { "file", p.filename().string() }, { "meta", load(p).value("meta", json::object()) } };
+		}
+
+		if (action == "validate") {
+			const fs::path p = safePath(a_args.value("file", std::string{}));
+			const bool     value = a_args.value("value", true);
+			json           rec = load(p);
+			rec["meta"]["validated"] = value;
+			std::ofstream out(p, std::ios::trunc);
+			if (!out)
+				throw ToolError(500, "could not write recording");
+			out << SerializeRecording(rec);
+			return json{ { "file", p.filename().string() }, { "validated", value } };
+		}
+
+		if (action == "delete") {
+			const fs::path  p = safePath(a_args.value("file", std::string{}));
+			std::error_code ec;
+			if (!fs::exists(p, ec))
+				throw ToolError(404, std::format("recording not found: {}", p.filename().string()));
+			if (!fs::remove(p, ec) || ec)
+				throw ToolError(500, std::format("could not delete {}: {}", p.filename().string(), ec.message()));
+			return json{ { "file", p.filename().string() }, { "deleted", true } };
+		}
+
+		throw ToolError(400, std::format("unknown action '{}' (list | describe | validate | delete)", action));
 	}
 }
