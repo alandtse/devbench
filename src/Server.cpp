@@ -19,6 +19,10 @@ namespace
 {
 	std::atomic<int> g_boundPort{ 0 };
 
+	// Process-wide registry pointer so dvb::RunTool can invoke tools from the in-game menu (a
+	// separate render-thread TU) without a Server reference. Set/cleared by Server::Start/Stop.
+	dvb::ToolRegistry* g_registry = nullptr;
+
 	// True if 127.0.0.1:port can be bound (i.e. it's free). WSAStartup is ref-counted,
 	// so pairing it with WSACleanup here is safe whether or not winsock is already up.
 	bool PortAvailable(const std::string& a_host, int a_port)
@@ -115,6 +119,7 @@ namespace dvb
 		// Publish the chosen port before start() spawns the listener, so a health/inspect
 		// hit racing startup reads the right port rather than 0.
 		g_boundPort.store(chosen);
+		g_registry = &m_registry;             // reachable by dvb::RunTool (the in-game menu) while up
 		const bool ok = m_mcp->start(false);  // non-blocking; spawns the listener thread
 		if (ok) {
 			WriteRuntimeInfo(chosen);
@@ -126,6 +131,7 @@ namespace dvb
 			// make a later Start() return true without a live listener. Reset the port too, or
 			// it would advertise a live bridge for a server that never came up.
 			g_boundPort.store(0);
+			g_registry = nullptr;
 			m_restAdapter.reset();
 			m_mcpAdapter.reset();
 			m_mcp.reset();
@@ -143,6 +149,7 @@ namespace dvb
 		m_restAdapter.reset();
 		m_mcpAdapter.reset();
 		g_boundPort.store(0);
+		g_registry = nullptr;
 	}
 
 	bool Server::Running() const
@@ -153,6 +160,21 @@ namespace dvb
 	int BoundPort()
 	{
 		return g_boundPort.load();
+	}
+
+	void SetProcessRegistry(ToolRegistry* a_registry)
+	{
+		g_registry = a_registry;
+	}
+
+	json RunTool(const std::string& a_name, const json& a_args)
+	{
+		if (!g_registry)
+			return json{ { "error", "devbench server not running" }, { "code", 503 } };
+		ToolContext ctx{ "ui" };
+		ctx.internal = true;  // menu-driven; don't log each call
+		const ToolResult r = g_registry->Invoke(a_name, a_args, ctx);
+		return r.ok ? r.value : json{ { "error", r.errorMessage }, { "code", r.errorCode } };
 	}
 
 	std::string ExecutableName()

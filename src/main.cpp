@@ -6,6 +6,7 @@
 #include "HostApi.h"
 #include "InputHotkeys.h"
 #include "Recording.h"
+#include "RecordingsMenu.h"
 #include "Server.h"
 #include "Tools.h"
 #include "Version.h"
@@ -97,6 +98,11 @@ namespace
 		// so registering then silently no-ops. kInputLoaded fires once the input subsystem is up.
 		if (a_msg->type == SKSE::MessagingInterface::kInputLoaded && g_server)
 			dvb::InstallInputHotkeys(g_server->Tools(), g_config);
+
+		// Register the optional in-game menu at kDataLoaded (SMF is up by then). Inert if SMF is
+		// not installed; it drives devbench via dvb::RunTool, so it needs the server (g_server).
+		if (a_msg->type == SKSE::MessagingInterface::kDataLoaded && g_server)
+			dvb::UI::Register();
 
 		if (g_server) {
 			// Publish lifecycle events (dataLoaded and later load/save/new-game).
