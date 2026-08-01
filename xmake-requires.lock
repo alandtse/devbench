@@ -27,6 +27,20 @@
             },
             version = "24.2.0"
         },
+        ["fuck-api 1.0.0#31fecfc4"] = {
+            repo = {
+                url = "xmake-pkgs"
+            },
+            version = "1.0.0"
+        },
+        ["imgui#31fecfc4"] = {
+            repo = {
+                branch = "master",
+                commit = "b0b316eb13e79e5ea7e7a56b80117a3526dedeeb",
+                url = "https://gitlab.com/tboox/xmake-repo.git"
+            },
+            version = "v1.92.0"
+        },
         ["ninja#31fecfc4"] = {
             repo = {
                 branch = "master",
@@ -60,6 +74,14 @@
                 url = "https://gitlab.com/tboox/xmake-repo.git"
             },
             version = "v4.25"
+        },
+        ["simpleini#31fecfc4"] = {
+            repo = {
+                branch = "master",
+                commit = "b0b316eb13e79e5ea7e7a56b80117a3526dedeeb",
+                url = "https://gitlab.com/tboox/xmake-repo.git"
+            },
+            version = "v4.22"
         },
         ["skse-menu-framework-api 3.7.0#31fecfc4"] = {
             repo = {

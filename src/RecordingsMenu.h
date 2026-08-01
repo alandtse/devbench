@@ -7,4 +7,9 @@ namespace dvb::UI
 {
 	// Register devbench's SMF pages. Call at kDataLoaded (SMF is up by then). No-op if SMF absent.
 	void Register();
+
+	// Register devbench's FUCK tool. Call at kDataLoaded. No-op if FUCK is not installed. Lives in
+	// its own PCH-free TU (RecordingsMenuFuck.cpp) — FUCK_API.h pulls in the real imgui.h, which
+	// cannot coexist with SMF's cimgui ImGuiMCP in RecordingsMenu.cpp.
+	void RegisterFuck();
 }
