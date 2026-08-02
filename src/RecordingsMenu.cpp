@@ -181,7 +181,10 @@ namespace dvb::UI
 			                                            ImGuiMCP::ImGuiTableFlags_RowBg |
 			                                            ImGuiMCP::ImGuiTableFlags_ScrollY |
 			                                            ImGuiMCP::ImGuiTableFlags_BordersInnerH;
-			if (!ImGuiMCP::BeginTable("recs", 8, flags, ImGuiMCP::ImVec2(0.0f, 320.0f)))
+			// Fill the rest of the page rather than a fixed 320px box (ScrollY needs a height).
+			ImGuiMCP::ImVec2 avail{ 0.0f, 0.0f };
+			ImGuiMCP::GetContentRegionAvail(&avail);
+			if (!ImGuiMCP::BeginTable("recs", 8, flags, ImGuiMCP::ImVec2(0.0f, avail.y)))
 				return;
 			ImGuiMCP::TableSetupColumn("##sel", ImGuiMCP::ImGuiTableColumnFlags_NoSort, 0.0f, 0);
 			ImGuiMCP::TableSetupColumn("Name", ImGuiMCP::ImGuiTableColumnFlags_DefaultSort, 0.0f, 1);
