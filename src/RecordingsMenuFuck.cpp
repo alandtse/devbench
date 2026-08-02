@@ -18,10 +18,13 @@
 
 #include "FUCK_API.h"  // pulls in <imgui.h> for types; drawing via FUCK:: wrappers
 
-#include "Json.h"    // dvb::json (nlohmann) — unrelated to imgui, safe in this TU
-#include "Server.h"  // dvb::RunTool
+#include "InputHotkeys.h"    // dvb::SetRecordHotkey / GetHotkeys
+#include "Json.h"            // dvb::json (nlohmann) — unrelated to imgui, safe in this TU
+#include "RecordingsView.h"  // dvb::ui row model
+#include "Server.h"          // dvb::RunTool / OpenRecordingsFolder
 
-#include <fstream>
+#include <cstdint>
+#include <set>
 #include <string>
 
 namespace logger = SKSE::log;
@@ -44,12 +47,61 @@ namespace dvb::UI
 			dvb::RunTool("record", args);
 		}
 
-		// A FUCK sidebar tool (grouped under "devbench") that browses/manages the recording library.
+		void Validate(const std::string& a_file, bool a_value)
+		{
+			dvb::RunTool("recordings", json{ { "action", "validate" }, { "file", a_file }, { "value", a_value } });
+			dvb::InvalidateRecordingsCache();
+		}
+
+		void Delete(const std::string& a_file)
+		{
+			dvb::RunTool("recordings", json{ { "action", "delete" }, { "file", a_file } });
+			dvb::InvalidateRecordingsCache();
+		}
+
+		// Apply a completed rebind. FUCK owns the capture (DrawManagedHotkey + OnAsyncInput); once it
+		// finishes (isBinding clears, kKey changed) push the new bind to the sink + config. Only Shift
+		// and keyboard binds are supported, so a Ctrl/Alt or gamepad bind is rejected with a warning.
+		void ApplyBind(FUCK::ManagedHotkey& a_h, std::uint32_t& a_last, bool a_isRecord, std::string& a_warn)
+		{
+			if (a_h.isBinding || a_h.kKey == a_last)
+				return;
+			a_last = a_h.kKey;
+			if (a_h.kKey == 0) {
+				a_warn = "keyboard only — bind ignored";
+				return;
+			}
+			if (a_h.kMod2 != -1 || (a_h.kMod1 != -1 && a_h.kMod1 != static_cast<int>(FUCK::Modifier::kShift))) {
+				a_warn = "only Shift modifier supported";
+				return;
+			}
+			a_warn.clear();
+			const bool shift = a_h.kMod1 == static_cast<int>(FUCK::Modifier::kShift);
+			if (a_isRecord)
+				dvb::SetRecordHotkey(static_cast<int>(a_h.kKey), shift);
+			else
+				dvb::SetReplayHotkey(static_cast<int>(a_h.kKey), shift);
+		}
+
+		// A FUCK sidebar tool (grouped under "devbench") that browses/manages the recording library
+		// and rebinds the record/replay hotkeys.
 		class RecordingsTool : public FUCK::ITool
 		{
 		public:
 			const char* Name() const override { return "Recordings"; }
 			const char* Group() const override { return "devbench"; }
+
+			// Feed input events to a hotkey being rebound. We NEVER call ProcessManagedHotkey, so a
+			// managed hotkey never fires an action — firing stays the raw sink (zero double-fire).
+			bool OnAsyncInput(const void* a_event) override
+			{
+				bool used = false;
+				if (m_recordHK.isBinding)
+					used |= FUCK::UpdateManagedHotkey(a_event, m_recordHK);
+				if (m_replayHK.isBinding)
+					used |= FUCK::UpdateManagedHotkey(a_event, m_replayHK);
+				return used;
+			}
 
 			void Draw() override
 			{
@@ -67,40 +119,166 @@ namespace dvb::UI
 					return;
 				}
 				const std::string dir = list.value("dir", std::string{});
-				const json        recs = list.value("recordings", json::array());
-				FUCK::Text("%d recording(s):", static_cast<int>(recs.size()));
-				FUCK::Spacing();
 
-				int idx = 0;
-				for (const auto& r : recs) {
-					const std::string file = r.value("file", std::string{});
-					const std::string name = r.value("name", file);
-					const std::string fmt = r.value("format", std::string{ "?" });
-					const bool        validated = r.value("validated", false);
-					const int         samples = r.value("sampleCount", 0);
-					const std::string id = "##rec" + std::to_string(idx++);
+				RenderActionBar();
+				RenderTable(list, dir);
+				RenderKeybinds();
+			}
 
-					FUCK::Text("%s", name.c_str());
-					FUCK::TextColored(kGrey, "  %s | %d samples", fmt.c_str(), samples);
+		private:
+			void RenderActionBar()
+			{
+				FUCK::InputText("##filter", m_filter, sizeof m_filter);
+				FUCK::BeginDisabled(m_selected.empty());
+				if (FUCK::Button("Validate selected"))
+					for (const auto& f : m_selected)
+						Validate(f, true);
+				FUCK::SameLine();
+				if (FUCK::Button("Unvalidate selected"))
+					for (const auto& f : m_selected)
+						Validate(f, false);
+				FUCK::SameLine();
+				if (FUCK::Button("Delete selected"))
+					m_confirmDelete = true;
+				FUCK::EndDisabled();
+				if (m_confirmDelete && !m_selected.empty()) {
 					FUCK::SameLine();
-					FUCK::TextColored(validated ? kGreen : kGrey, validated ? "| validated" : "| unvalidated");
-
-					const std::string path = dir + "/" + file;
-					if (FUCK::Button((std::string("Replay") + id).c_str()))
-						ReplayPath(path);
+					FUCK::TextColored(kRed, "delete %d?", static_cast<int>(m_selected.size()));
 					FUCK::SameLine();
-					if (FUCK::Button((std::string(validated ? "Unvalidate" : "Validate") + id).c_str())) {
-						dvb::RunTool("recordings", json{ { "action", "validate" }, { "file", file }, { "value", !validated } });
-						dvb::InvalidateRecordingsCache();
+					if (FUCK::Button("Yes##confdel")) {
+						for (const auto& f : m_selected)
+							Delete(f);
+						m_selected.clear();
+						m_confirmDelete = false;
 					}
 					FUCK::SameLine();
-					if (FUCK::Button((std::string("Delete") + id).c_str())) {
-						dvb::RunTool("recordings", json{ { "action", "delete" }, { "file", file } });
-						dvb::InvalidateRecordingsCache();
+					if (FUCK::Button("No##confdel"))
+						m_confirmDelete = false;
+				}
+				FUCK::SameLine();
+				if (FUCK::Button("Open folder"))
+					dvb::OpenRecordingsFolder();
+			}
+
+			// Manual sortable header — FUCK exposes no TableGetSortSpecs, so a clicked header cell
+			// toggles our own sort state that feeds ui::BuildRows.
+			void HeaderCell(int a_col, const char* a_title, ui::SortKey a_key)
+			{
+				FUCK::TableNextColumn();
+				std::string label = a_title;
+				if (m_sortKey == a_key)
+					label += m_sortAsc ? " ^" : " v";
+				if (FUCK::Selectable((label + "##h" + std::to_string(a_col)).c_str())) {
+					if (m_sortKey == a_key)
+						m_sortAsc = !m_sortAsc;
+					else {
+						m_sortKey = a_key;
+						m_sortAsc = true;
 					}
-					FUCK::Separator();
 				}
 			}
+
+			void RenderTable(const json& a_list, const std::string& a_dir)
+			{
+				const FUCK::TableFlags flags = FUCK::TableFlags::kResizable | FUCK::TableFlags::kRowBg |
+				                               FUCK::TableFlags::kBordersInnerH;
+				if (!FUCK::BeginTable("recs", 8, flags))
+					return;
+				FUCK::TableSetupColumn("##sel");
+				FUCK::TableSetupColumn("Name");
+				FUCK::TableSetupColumn("Where");
+				FUCK::TableSetupColumn("Start");
+				FUCK::TableSetupColumn("Time");
+				FUCK::TableSetupColumn("Fmt");
+				FUCK::TableSetupColumn("Val");
+				FUCK::TableSetupColumn("Actions");
+
+				FUCK::TableNextRow();
+				FUCK::TableNextColumn();  // select column: no sort
+				HeaderCell(1, "Name", ui::SortKey::Name);
+				HeaderCell(2, "Where", ui::SortKey::Where);
+				HeaderCell(3, "Start", ui::SortKey::Start);
+				HeaderCell(4, "Time", ui::SortKey::Time);
+				HeaderCell(5, "Fmt", ui::SortKey::Format);
+				HeaderCell(6, "Val", ui::SortKey::Validated);
+				FUCK::TableNextColumn();  // actions column: no sort
+
+				for (const auto& row : ui::BuildRows(a_list, m_filter, m_sortKey, m_sortAsc)) {
+					FUCK::TableNextRow();
+					FUCK::TableNextColumn();
+					bool sel = m_selected.count(row.file) > 0;
+					if (FUCK::Checkbox(("##sel" + row.file).c_str(), &sel)) {
+						if (sel)
+							m_selected.insert(row.file);
+						else
+							m_selected.erase(row.file);
+					}
+					FUCK::TableNextColumn();
+					FUCK::Text("%s", row.name.c_str());
+					FUCK::TableNextColumn();
+					FUCK::Text("%s", row.where.c_str());
+					FUCK::TableNextColumn();
+					if (row.restorable)
+						FUCK::Text("%s", row.startText.c_str());
+					else
+						FUCK::TextColored(kRed, "%s", row.startText.c_str());
+					FUCK::TableNextColumn();
+					FUCK::Text("%s", row.timeText.c_str());
+					FUCK::TableNextColumn();
+					FUCK::Text("%s", row.format.c_str());
+					FUCK::TableNextColumn();
+					FUCK::TextColored(row.validated ? kGreen : kGrey, row.validated ? "yes" : "no");
+					FUCK::TableNextColumn();
+					const std::string id = "##" + row.file;
+					if (FUCK::Button(("Replay" + id).c_str()))
+						ReplayPath(a_dir + "/" + row.file);
+					FUCK::SameLine();
+					if (FUCK::Button(((row.validated ? "Unval" : "Val") + id).c_str()))
+						Validate(row.file, !row.validated);
+					FUCK::SameLine();
+					if (FUCK::Button(("Del" + id).c_str())) {
+						Delete(row.file);
+						m_selected.erase(row.file);
+					}
+				}
+				FUCK::EndTable();
+			}
+
+			void RenderKeybinds()
+			{
+				if (!FUCK::CollapsingHeader("Keybinds"))
+					return;
+				if (!m_seeded) {
+					int  recKey = 0, repKey = 0;
+					bool recShift = false, repShift = false;
+					dvb::GetHotkeys(recKey, recShift, repKey, repShift);
+					m_recordHK.kKey = static_cast<std::uint32_t>(recKey);
+					m_recordHK.kMod1 = recShift ? static_cast<int>(FUCK::Modifier::kShift) : -1;
+					m_replayHK.kKey = static_cast<std::uint32_t>(repKey);
+					m_replayHK.kMod1 = repShift ? static_cast<int>(FUCK::Modifier::kShift) : -1;
+					m_lastRecordKey = m_recordHK.kKey;
+					m_lastReplayKey = m_replayHK.kKey;
+					m_seeded = true;
+				}
+				FUCK::DrawManagedHotkey("Record", m_recordHK);
+				ApplyBind(m_recordHK, m_lastRecordKey, true, m_recordWarn);
+				if (!m_recordWarn.empty())
+					FUCK::TextColored(kRed, "%s", m_recordWarn.c_str());
+				FUCK::DrawManagedHotkey("Replay", m_replayHK);
+				ApplyBind(m_replayHK, m_lastReplayKey, false, m_replayWarn);
+				if (!m_replayWarn.empty())
+					FUCK::TextColored(kRed, "%s", m_replayWarn.c_str());
+			}
+
+			char                  m_filter[128]{};
+			std::set<std::string> m_selected;
+			bool                  m_confirmDelete = false;
+			ui::SortKey           m_sortKey = ui::SortKey::Name;
+			bool                  m_sortAsc = true;
+			FUCK::ManagedHotkey   m_recordHK, m_replayHK;
+			std::uint32_t         m_lastRecordKey = 0, m_lastReplayKey = 0;
+			bool                  m_seeded = false;
+			std::string           m_recordWarn, m_replayWarn;
 		};
 
 		// Registered by pointer with FUCK; must outlive registration → static storage.
