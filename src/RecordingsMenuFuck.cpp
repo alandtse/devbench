@@ -59,14 +59,10 @@ namespace dvb::UI
 			dvb::InvalidateRecordingsCache();
 		}
 
-		// Apply a completed rebind. FUCK owns the capture (DrawManagedHotkey + OnAsyncInput); once it
-		// finishes (isBinding clears, kKey changed) push the new bind to the sink + config. Only Shift
+		// Apply a completed rebind (called when UpdateManagedHotkey signals a captured key). Only Shift
 		// and keyboard binds are supported, so a Ctrl/Alt or gamepad bind is rejected with a warning.
-		void ApplyBind(FUCK::ManagedHotkey& a_h, std::uint32_t& a_last, bool a_isRecord, std::string& a_warn)
+		void ApplyBind(FUCK::ManagedHotkey& a_h, bool a_isRecord, std::string& a_warn)
 		{
-			if (a_h.isBinding || a_h.kKey == a_last)
-				return;
-			a_last = a_h.kKey;
 			if (a_h.kKey == 0) {
 				a_warn = "keyboard only — bind ignored";
 				return;
@@ -81,6 +77,7 @@ namespace dvb::UI
 				dvb::SetRecordHotkey(static_cast<int>(a_h.kKey), shift);
 			else
 				dvb::SetReplayHotkey(static_cast<int>(a_h.kKey), shift);
+			logger::info("devbench: rebound {} hotkey to key {} (shift={})", a_isRecord ? "record" : "replay", a_h.kKey, shift);
 		}
 
 		// A FUCK sidebar tool (grouped under "devbench") that browses/manages the recording library
@@ -91,16 +88,29 @@ namespace dvb::UI
 			const char* Name() const override { return "Recordings"; }
 			const char* Group() const override { return "devbench"; }
 
-			// Feed input events to a hotkey being rebound. We NEVER call ProcessManagedHotkey, so a
-			// managed hotkey never fires an action — firing stays the raw sink (zero double-fire).
+			// Feed every input event to the managed hotkeys (unconditional, mirroring FUCK's own
+			// SettingsTool): UpdateManagedHotkey captures only while one is binding and returns true when
+			// a bind completes — then apply it. We NEVER call ProcessManagedHotkey, so nothing fires here
+			// (firing stays the raw sink; zero double-fire).
 			bool OnAsyncInput(const void* a_event) override
 			{
-				bool used = false;
-				if (m_recordHK.isBinding)
-					used |= FUCK::UpdateManagedHotkey(a_event, m_recordHK);
-				if (m_replayHK.isBinding)
-					used |= FUCK::UpdateManagedHotkey(a_event, m_replayHK);
-				return used;
+				bool consumed = false;
+				if (FUCK::UpdateManagedHotkey(a_event, m_recordHK)) {
+					ApplyBind(m_recordHK, true, m_recordWarn);
+					consumed = true;
+				}
+				if (FUCK::UpdateManagedHotkey(a_event, m_replayHK)) {
+					ApplyBind(m_replayHK, false, m_replayWarn);
+					consumed = true;
+				}
+				return consumed;
+			}
+
+			// Abort any in-progress rebind when the menu closes, so a hotkey isn't left stuck binding.
+			void OnClose() override
+			{
+				FUCK::AbortManagedHotkey(m_recordHK);
+				FUCK::AbortManagedHotkey(m_replayHK);
 			}
 
 			void Draw() override
@@ -207,7 +217,8 @@ namespace dvb::UI
 					FUCK::TableNextRow();
 					FUCK::TableNextColumn();
 					bool sel = m_selected.count(row.file) > 0;
-					if (FUCK::Checkbox(("##sel" + row.file).c_str(), &sel)) {
+					// alignFar/labelLeft = false: draw the box at the cell's left, not pushed off-column.
+					if (FUCK::Checkbox(("##sel" + row.file).c_str(), &sel, false, false)) {
 						if (sel)
 							m_selected.insert(row.file);
 						else
@@ -256,16 +267,13 @@ namespace dvb::UI
 					m_recordHK.kMod1 = recShift ? static_cast<int>(FUCK::Modifier::kShift) : -1;
 					m_replayHK.kKey = static_cast<std::uint32_t>(repKey);
 					m_replayHK.kMod1 = repShift ? static_cast<int>(FUCK::Modifier::kShift) : -1;
-					m_lastRecordKey = m_recordHK.kKey;
-					m_lastReplayKey = m_replayHK.kKey;
 					m_seeded = true;
 				}
+				// Click a widget to rebind; capture + apply happen in OnAsyncInput.
 				FUCK::DrawManagedHotkey("Record", m_recordHK);
-				ApplyBind(m_recordHK, m_lastRecordKey, true, m_recordWarn);
 				if (!m_recordWarn.empty())
 					FUCK::TextColored(kRed, "%s", m_recordWarn.c_str());
 				FUCK::DrawManagedHotkey("Replay", m_replayHK);
-				ApplyBind(m_replayHK, m_lastReplayKey, false, m_replayWarn);
 				if (!m_replayWarn.empty())
 					FUCK::TextColored(kRed, "%s", m_replayWarn.c_str());
 			}
@@ -276,7 +284,6 @@ namespace dvb::UI
 			ui::SortKey           m_sortKey = ui::SortKey::Name;
 			bool                  m_sortAsc = true;
 			FUCK::ManagedHotkey   m_recordHK, m_replayHK;
-			std::uint32_t         m_lastRecordKey = 0, m_lastReplayKey = 0;
 			bool                  m_seeded = false;
 			std::string           m_recordWarn, m_replayWarn;
 		};
