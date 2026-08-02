@@ -183,12 +183,14 @@ namespace dvb::Recording
 						break;
 					json pose;
 					try {
-						pose = MainThread::RunAndWait(&ReadPose, milliseconds(2000));
+						// Pass &running so a stop() aborts the in-flight wait within one slice
+						// instead of blocking join() for the full 2s during a load screen.
+						pose = MainThread::RunAndWait(&ReadPose, milliseconds(2000), &running);
 					} catch (const std::exception&) {
 						continue;  // main thread stalled mid-load — skip this tick
 					}
 					if (pose.is_null())
-						continue;  // player not loaded
+						continue;  // player not loaded (or the wait was aborted by stop)
 					if (g_replaying.load(std::memory_order_relaxed))
 						continue;  // devbench is teleporting; the replay's setpos commands (captured
 								   // via the console hook) are the trajectory — don't re-sample it
@@ -339,9 +341,10 @@ namespace dvb::Recording
 		}
 
 		if (action == "stop") {
-			if (!rec.running.load())
+			// exchange, not load-then-store: two concurrent stops must not both reach join()
+			// (the second join on an already-joined thread throws std::system_error).
+			if (!rec.running.exchange(false))
 				return json{ { "error", "not recording" } };
-			rec.running.store(false);
 			if (rec.worker.joinable())
 				rec.worker.join();  // sampler done → samples are stable, no lock needed below
 
