@@ -1453,18 +1453,16 @@ namespace dvb
 
 					try {
 						if (step.contains("pose")) {
-							// Compact trajectory sample [x, y, z, yawDeg, pitchDeg] — expands to the
-							// same player.setpos/setangle console commands a recording used to store as
-							// five separate steps (see Recording::BuildScenario), then honors the row's
-							// own wait. Keeps replay behavior identical while cutting ~5 command objects
-							// per sample on disk.
+							// Compact trajectory sample [x, y, z, yawDeg, pitchDeg] → the same
+							// player.setpos/setangle commands v1 stored as five steps (Recording::BuildScenario).
 							const json& p = step["pose"];
 							r["kind"] = "pose";
 							if (!p.is_array() || p.size() < 5)
 								throw ToolError(400, "pose step needs [x, y, z, yawDeg, pitchDeg]");
 							ToolContext stepCtx = a_ctx;
 							stepCtx.internal = true;
-							for (int k = 0; k < 5; ++k) {
+							bool poseOk = true;
+							for (int k = 0; k < 5 && poseOk; ++k) {
 								const double v = p.at(k).get<double>();
 								std::string  cmd;
 								switch (k) {
@@ -1484,11 +1482,21 @@ namespace dvb
 									cmd = std::format("player.setangle x {:.2f}", v);
 									break;  // pitch
 								}
-								a_registry.Invoke("console", json{ { "action", "exec" }, { "command", cmd } }, stepCtx);
+								// A failed setpos/setangle must fail the step, not replay a broken
+								// trajectory as ok (Invoke reports failure via ToolResult, never throws).
+								if (const ToolResult tr = a_registry.Invoke("console", json{ { "action", "exec" }, { "command", cmd } }, stepCtx); !tr.ok) {
+									r["ok"] = false;
+									r["errorCode"] = tr.errorCode;
+									r["error"] = std::format("pose cmd '{}' failed: {}", cmd, tr.errorMessage);
+									stepFailed = true;
+									poseOk = false;
+								}
 							}
-							r["ok"] = true;
-							if (step.contains("wait"))
-								std::this_thread::sleep_for(milliseconds(step["wait"].get<long>()));
+							if (poseOk) {
+								r["ok"] = true;
+								if (step.contains("wait"))
+									std::this_thread::sleep_for(milliseconds(step["wait"].get<long>()));
+							}
 						} else if (step.contains("wait")) {
 							const long ms = step["wait"].get<long>();
 							r["kind"] = "wait";

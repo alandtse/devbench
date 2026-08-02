@@ -285,7 +285,13 @@ namespace dvb::Recording
 		// every pose array across ~9 indented lines.
 		std::string SerializeRecording(const json& a_scenario)
 		{
-			std::string s = "{\n\"meta\": " + a_scenario.value("meta", json::object()).dump(2) + ",\n\"steps\": [\n";
+			std::string s = "{\n\"meta\": " + a_scenario.value("meta", json::object()).dump(2);
+			// Preserve any other top-level keys a consumer added (only meta/steps get special
+			// formatting) so a validate round-trip stays lossless.
+			for (auto it = a_scenario.begin(); it != a_scenario.end(); ++it)
+				if (it.key() != "meta" && it.key() != "steps")
+					s += ",\n" + json(it.key()).dump() + ": " + it->dump(2);
+			s += ",\n\"steps\": [\n";
 			const json& steps = a_scenario.value("steps", json::array());
 			for (size_t i = 0; i < steps.size(); ++i)
 				s += steps[i].dump() + (i + 1 < steps.size() ? ",\n" : "\n");
@@ -483,12 +489,10 @@ namespace dvb::Recording
 	{
 		std::string path = a_args.value("path", std::string{});
 		if (path.empty()) {
-			// No path → replay the most recently RECORDED recording (for the replay hotkey and
-			// quick calls). Rank by the record-time epoch in the auto-generated
-			// `recording_<epoch>.json` name, NOT the filesystem mtime: a copy / deploy / git
-			// checkout re-timestamps files, so an mtime rank lets a shipped or freshly-copied
-			// default (e.g. GuardianStonesToWhiterun.json) shadow the user's real last recording.
-			// A named file with no epoch stamp sorts oldest, so it never hijacks "last".
+			// No path → most recently RECORDED (replay hotkey / quick calls). Rank by the epoch in
+			// the auto-generated recording_<epoch>.json name, not mtime — a copy/deploy/checkout
+			// re-timestamps files, letting a shipped default shadow the user's real last. Unstamped
+			// named files rank oldest (stamp 0); "last" is well-defined only when a stamp exists.
 			const fs::path  dir = "Data/SKSE/Plugins/devbench/recordings";
 			std::error_code ec;
 			fs::path        newest;
