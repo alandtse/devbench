@@ -12,16 +12,26 @@
 #include <ws2tcpip.h>
 
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 
 namespace
 {
 	std::atomic<int> g_boundPort{ 0 };
 
 	// Process-wide registry pointer so dvb::RunTool can invoke tools from the in-game menu (a
-	// separate render-thread TU) without a Server reference. Set/cleared by Server::Start/Stop.
-	dvb::ToolRegistry* g_registry = nullptr;
+	// separate render-thread TU) without a Server reference. Atomic: written on the SKSE thread
+	// (Start/Stop), read on the render thread (RunTool). Set/cleared by Server::Start/Stop.
+	std::atomic<dvb::ToolRegistry*> g_registry{ nullptr };
+
+	// Throttle for ListRecordingsCached: a menu redraws every frame, and listing fully parses every
+	// recording file, so cache the result and refresh at most ~once/second (or on invalidation).
+	std::mutex                            g_recCacheMtx;
+	dvb::json                             g_recCache;
+	std::chrono::steady_clock::time_point g_recCacheAt{};
+	bool                                  g_recCacheValid = false;
 
 	// True if 127.0.0.1:port can be bound (i.e. it's free). WSAStartup is ref-counted,
 	// so pairing it with WSACleanup here is safe whether or not winsock is already up.
@@ -119,7 +129,7 @@ namespace dvb
 		// Publish the chosen port before start() spawns the listener, so a health/inspect
 		// hit racing startup reads the right port rather than 0.
 		g_boundPort.store(chosen);
-		g_registry = &m_registry;             // reachable by dvb::RunTool (the in-game menu) while up
+		g_registry.store(&m_registry);        // reachable by dvb::RunTool (the in-game menu) while up
 		const bool ok = m_mcp->start(false);  // non-blocking; spawns the listener thread
 		if (ok) {
 			WriteRuntimeInfo(chosen);
@@ -131,7 +141,7 @@ namespace dvb
 			// make a later Start() return true without a live listener. Reset the port too, or
 			// it would advertise a live bridge for a server that never came up.
 			g_boundPort.store(0);
-			g_registry = nullptr;
+			g_registry.store(nullptr);
 			m_restAdapter.reset();
 			m_mcpAdapter.reset();
 			m_mcp.reset();
@@ -149,7 +159,7 @@ namespace dvb
 		m_restAdapter.reset();
 		m_mcpAdapter.reset();
 		g_boundPort.store(0);
-		g_registry = nullptr;
+		g_registry.store(nullptr);
 	}
 
 	bool Server::Running() const
@@ -164,17 +174,37 @@ namespace dvb
 
 	void SetProcessRegistry(ToolRegistry* a_registry)
 	{
-		g_registry = a_registry;
+		g_registry.store(a_registry);
 	}
 
 	json RunTool(const std::string& a_name, const json& a_args)
 	{
-		if (!g_registry)
+		// Load once: a concurrent Stop() must not null the pointer between the check and the call.
+		ToolRegistry* registry = g_registry.load();
+		if (!registry)
 			return json{ { "error", "devbench server not running" }, { "code", 503 } };
 		ToolContext ctx{ "ui" };
 		ctx.internal = true;  // menu-driven; don't log each call
-		const ToolResult r = g_registry->Invoke(a_name, a_args, ctx);
+		const ToolResult r = registry->Invoke(a_name, a_args, ctx);
 		return r.ok ? r.value : json{ { "error", r.errorMessage }, { "code", r.errorCode } };
+	}
+
+	json ListRecordingsCached()
+	{
+		using namespace std::chrono;
+		std::lock_guard lock(g_recCacheMtx);
+		if (const auto now = steady_clock::now(); !g_recCacheValid || now - g_recCacheAt > seconds(1)) {
+			g_recCache = RunTool("recordings", json{ { "action", "list" } });
+			g_recCacheAt = now;
+			g_recCacheValid = true;
+		}
+		return g_recCache;
+	}
+
+	void InvalidateRecordingsCache()
+	{
+		std::lock_guard lock(g_recCacheMtx);
+		g_recCacheValid = false;  // next ListRecordingsCached() re-parses
 	}
 
 	std::string ExecutableName()

@@ -1,7 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-Modding-Exception
--- SMF3 client SDK header (single file, LGPL-2.1). Runtime GetProcAddress
--- linkage; namespace is ImGuiMCP in this fork. Must NOT share a TU with the
--- real imgui.h (see the devbench-UI target).
+-- (this package script). The vendored SMF3 client SDK header is LGPL-2.1
+-- upstream (see set_license). Single file, runtime GetProcAddress linkage;
+-- namespace is ImGuiMCP in this fork. Must NOT share a TU with the real
+-- imgui.h (see the devbench-UI target).
 package("skse-menu-framework-api")
 set_kind("library", { headeronly = true })
 set_homepage("https://github.com/alandtse/SKSE-Menu-Framework-3")

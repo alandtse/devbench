@@ -71,4 +71,10 @@ namespace dvb
 	/// the render thread (recordings; record replay is async by default) — a RunAndWait-backed tool
 	/// would stall the caller.
 	json RunTool(const std::string& a_name, const json& a_args);
+
+	/// The `recordings` list, cached and refreshed at most ~once/second. A menu redraws every frame,
+	/// and the underlying list fully parses every recording file — calling it per frame would stall
+	/// the render thread. Call InvalidateRecordingsCache() after a validate/delete to force a refresh.
+	json ListRecordingsCached();
+	void InvalidateRecordingsCache();
 }

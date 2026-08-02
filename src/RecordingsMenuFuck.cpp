@@ -61,7 +61,7 @@ namespace dvb::UI
 					ReplayPath("");
 				FUCK::Separator();
 
-				const json list = dvb::RunTool("recordings", json{ { "action", "list" } });
+				const json list = dvb::ListRecordingsCached();
 				if (list.contains("error")) {
 					FUCK::TextColored(kRed, "recordings unavailable: %s", list.value("error", std::string{}).c_str());
 					return;
@@ -89,11 +89,15 @@ namespace dvb::UI
 					if (FUCK::Button((std::string("Replay") + id).c_str()))
 						ReplayPath(path);
 					FUCK::SameLine();
-					if (FUCK::Button((std::string(validated ? "Unvalidate" : "Validate") + id).c_str()))
+					if (FUCK::Button((std::string(validated ? "Unvalidate" : "Validate") + id).c_str())) {
 						dvb::RunTool("recordings", json{ { "action", "validate" }, { "file", file }, { "value", !validated } });
+						dvb::InvalidateRecordingsCache();
+					}
 					FUCK::SameLine();
-					if (FUCK::Button((std::string("Delete") + id).c_str()))
+					if (FUCK::Button((std::string("Delete") + id).c_str())) {
 						dvb::RunTool("recordings", json{ { "action", "delete" }, { "file", file } });
+						dvb::InvalidateRecordingsCache();
+					}
 					FUCK::Separator();
 				}
 			}
