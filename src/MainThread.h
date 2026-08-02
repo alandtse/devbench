@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <functional>
 
@@ -18,8 +19,13 @@ namespace dvb::MainThread
 	///
 	/// MUST be called from a non-main thread (the server listener). Calling it on the
 	/// main thread would deadlock — the task can never run while this blocks.
+	///
+	/// a_keepWaiting: optional liveness flag. If it clears mid-wait, RunAndWait returns
+	/// json(nullptr) at once (the caller stopped waiting, e.g. the recorder shutting down)
+	/// instead of blocking the full timeout; the queued task is abandoned safely.
 	json RunAndWait(std::function<json()> a_fn,
-		std::chrono::milliseconds         a_timeout = std::chrono::milliseconds(5000));
+		std::chrono::milliseconds         a_timeout = std::chrono::milliseconds(5000),
+		const std::atomic<bool>*          a_keepWaiting = nullptr);
 
 	/// Engine frame at which the most recently queued main-thread task finished (success or
 	/// throw), or -1 if none has run yet. Lock-free; safe to call from the listener thread.
