@@ -1,10 +1,7 @@
-// devbench's optional in-game menu, hosted by FUCK (a keybind + ImGui menu framework).
-//
-// This TU is PCH-FREE and must stay that way: FUCK_API.h pulls in the real imgui.h, which cannot
-// coexist with SMF's cimgui ImGuiMCP in RecordingsMenu.cpp — hence a separate PCH-free target
-// (devbench-UI-fuck). Drawing routes through the FUCK:: wrappers (the HOST's ImGui, via the
-// interface fetched from the FUCK.dll "RequestFUCK" export), so the module is inert when FUCK is
-// not installed (FUCK::Connect returns false and nothing is registered).
+// devbench's optional in-game menu, hosted by FUCK. PCH-FREE and must stay so: FUCK_API.h pulls in
+// the real imgui.h, which can't coexist with SMF's cimgui ImGuiMCP — hence a separate PCH-free
+// target (devbench-UI-fuck). Drawing routes through FUCK:: wrappers; inert when FUCK is absent
+// (FUCK::Connect returns false).
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX

@@ -1,10 +1,7 @@
-// devbench's optional in-game menu, hosted by SKSE Menu Framework 3.
-//
-// This TU is PCH-FREE and must stay that way: the SMF client header exposes cimgui-style typedefs
-// (ImGuiMCP) that cannot coexist with the real imgui.h the main PCH pulls in. All drawing goes
-// through ImGuiMCP (the HOST's ImGui context, resolved via GetProcAddress) — never a local imgui.
-// Because SMF resolves every call at runtime, the whole module is inert when the framework DLL is
-// absent (SKSEMenuFramework::IsInstalled() gates registration).
+// devbench's optional in-game menu, hosted by SKSE Menu Framework 3. PCH-FREE and must stay so: the
+// SMF header's cimgui ImGuiMCP typedefs can't coexist with the real imgui.h in the main PCH. All
+// drawing goes through ImGuiMCP (host context via GetProcAddress); inert when SMF is absent
+// (SKSEMenuFramework::IsInstalled() gates registration).
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
