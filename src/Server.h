@@ -77,4 +77,9 @@ namespace dvb
 	/// the render thread. Call InvalidateRecordingsCache() after a validate/delete to force a refresh.
 	json ListRecordingsCached();
 	void InvalidateRecordingsCache();
+
+	/// Open the recordings directory in Explorer (menu "Open folder"); OpenRecordingFile selects one
+	/// file. No-op if the directory is unknown. Not an ImGui call, so it lives in the main TU.
+	void OpenRecordingsFolder();
+	void OpenRecordingFile(const std::string& a_file);
 }

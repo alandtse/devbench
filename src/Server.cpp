@@ -11,6 +11,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+#include <shellapi.h>
+
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -205,6 +207,27 @@ namespace dvb
 	{
 		std::lock_guard lock(g_recCacheMtx);
 		g_recCacheValid = false;  // next ListRecordingsCached() re-parses
+	}
+
+	void OpenRecordingsFolder()
+	{
+		const std::string dir = ListRecordingsCached().value("dir", std::string{});
+		if (dir.empty())
+			return;
+		std::error_code             ec;
+		const std::filesystem::path abs = std::filesystem::absolute(dir, ec);
+		::ShellExecuteW(nullptr, L"open", abs.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+	}
+
+	void OpenRecordingFile(const std::string& a_file)
+	{
+		const std::string dir = ListRecordingsCached().value("dir", std::string{});
+		if (dir.empty() || a_file.empty())
+			return;
+		std::error_code             ec;
+		const std::filesystem::path abs = std::filesystem::absolute(std::filesystem::path(dir) / a_file, ec);
+		const std::wstring          args = L"/select,\"" + abs.wstring() + L"\"";
+		::ShellExecuteW(nullptr, nullptr, L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
 	}
 
 	std::string ExecutableName()

@@ -45,6 +45,36 @@ namespace dvb
 		}
 	}
 
+	void SaveHotkeys(int a_recordKey, bool a_recordShift, int a_replayKey, bool a_replayShift)
+	{
+		const std::filesystem::path path = "Data/SKSE/Plugins/devbench/config.json";
+		json                        j = json::object();
+		if (std::ifstream in(path); in) {
+			try {
+				j = json::parse(in, nullptr, /*allow_exceptions=*/true, /*ignore_comments=*/true);
+			} catch (...) {
+				j = json::object();  // corrupt file → still write a valid one with the new binds
+			}
+		}
+		j["recordHotkey"] = a_recordKey;
+		j["recordHotkeyShift"] = a_recordShift;
+		j["replayHotkey"] = a_replayKey;
+		j["replayHotkeyShift"] = a_replayShift;
+
+		std::error_code ec;
+		std::filesystem::create_directories(path.parent_path(), ec);
+		const std::filesystem::path tmp = path.string() + ".tmp";
+		if (std::ofstream out(tmp, std::ios::trunc); out)
+			out << j.dump(2) << '\n';
+		else {
+			logs::warn("devbench: could not write hotkeys to {}", tmp.string());
+			return;
+		}
+		std::filesystem::rename(tmp, path, ec);  // atomic replace; no torn read
+		if (ec)
+			logs::warn("devbench: could not replace config.json ({})", ec.message());
+	}
+
 	Config LoadConfig()
 	{
 		Config cfg;
