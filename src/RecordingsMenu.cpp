@@ -68,16 +68,18 @@ namespace dvb::UI
 			dvb::RunTool("record", args);
 		}
 
-		void Validate(const std::string& a_file, bool a_value)
+		void Validate(const std::string& a_file, bool a_value, bool a_invalidate = true)
 		{
 			dvb::RunTool("recordings", json{ { "action", "validate" }, { "file", a_file }, { "value", a_value } });
-			dvb::InvalidateRecordingsCache();
+			if (a_invalidate)
+				dvb::InvalidateRecordingsCache();
 		}
 
-		void Delete(const std::string& a_file)
+		void Delete(const std::string& a_file, bool a_invalidate = true)
 		{
 			dvb::RunTool("recordings", json{ { "action", "delete" }, { "file", a_file } });
-			dvb::InvalidateRecordingsCache();
+			if (a_invalidate)
+				dvb::InvalidateRecordingsCache();
 		}
 
 		// Pre-table per-recording block layout, kept as the fallback when the host lacks the table
@@ -114,13 +116,17 @@ namespace dvb::UI
 		void RenderActionBar(const json& a_list)
 		{
 			ImGuiMCP::BeginDisabled(s_selected.empty());
-			if (ImGuiMCP::Button("Validate selected"))
+			if (ImGuiMCP::Button("Validate selected")) {
 				for (const auto& f : s_selected)
-					Validate(f, true);
+					Validate(f, true, false);
+				dvb::InvalidateRecordingsCache();
+			}
 			ImGuiMCP::SameLine();
-			if (ImGuiMCP::Button("Unvalidate selected"))
+			if (ImGuiMCP::Button("Unvalidate selected")) {
 				for (const auto& f : s_selected)
-					Validate(f, false);
+					Validate(f, false, false);
+				dvb::InvalidateRecordingsCache();
+			}
 			ImGuiMCP::SameLine();
 			if (ImGuiMCP::Button("Delete selected"))
 				s_confirmDelete = true;
@@ -131,7 +137,8 @@ namespace dvb::UI
 				ImGuiMCP::SameLine();
 				if (ImGuiMCP::Button("Yes##confdel")) {
 					for (const auto& f : s_selected)
-						Delete(f);
+						Delete(f, false);
+					dvb::InvalidateRecordingsCache();
 					s_selected.clear();
 					s_confirmDelete = false;
 				}

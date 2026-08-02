@@ -44,16 +44,18 @@ namespace dvb::UI
 			dvb::RunTool("record", args);
 		}
 
-		void Validate(const std::string& a_file, bool a_value)
+		void Validate(const std::string& a_file, bool a_value, bool a_invalidate = true)
 		{
 			dvb::RunTool("recordings", json{ { "action", "validate" }, { "file", a_file }, { "value", a_value } });
-			dvb::InvalidateRecordingsCache();
+			if (a_invalidate)
+				dvb::InvalidateRecordingsCache();
 		}
 
-		void Delete(const std::string& a_file)
+		void Delete(const std::string& a_file, bool a_invalidate = true)
 		{
 			dvb::RunTool("recordings", json{ { "action", "delete" }, { "file", a_file } });
-			dvb::InvalidateRecordingsCache();
+			if (a_invalidate)
+				dvb::InvalidateRecordingsCache();
 		}
 
 		// FUCK stores a bind's modifier in kMod1 as a raw keyboard DXScanCode (its KB_MODS), NOT the
@@ -142,13 +144,17 @@ namespace dvb::UI
 			{
 				FUCK::InputText("##filter", m_filter, sizeof m_filter);
 				FUCK::BeginDisabled(m_selected.empty());
-				if (FUCK::Button("Validate selected"))
+				if (FUCK::Button("Validate selected")) {
 					for (const auto& f : m_selected)
-						Validate(f, true);
+						Validate(f, true, false);
+					dvb::InvalidateRecordingsCache();
+				}
 				FUCK::SameLine();
-				if (FUCK::Button("Unvalidate selected"))
+				if (FUCK::Button("Unvalidate selected")) {
 					for (const auto& f : m_selected)
-						Validate(f, false);
+						Validate(f, false, false);
+					dvb::InvalidateRecordingsCache();
+				}
 				FUCK::SameLine();
 				if (FUCK::Button("Delete selected"))
 					m_confirmDelete = true;
@@ -159,7 +165,8 @@ namespace dvb::UI
 					FUCK::SameLine();
 					if (FUCK::Button("Yes##confdel")) {
 						for (const auto& f : m_selected)
-							Delete(f);
+							Delete(f, false);
+						dvb::InvalidateRecordingsCache();
 						m_selected.clear();
 						m_confirmDelete = false;
 					}
