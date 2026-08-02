@@ -59,6 +59,11 @@ namespace dvb::UI
 			dvb::InvalidateRecordingsCache();
 		}
 
+		// FUCK stores a bind's modifier in kMod1 as a raw keyboard DXScanCode (its KB_MODS), NOT the
+		// Modifier enum. devbench's sink only honors Shift, so recognize left/right Shift by scancode.
+		constexpr int kLeftShiftDX = 0x2A, kRightShiftDX = 0x36;
+		bool          IsShiftMod(std::int32_t a_mod) { return a_mod == kLeftShiftDX || a_mod == kRightShiftDX; }
+
 		// Apply a completed rebind (called when UpdateManagedHotkey signals a captured key). Only Shift
 		// and keyboard binds are supported, so a Ctrl/Alt or gamepad bind is rejected with a warning.
 		void ApplyBind(FUCK::ManagedHotkey& a_h, bool a_isRecord, std::string& a_warn)
@@ -67,12 +72,12 @@ namespace dvb::UI
 				a_warn = "keyboard only — bind ignored";
 				return;
 			}
-			if (a_h.kMod2 != -1 || (a_h.kMod1 != -1 && a_h.kMod1 != static_cast<int>(FUCK::Modifier::kShift))) {
+			if (a_h.kMod2 != -1 || (a_h.kMod1 != -1 && !IsShiftMod(a_h.kMod1))) {
 				a_warn = "only Shift modifier supported";
 				return;
 			}
 			a_warn.clear();
-			const bool shift = a_h.kMod1 == static_cast<int>(FUCK::Modifier::kShift);
+			const bool shift = IsShiftMod(a_h.kMod1);
 			if (a_isRecord)
 				dvb::SetRecordHotkey(static_cast<int>(a_h.kKey), shift);
 			else
@@ -264,9 +269,9 @@ namespace dvb::UI
 					bool recShift = false, repShift = false;
 					dvb::GetHotkeys(recKey, recShift, repKey, repShift);
 					m_recordHK.kKey = static_cast<std::uint32_t>(recKey);
-					m_recordHK.kMod1 = recShift ? static_cast<int>(FUCK::Modifier::kShift) : -1;
+					m_recordHK.kMod1 = recShift ? kLeftShiftDX : -1;
 					m_replayHK.kKey = static_cast<std::uint32_t>(repKey);
-					m_replayHK.kMod1 = repShift ? static_cast<int>(FUCK::Modifier::kShift) : -1;
+					m_replayHK.kMod1 = repShift ? kLeftShiftDX : -1;
 					m_seeded = true;
 				}
 				// Click a widget to rebind; capture + apply happen in OnAsyncInput.
