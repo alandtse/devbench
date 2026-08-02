@@ -1200,8 +1200,10 @@ namespace dvb
 		// Runs on the listener thread, so it may sleep/poll directly and marshal each
 		// action to the main thread. Steps are one of: { "tool", "args" } (dispatch a
 		// registered tool — so any tool, incl. consumer-registered ones, is replayable),
-		// { "wait": ms } (fixed pacing), { "waitFor": ... } (block on a Skyrim EVENT),
-		// or { "waitUntil": cond } (poll live state). Prefer waitFor over wait: it keys
+		// { "pose": [x,y,z,yawDeg,pitchDeg], "wait": ms } (a compact trajectory sample —
+		// expands to player.setpos/setangle; recordings use it to avoid five console steps
+		// per frame), { "wait": ms } (fixed pacing), { "waitFor": ... } (block on a Skyrim
+		// EVENT), or { "waitUntil": cond } (poll live state). Prefer waitFor over wait: it keys
 		// off the real signal (e.g. a load is done when lifecycle:postLoadGame fires).
 
 		using namespace std::chrono;
@@ -1434,12 +1436,12 @@ namespace dvb
 					// Trajectory replays run tens of thousands of setpos/wait
 					// steps; sample those so they don't flood the event ring,
 					// but always mark gate steps and the first of a pass.
-					const bool routineStep = step.contains("tool") || step.contains("wait");
+					const bool routineStep = step.contains("tool") || step.contains("wait") || step.contains("pose");
 					if (!routineStep || i == 0 || (i % 100) == 0) {
 						json prog{ { "runId", runId }, { "index", static_cast<int>(i) }, { "total", static_cast<int>(steps.size()) } };
 						if (repeat > 1)
 							prog["repeat"] = rep;
-						for (const char* kind : { "tool", "wait", "waitFor", "waitUntil", "assert" })
+						for (const char* kind : { "pose", "tool", "wait", "waitFor", "waitUntil", "assert" })
 							if (step.contains(kind)) {
 								prog["kind"] = kind;
 								break;
@@ -1450,7 +1452,52 @@ namespace dvb
 					}
 
 					try {
-						if (step.contains("wait")) {
+						if (step.contains("pose")) {
+							// Compact trajectory sample [x, y, z, yawDeg, pitchDeg] → the same
+							// player.setpos/setangle commands v1 stored as five steps (Recording::BuildScenario).
+							const json& p = step["pose"];
+							r["kind"] = "pose";
+							if (!p.is_array() || p.size() < 5)
+								throw ToolError(400, "pose step needs [x, y, z, yawDeg, pitchDeg]");
+							ToolContext stepCtx = a_ctx;
+							stepCtx.internal = true;
+							bool poseOk = true;
+							for (int k = 0; k < 5 && poseOk; ++k) {
+								const double v = p.at(k).get<double>();
+								std::string  cmd;
+								switch (k) {
+								case 0:
+									cmd = std::format("player.setpos x {:.2f}", v);
+									break;
+								case 1:
+									cmd = std::format("player.setpos y {:.2f}", v);
+									break;
+								case 2:
+									cmd = std::format("player.setpos z {:.2f}", v);
+									break;
+								case 3:
+									cmd = std::format("player.setangle z {:.2f}", v);
+									break;
+								default:
+									cmd = std::format("player.setangle x {:.2f}", v);
+									break;  // pitch
+								}
+								// A failed setpos/setangle must fail the step, not replay a broken
+								// trajectory as ok (Invoke reports failure via ToolResult, never throws).
+								if (const ToolResult tr = a_registry.Invoke("console", json{ { "action", "exec" }, { "command", cmd } }, stepCtx); !tr.ok) {
+									r["ok"] = false;
+									r["errorCode"] = tr.errorCode;
+									r["error"] = std::format("pose cmd '{}' failed: {}", cmd, tr.errorMessage);
+									stepFailed = true;
+									poseOk = false;
+								}
+							}
+							if (poseOk) {
+								r["ok"] = true;
+								if (step.contains("wait"))
+									std::this_thread::sleep_for(milliseconds(step["wait"].get<long>()));
+							}
+						} else if (step.contains("wait")) {
 							const long ms = step["wait"].get<long>();
 							r["kind"] = "wait";
 							r["ms"] = ms;
@@ -2057,6 +2104,29 @@ namespace dvb
 					throw ToolError(404, std::format("unknown replay runId {}", runId));
 				}
 				return Recording::Handle(a_args, a_events);
+			});
+
+		ToolDescriptor recordings;
+		recordings.name = "recordings";
+		recordings.description =
+			"Manage the on-disk recording library — the data layer an in-game menu (SMF / FUCK / "
+			"built-in) sits on. action='list' returns every recording with its meta {file, name, "
+			"format, cell, worldspace, interior, sampleCount, recordedMs, recordedAt, runtime, "
+			"validated, entry}, newest-recorded first. 'describe' {file} returns one recording's full "
+			"meta. 'validate' {file, value?} sets meta.validated (default true) and re-saves. 'delete' "
+			"{file} removes a recording. 'file' is a bare name inside the recordings dir (path "
+			"traversal rejected). Replay one via record{action:'replay', path}.";
+		recordings.inputSchema = json{
+			{ "type", "object" },
+			{ "properties", json{
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "validate", "delete" }) }, { "description", "list | describe | validate | delete" } } },
+								{ "file", json{ { "type", "string" }, { "description", "describe/validate/delete: bare recording file name (no path)" } } },
+								{ "value", json{ { "type", "boolean" }, { "description", "validate: the validated flag to set (default true)" } } },
+							} },
+		};
+		a_registry.Register(std::move(recordings),
+			[](const json& a_args, const ToolContext&) {
+				return Recording::ManageRecordings(a_args);
 			});
 	}
 }

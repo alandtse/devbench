@@ -68,4 +68,15 @@ namespace dvb::Recording
 	/// looser) and a_args.force turns the scene mismatch from an abort into a reported warning.
 	/// Throws ToolError on a missing/invalid file or an invalid coupling override.
 	json BuildReplaySteps(const json& a_args);
+
+	/// `recordings` tool: manage the on-disk recording library (the data layer an in-game menu —
+	/// SMF/FUCK/built-in — sits on). action = list | describe | validate | delete.
+	///   list                     → { dir, recordings:[{file, name, format, cell, worldspace,
+	///                                interior, sampleCount, recordedMs, recordedAt, runtime,
+	///                                validated, entry}] } sorted newest-recorded first
+	///   describe { file }        → that recording's full meta
+	///   validate { file, value? }→ set meta.validated (default true), re-save; returns { file, validated }
+	///   delete   { file }        → remove the recording; returns { file, deleted }
+	/// `file` is a bare name resolved inside the recordings dir (path traversal rejected).
+	json ManageRecordings(const json& a_args);
 }

@@ -1,0 +1,18 @@
+{
+  "note": "Curated, validated test replays that ship with devbench. Each entry points at a recording file in this directory. Name files <StartZone>To<EndZone>[_variant].json. runtime lists the runtimes a recording is comparable on (a flat setpos traverse is se/ae; a VR recording is vr). See README.md.",
+  "recordings": [
+    {
+      "name": "Guardian Stones to Whiterun",
+      "file": "GuardianStonesToWhiterun.json",
+      "route": "GuardianStones -> Whiterun",
+      "entry": "coc GuardianStones",
+      "worldspace": "Tamriel",
+      "interior": false,
+      "durationMs": 90611,
+      "sampleCount": 3397,
+      "runtime": ["se", "ae"],
+      "validated": true,
+      "format": "devbench-recording-2"
+    }
+  ]
+}

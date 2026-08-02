@@ -7,6 +7,7 @@
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -122,7 +123,12 @@ namespace dvb::Recording
 		// weather), plus the anchor pose and runtime. MUST run on the main thread.
 		json ReadManifest()
 		{
-			json m{ { "vr", REL::Module::IsVR() } };
+			const bool isVR = REL::Module::IsVR();
+			json       m{ { "vr", isVR } };
+			// runtime.compat: a flat setpos/setangle path replays on SE+AE, but VR drives pitch and
+			// culling from the HMD, so a VR recording is its own bucket. Replay gates on this.
+			m["runtime"] = json{ { "recordedOnVR", isVR },
+				{ "compat", isVR ? json::array({ "vr" }) : json::array({ "se", "ae" }) } };
 			if (auto* cal = RE::Calendar::GetSingleton())
 				m["gameHour"] = cal->GetHour();
 			if (auto* sky = RE::Sky::GetSingleton(); sky && sky->currentWeather) {
@@ -220,12 +226,12 @@ namespace dvb::Recording
 				return json{ { "tool", "camera" }, { "args", json{ { "action", "setPov" }, { "pov", a_pov } } } };
 			};
 
-			json                       steps = json::array();
-			std::string                lastPov;     // emit a camera step only when the POV changes
-			std::array<std::string, 5> lastMove{};  // previous setpos/setangle block
-			bool                       haveMove = false;
-			size_t                     cmdIdx = 0;    // drain console commands captured up to each sample's frame
-			long                       prevTMs = -1;  // previous sample's wall-clock offset for delta waits
+			json                  steps = json::array();
+			std::string           lastPov;     // emit a camera step only when the POV changes
+			std::array<double, 5> lastPose{};  // previous emitted pose (round-2); a repeat → bare wait
+			bool                  havePose = false;
+			size_t                cmdIdx = 0;    // drain console commands captured up to each sample's frame
+			long                  prevTMs = -1;  // previous sample's wall-clock offset for delta waits
 			for (const auto& s : a_rec.samples) {
 				// Replay console commands the user/agent ran during recording at the point in the
 				// trajectory they were issued (ordered by frame), so value-setting is reproduced.
@@ -237,25 +243,26 @@ namespace dvb::Recording
 					steps.push_back(cameraStep(pov));
 					lastPov = pov;
 				}
-				// Collapse: skip the per-axis setpos/setangle block when the rounded pose is
-				// unchanged from the last one emitted (standing still at a 10ms interval is a long
-				// run of identical samples) — just advance time with the wait.
-				const std::array<std::string, 5> move{
-					std::format("player.setpos x {:.2f}", s.value("x", 0.0)),
-					std::format("player.setpos y {:.2f}", s.value("y", 0.0)),
-					std::format("player.setpos z {:.2f}", s.value("z", 0.0)),
-					std::format("player.setangle z {:.2f}", s.value("angleZ", 0.0) * kRadToDeg),
-					std::format("player.setangle x {:.2f}", s.value("angleX", 0.0) * kRadToDeg),  // pitch
+				// One compact pose row per changed sample; a bare wait for a run of identical
+				// (standing-still) samples. Store the 2-decimal values the setpos/setangle replay
+				// uses, so the row carries no precision the replay would drop anyway.
+				const auto                  r2 = [](double v) { return std::round(v * 100.0) / 100.0; };
+				const std::array<double, 5> pose{
+					r2(s.value("x", 0.0)),
+					r2(s.value("y", 0.0)),
+					r2(s.value("z", 0.0)),
+					r2(s.value("angleZ", 0.0) * kRadToDeg),
+					r2(s.value("angleX", 0.0) * kRadToDeg),  // pitch
 				};
-				if (!haveMove || move != lastMove) {
-					for (const auto& cmd : move)
-						steps.push_back(consoleStep(cmd));
-					lastMove = move;
-					haveMove = true;
-				}
 				const long tMs = s.value("tMs", static_cast<long>(-1));
 				const long waitMs = (tMs > 0 && prevTMs >= 0) ? std::max(1L, tMs - prevTMs) : a_rec.intervalMs;
-				steps.push_back(json{ { "wait", waitMs } });
+				if (!havePose || pose != lastPose) {
+					steps.push_back(json{ { "pose", pose }, { "wait", waitMs } });
+					lastPose = pose;
+					havePose = true;
+				} else {
+					steps.push_back(json{ { "wait", waitMs } });
+				}
 				prevTMs = tMs;
 			}
 			// Trailing commands issued after the final pose sample.
@@ -263,15 +270,35 @@ namespace dvb::Recording
 				steps.push_back(consoleStep(a_rec.commands[cmdIdx].value("command", std::string{})));
 
 			json meta = a_rec.manifest;
-			meta["format"] = "devbench-recording-1";
+			meta["format"] = "devbench-recording-2";
 			meta["intervalMs"] = a_rec.intervalMs;
 			meta["sampleCount"] = a_rec.samples.size();
 			meta["commandCount"] = a_rec.commands.size();
 			meta["recordedMs"] = a_recordedMs;
+			meta["recordedAt"] = static_cast<long long>(std::time(nullptr));  // record-time epoch, for tooling
 			return json{ { "meta", std::move(meta) }, { "steps", std::move(steps) } };
 		}
 
 		// Data/SKSE/Plugins/devbench/recordings/recording_<epoch>.json
+		// One compact step per line (meta pretty-printed): a pose-row recording stays
+		// hand-editable and git-diffable one sample at a time, instead of dump(2) exploding
+		// every pose array across ~9 indented lines.
+		std::string SerializeRecording(const json& a_scenario)
+		{
+			std::string s = "{\n\"meta\": " + a_scenario.value("meta", json::object()).dump(2);
+			// Preserve any other top-level keys a consumer added (only meta/steps get special
+			// formatting) so a validate round-trip stays lossless.
+			for (auto it = a_scenario.begin(); it != a_scenario.end(); ++it)
+				if (it.key() != "meta" && it.key() != "steps")
+					s += ",\n" + json(it.key()).dump() + ": " + it->dump(2);
+			s += ",\n\"steps\": [\n";
+			const json& steps = a_scenario.value("steps", json::array());
+			for (size_t i = 0; i < steps.size(); ++i)
+				s += steps[i].dump() + (i + 1 < steps.size() ? ",\n" : "\n");
+			s += "]\n}\n";
+			return s;
+		}
+
 		fs::path WriteScenarioFile(const json& a_scenario)
 		{
 			const fs::path  dir = "Data/SKSE/Plugins/devbench/recordings";
@@ -280,7 +307,7 @@ namespace dvb::Recording
 			const auto     stamp = static_cast<long long>(std::time(nullptr));
 			const fs::path path = dir / std::format("recording_{}.json", stamp);
 			if (std::ofstream out(path, std::ios::trunc); out)
-				out << a_scenario.dump(2) << '\n';
+				out << SerializeRecording(a_scenario);
 			return path;
 		}
 	}
@@ -462,18 +489,27 @@ namespace dvb::Recording
 	{
 		std::string path = a_args.value("path", std::string{});
 		if (path.empty()) {
-			// No path → replay the most recent recording (convenient for the replay hotkey
-			// and quick API calls).
-			const fs::path     dir = "Data/SKSE/Plugins/devbench/recordings";
-			std::error_code    ec;
-			fs::path           newest;
-			fs::file_time_type best{};
+			// No path → most recently RECORDED (replay hotkey / quick calls). Rank by the epoch in
+			// the auto-generated recording_<epoch>.json name, not mtime — a copy/deploy/checkout
+			// re-timestamps files, letting a shipped default shadow the user's real last. Unstamped
+			// named files rank oldest (stamp 0); "last" is well-defined only when a stamp exists.
+			const fs::path  dir = "Data/SKSE/Plugins/devbench/recordings";
+			std::error_code ec;
+			fs::path        newest;
+			long long       bestStamp = -1;
 			for (const auto& e : fs::directory_iterator(dir, ec)) {
 				if (e.path().extension() != ".json")
 					continue;
-				const auto t = e.last_write_time(ec);
-				if (newest.empty() || t > best) {
-					best = t;
+				const std::string stem = e.path().stem().string();
+				long long         stamp = 0;
+				if (stem.starts_with("recording_")) {
+					try {
+						stamp = std::stoll(stem.substr(10));
+					} catch (...) {
+					}
+				}
+				if (newest.empty() || stamp > bestStamp) {
+					bestStamp = stamp;
 					newest = e.path();
 				}
 			}
@@ -535,6 +571,22 @@ namespace dvb::Recording
 		// `force`: proceed even if the scene doesn't match — the scene assert below becomes a
 		// reported warning instead of an abort. The consumer explicitly opted into "may not work".
 		const bool force = a_args.value("force", false);
+
+		// Runtime gate: a flat setpos/setangle recording gives non-comparable frames on VR (HMD
+		// drives pitch + culling), and a VR recording won't drive a flat game. Abort on a runtime
+		// the recording wasn't marked for; force downgrades it to a warning. Unmarked (v1) = ungated.
+		if (const json compat = meta.value("runtime", json::object()).value("compat", json::array()); !compat.empty()) {
+			const bool curVR = REL::Module::IsVR();
+			bool       ok = false;
+			for (const auto& c : compat)
+				if (const std::string t = c.get<std::string>(); curVR ? t == "vr" : (t == "se" || t == "ae")) {
+					ok = true;
+					break;
+				}
+			if (!ok && !force)
+				throw ToolError(409, std::format("recording is for runtimes {} but this game is {} — pass force to replay anyway",
+										 compat.dump(), curVR ? "vr" : "flat (se/ae)"));
+		}
 
 		const bool restoreScene = a_args.value("restoreScene", false);
 		const long settleMs = a_args.value("settleMs", static_cast<long>(g_loadSettleMs));
@@ -648,5 +700,102 @@ namespace dvb::Recording
 							  { "forced", force },
 						  } },
 		};
+	}
+
+	json ManageRecordings(const json& a_args)
+	{
+		const fs::path    dir = "Data/SKSE/Plugins/devbench/recordings";
+		const std::string action = a_args.value("action", std::string("list"));
+
+		// Resolve a caller-supplied name INSIDE the recordings dir; reject a path separator or ".."
+		// so a tool call can't read or delete outside the library.
+		const auto safePath = [&](const std::string& a_file) -> fs::path {
+			if (a_file.empty())
+				throw ToolError(400, "'file' is required");
+			const fs::path name(a_file);
+			if (name.has_parent_path() || a_file.find("..") != std::string::npos)
+				throw ToolError(400, "'file' must be a bare recording name (no path)");
+			return dir / name;
+		};
+
+		// Summarize one recording's meta for the library list; a bad/half-written file is reported,
+		// not fatal -- the list must still return.
+		const auto summarize = [](const fs::path& a_p) -> json {
+			json          out{ { "file", a_p.filename().string() } };
+			std::ifstream in(a_p);
+			json          rec;
+			try {
+				in >> rec;
+			} catch (...) {
+				out["error"] = "unreadable / invalid JSON";
+				return out;
+			}
+			const json m = rec.value("meta", json::object());
+			for (const char* k : { "name", "format", "cell", "worldspace", "interior",
+					 "sampleCount", "recordedMs", "recordedAt", "validated" })
+				if (m.contains(k))
+					out[k] = m[k];
+			out["runtime"] = m.value("runtime", json::object()).value("compat", json::array());
+			out["entry"] = m.value("entryPoint", json::object());
+			return out;
+		};
+
+		const auto load = [&](const fs::path& a_p) -> json {
+			std::ifstream in(a_p);
+			if (!in)
+				throw ToolError(404, std::format("recording not found: {}", a_p.filename().string()));
+			json rec;
+			try {
+				in >> rec;
+			} catch (const std::exception& e) {
+				throw ToolError(400, std::format("invalid recording JSON: {}", e.what()));
+			}
+			return rec;
+		};
+
+		if (action == "list") {
+			std::error_code   ec;
+			std::vector<json> items;
+			for (const auto& e : fs::directory_iterator(dir, ec))
+				if (e.path().extension() == ".json")
+					items.push_back(summarize(e.path()));
+			// newest recorded first; files without recordedAt (v1) sort last.
+			std::sort(items.begin(), items.end(), [](const json& a, const json& b) {
+				return a.value("recordedAt", 0LL) > b.value("recordedAt", 0LL);
+			});
+			json arr = json::array();
+			for (auto& it : items)
+				arr.push_back(std::move(it));
+			return json{ { "dir", dir.string() }, { "count", arr.size() }, { "recordings", std::move(arr) } };
+		}
+
+		if (action == "describe") {
+			const fs::path p = safePath(a_args.value("file", std::string{}));
+			return json{ { "file", p.filename().string() }, { "meta", load(p).value("meta", json::object()) } };
+		}
+
+		if (action == "validate") {
+			const fs::path p = safePath(a_args.value("file", std::string{}));
+			const bool     value = a_args.value("value", true);
+			json           rec = load(p);
+			rec["meta"]["validated"] = value;
+			std::ofstream out(p, std::ios::trunc);
+			if (!out)
+				throw ToolError(500, "could not write recording");
+			out << SerializeRecording(rec);
+			return json{ { "file", p.filename().string() }, { "validated", value } };
+		}
+
+		if (action == "delete") {
+			const fs::path  p = safePath(a_args.value("file", std::string{}));
+			std::error_code ec;
+			if (!fs::exists(p, ec))
+				throw ToolError(404, std::format("recording not found: {}", p.filename().string()));
+			if (!fs::remove(p, ec) || ec)
+				throw ToolError(500, std::format("could not delete {}: {}", p.filename().string(), ec.message()));
+			return json{ { "file", p.filename().string() }, { "deleted", true } };
+		}
+
+		throw ToolError(400, std::format("unknown action '{}' (list | describe | validate | delete)", action));
 	}
 }
