@@ -57,4 +57,9 @@ namespace dvb
 	// auto-created with the current defaults (so users/agents discover the keys); a
 	// parse error → defaults (logged). Never throws.
 	Config LoadConfig();
+
+	// Persist just the four hotkey keys into config.json, preserving every other key. Written from
+	// the render thread (in-menu rebind), so it writes a temp file then renames it over the target
+	// (atomic replace) — a concurrent reader never sees a half-written file. Never throws.
+	void SaveHotkeys(int a_recordKey, bool a_recordShift, int a_replayKey, bool a_replayShift);
 }

@@ -61,4 +61,25 @@ namespace dvb
 	/// thread (pid/exe/vr cached once, port read live) so /api/health and inspect{kind:"state"}
 	/// share one identity source and a caller can tell which game instance replied (devbench#16).
 	json InstanceIdentity();
+
+	/// Point RunTool at the process registry while a Server is up (set by Start, cleared by Stop),
+	/// so the in-game menu — a separate render-thread TU with no Server reference — can invoke tools.
+	void SetProcessRegistry(ToolRegistry* a_registry);
+
+	/// Invoke a devbench tool by name from anywhere (e.g. the SMF menu). Returns the tool's value,
+	/// or { error, code } on failure / when no Server is up. Only call fast, non-blocking tools from
+	/// the render thread (recordings; record replay is async by default) — a RunAndWait-backed tool
+	/// would stall the caller.
+	json RunTool(const std::string& a_name, const json& a_args);
+
+	/// The `recordings` list, cached and refreshed at most ~once/second. A menu redraws every frame,
+	/// and the underlying list fully parses every recording file — calling it per frame would stall
+	/// the render thread. Call InvalidateRecordingsCache() after a validate/delete to force a refresh.
+	json ListRecordingsCached();
+	void InvalidateRecordingsCache();
+
+	/// Open the recordings directory in Explorer (menu "Open folder"); OpenRecordingFile selects one
+	/// file. No-op if the directory is unknown. Not an ImGui call, so it lives in the main TU.
+	void OpenRecordingsFolder();
+	void OpenRecordingFile(const std::string& a_file);
 }

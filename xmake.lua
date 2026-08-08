@@ -34,9 +34,45 @@ add_rules("plugin.vsxmake.autoupdate")
 -- packages
 add_requires("nlohmann_json")
 
+-- Local package repo: pins the optional SMF3 client API header (single header, pulled at build
+-- time, runtime GetProcAddress — inert when SMF is not installed). See xmake-pkgs/.
+add_repositories("devbench-pkgs xmake-pkgs")
+add_requires("skse-menu-framework-api 3.7.0")
+-- FUCK: an alternative in-game menu + keybind framework. Header-only client API (runtime
+-- GetProcAddress on FUCK.dll — inert when absent). Its header pulls in the real imgui.h for
+-- types and references CSimpleIniA, so its UI target needs imgui + simpleini.
+add_requires("fuck-api 1.0.0")
+add_requires("imgui")
+add_requires("simpleini")
+
+-- The SMF-hosted in-game menu lives in its own PCH-free static lib: the SMF client header's
+-- cimgui-style typedefs cannot coexist with the real imgui.h the main target's PCH pulls in.
+target("devbench-UI")
+set_kind("static")
+set_warnings("all")
+add_deps("commonlibsse-ng")
+add_packages("skse-menu-framework-api", "nlohmann_json")
+add_defines("_SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING") -- SMF header uses std::wstring_convert
+add_defines("UNICODE", "_UNICODE", "_WINSOCKAPI_")
+add_files("src/RecordingsMenu.cpp")
+add_includedirs("src")
+target_end()
+
+-- The FUCK-hosted in-game menu also lives in its own PCH-free static lib: FUCK_API.h pulls in the
+-- real imgui.h, which cannot coexist with SMF's cimgui ImGuiMCP (devbench-UI) or the main PCH.
+target("devbench-UI-fuck")
+set_kind("static")
+set_warnings("all")
+add_deps("commonlibsse-ng")
+add_packages("fuck-api", "imgui", "simpleini", "nlohmann_json")
+add_defines("UNICODE", "_UNICODE", "_WINSOCKAPI_")
+add_files("src/RecordingsMenuFuck.cpp")
+add_includedirs("src")
+target_end()
+
 -- target
 target("devbench")
-add_deps("commonlibsse-ng", "cpp-mcp")
+add_deps("commonlibsse-ng", "cpp-mcp", "devbench-UI", "devbench-UI-fuck")
 add_packages("nlohmann_json")
 
 -- DLL output name
@@ -64,6 +100,11 @@ add_rules("commonlibsse-ng.plugin", {
 
 -- sources
 add_files("src/**.cpp")
+-- RecordingsMenu.cpp is SMF/cimgui and PCH-free — it belongs only to devbench-UI. The glob above
+-- would otherwise also compile it here with the real-imgui PCH, which conflicts.
+remove_files("src/RecordingsMenu.cpp")
+-- RecordingsMenuFuck.cpp is FUCK/real-imgui and PCH-free — it belongs only to devbench-UI-fuck.
+remove_files("src/RecordingsMenuFuck.cpp")
 add_headerfiles("src/**.h")
 add_includedirs("src")
 -- Public C-ABI consumer header (DevBenchAPI.h). The companion DevBenchAPI.cpp is
