@@ -556,7 +556,10 @@ namespace dvb::Recording
 					steps.push_back(json{ { "tool", "game" }, { "args", json{ { "action", "loadLast" } } } });
 				else
 					steps.push_back(json{ { "tool", "game" }, { "args", json{ { "action", "load" }, { "name", value } } } });
-				steps.push_back(json{ { "waitFor", "postLoadGame" }, { "timeoutMs", 60000 } });
+				// A content-mismatch box ("save relies on content ... no longer present") gates the
+				// load; auto-answer it (non-cancel) so the restore proceeds instead of stalling 60s.
+				steps.push_back(json{ { "waitFor", "postLoadGame" }, { "timeoutMs", 60000 },
+					{ "acceptModal", json{ { "matchBody", "no longer present" } } } });
 				restored = true;
 			} else if (kind == "coc" && !value.empty()) {
 				// A raw coc can stream without the loading-screen teardown some mods rely on to
@@ -620,6 +623,10 @@ namespace dvb::Recording
 			});
 		}
 
+		// Fail fast if a menu/modal is open before the trajectory plays: its setpos/setangle would
+		// otherwise run while the menu eats control, producing a silent no-op replay (issue #63).
+		steps.push_back(json{ { "assert", "noBlockingMenu" } });
+
 		// Copy the trajectory, injecting a load-settle after any captured cell transition (coc/cow):
 		// the destination cell must finish loading before the following setpos teleports the player,
 		// or the replay teleports onto a not-yet-valid ref mid-load and CTDs. Done here (not baked
@@ -641,6 +648,7 @@ namespace dvb::Recording
 		// actually did (which tier ran, whether the consumer overrode the producer's signal).
 		return json{
 			{ "steps", std::move(steps) },
+			{ "restored", restored },  // handler's sync menu pre-check skips restore plans (the load clears menus)
 			{ "coupling", json{
 							  { "tier", tier },
 							  { "producer", producerTier },
