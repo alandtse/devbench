@@ -37,6 +37,7 @@ namespace dvb::UI
 		bool                  s_confirmDelete = false;
 		ui::SortKey           s_sortKey = ui::SortKey::Name;
 		bool                  s_sortAsc = true;
+		std::string           s_lastError;  // last failed action, shown red until the next action
 
 		// The SMF host resolves each ImGuiMCP call via GetProcAddress; the table/sort exports may be
 		// absent on an older host. Probe a fresh module handle (the header's cached one can be NULL
@@ -58,29 +59,10 @@ namespace dvb::UI
 			return smf && ::GetProcAddress(smf, "igInputTextWithHint");
 		}
 
-		// Replay a recording (or, with an empty path, the most recent). ASYNC by default so the
-		// call returns immediately — a blocking replay here would stall the render thread.
-		void ReplayPath(const std::string& a_path)
-		{
-			json args{ { "action", "replay" }, { "restoreScene", true }, { "force", true } };
-			if (!a_path.empty())
-				args["path"] = a_path;
-			dvb::RunTool("record", args);
-		}
-
-		void Validate(const std::string& a_file, bool a_value, bool a_invalidate = true)
-		{
-			dvb::RunTool("recordings", json{ { "action", "validate" }, { "file", a_file }, { "value", a_value } });
-			if (a_invalidate)
-				dvb::InvalidateRecordingsCache();
-		}
-
-		void Delete(const std::string& a_file, bool a_invalidate = true)
-		{
-			dvb::RunTool("recordings", json{ { "action", "delete" }, { "file", a_file } });
-			if (a_invalidate)
-				dvb::InvalidateRecordingsCache();
-		}
+		// Thin wrappers over the shared imgui-free helpers that capture any error for the page.
+		void ReplayPath(const std::string& a_path) { s_lastError = ui::Replay(a_path); }
+		void Validate(const std::string& a_file, bool a_value, bool a_invalidate = true) { s_lastError = ui::Validate(a_file, a_value, a_invalidate); }
+		void Delete(const std::string& a_file, bool a_invalidate = true) { s_lastError = ui::Delete(a_file, a_invalidate); }
 
 		// Pre-table per-recording block layout, kept as the fallback when the host lacks the table
 		// exports. (Was the whole of RenderRecordings before the table rework.)
@@ -117,14 +99,18 @@ namespace dvb::UI
 		{
 			ImGuiMCP::BeginDisabled(s_selected.empty());
 			if (ImGuiMCP::Button("Validate selected")) {
+				s_lastError.clear();
 				for (const auto& f : s_selected)
-					Validate(f, true, false);
+					if (const auto e = ui::Validate(f, true, false); s_lastError.empty())
+						s_lastError = e;
 				dvb::InvalidateRecordingsCache();
 			}
 			ImGuiMCP::SameLine();
 			if (ImGuiMCP::Button("Unvalidate selected")) {
+				s_lastError.clear();
 				for (const auto& f : s_selected)
-					Validate(f, false, false);
+					if (const auto e = ui::Validate(f, false, false); s_lastError.empty())
+						s_lastError = e;
 				dvb::InvalidateRecordingsCache();
 			}
 			ImGuiMCP::SameLine();
@@ -136,8 +122,10 @@ namespace dvb::UI
 				ImGuiMCP::TextColored(kRed, "delete %d?", static_cast<int>(s_selected.size()));
 				ImGuiMCP::SameLine();
 				if (ImGuiMCP::Button("Yes##confdel")) {
+					s_lastError.clear();
 					for (const auto& f : s_selected)
-						Delete(f, false);
+						if (const auto e = ui::Delete(f, false); s_lastError.empty())
+							s_lastError = e;
 					dvb::InvalidateRecordingsCache();
 					s_selected.clear();
 					s_confirmDelete = false;
@@ -255,6 +243,8 @@ namespace dvb::UI
 			ImGuiMCP::Spacing();
 			if (ImGuiMCP::Button("Replay last"))
 				ReplayPath("");
+			if (!s_lastError.empty())
+				ImGuiMCP::TextColored(kRed, "action failed: %s", s_lastError.c_str());
 			ImGuiMCP::Separator();
 
 			const json list = dvb::ListRecordingsCached();

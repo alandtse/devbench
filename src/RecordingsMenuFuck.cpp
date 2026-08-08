@@ -34,30 +34,6 @@ namespace dvb::UI
 		const ImVec4 kGreen{ 0.40f, 0.85f, 0.45f, 1.0f };
 		const ImVec4 kRed{ 1.0f, 0.45f, 0.45f, 1.0f };
 
-		// Replay a recording (empty path → most recent). ASYNC by default so the call returns
-		// immediately — a blocking replay here would stall the render thread.
-		void ReplayPath(const std::string& a_path)
-		{
-			json args{ { "action", "replay" }, { "restoreScene", true }, { "force", true } };
-			if (!a_path.empty())
-				args["path"] = a_path;
-			dvb::RunTool("record", args);
-		}
-
-		void Validate(const std::string& a_file, bool a_value, bool a_invalidate = true)
-		{
-			dvb::RunTool("recordings", json{ { "action", "validate" }, { "file", a_file }, { "value", a_value } });
-			if (a_invalidate)
-				dvb::InvalidateRecordingsCache();
-		}
-
-		void Delete(const std::string& a_file, bool a_invalidate = true)
-		{
-			dvb::RunTool("recordings", json{ { "action", "delete" }, { "file", a_file } });
-			if (a_invalidate)
-				dvb::InvalidateRecordingsCache();
-		}
-
 		// FUCK stores a bind's modifier in kMod1 as a raw keyboard DXScanCode (its KB_MODS), NOT the
 		// Modifier enum. devbench's sink only honors Shift, so recognize left/right Shift by scancode.
 		constexpr int kLeftShiftDX = 0x2A, kRightShiftDX = 0x36;
@@ -125,6 +101,8 @@ namespace dvb::UI
 				FUCK::Spacing();
 				if (FUCK::Button("Replay last"))
 					ReplayPath("");
+				if (!m_lastError.empty())
+					FUCK::TextColored(kRed, "action failed: %s", m_lastError.c_str());
 				FUCK::Separator();
 
 				const json list = dvb::ListRecordingsCached();
@@ -140,19 +118,28 @@ namespace dvb::UI
 			}
 
 		private:
+			// Thin wrappers over the shared imgui-free helpers that capture any error for the page.
+			void ReplayPath(const std::string& a_path) { m_lastError = ui::Replay(a_path); }
+			void Validate(const std::string& a_file, bool a_value, bool a_invalidate = true) { m_lastError = ui::Validate(a_file, a_value, a_invalidate); }
+			void Delete(const std::string& a_file, bool a_invalidate = true) { m_lastError = ui::Delete(a_file, a_invalidate); }
+
 			void RenderActionBar()
 			{
 				FUCK::InputText("##filter", m_filter, sizeof m_filter);
 				FUCK::BeginDisabled(m_selected.empty());
 				if (FUCK::Button("Validate selected")) {
+					m_lastError.clear();
 					for (const auto& f : m_selected)
-						Validate(f, true, false);
+						if (const auto e = ui::Validate(f, true, false); m_lastError.empty())
+							m_lastError = e;
 					dvb::InvalidateRecordingsCache();
 				}
 				FUCK::SameLine();
 				if (FUCK::Button("Unvalidate selected")) {
+					m_lastError.clear();
 					for (const auto& f : m_selected)
-						Validate(f, false, false);
+						if (const auto e = ui::Validate(f, false, false); m_lastError.empty())
+							m_lastError = e;
 					dvb::InvalidateRecordingsCache();
 				}
 				FUCK::SameLine();
@@ -164,8 +151,10 @@ namespace dvb::UI
 					FUCK::TextColored(kRed, "delete %d?", static_cast<int>(m_selected.size()));
 					FUCK::SameLine();
 					if (FUCK::Button("Yes##confdel")) {
+						m_lastError.clear();
 						for (const auto& f : m_selected)
-							Delete(f, false);
+							if (const auto e = ui::Delete(f, false); m_lastError.empty())
+								m_lastError = e;
 						dvb::InvalidateRecordingsCache();
 						m_selected.clear();
 						m_confirmDelete = false;
@@ -295,6 +284,7 @@ namespace dvb::UI
 			FUCK::ManagedHotkey   m_recordHK, m_replayHK;
 			bool                  m_seeded = false;
 			std::string           m_recordWarn, m_replayWarn;
+			std::string           m_lastError;  // last failed action, shown red until the next action
 		};
 
 		// Registered by pointer with FUCK; must outlive registration → static storage.
