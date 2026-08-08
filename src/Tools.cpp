@@ -410,6 +410,8 @@ namespace dvb
 			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast)", action));
 		}
 
+		bool ContainsCI(const std::string& a_hay, const std::string& a_needle);  // defined below (near CheckState)
+
 		// menu: detect/answer menus. 'list' = open menus + messageBoxOpen (tracked live from
 		// MenuOpenCloseEvent) + consumer-registered handler names; 'describe' = the active
 		// MessageBoxMenu's body + buttons, or (with 'name') a registered handler's descriptor;
@@ -521,6 +523,20 @@ namespace dvb
 			}
 
 			if (action == "accept") {
+				// With matchBody, verify the active modal's body contains it and answer its non-cancel
+				// option (won't confirm an unrelated dialog); else answer by button index (default 0).
+				if (const std::string matchBody = a_args.value("matchBody", std::string{}); !matchBody.empty()) {
+					return MainThread::RunAndWait([matchBody]() -> json {
+						auto* data = RE::MessageBoxMenu::GetCurrentMessageBoxData();
+						if (!data)
+							return json{ { "accepted", false }, { "reason", "no active MessageBoxMenu" } };
+						if (!data->bodyText.c_str() || !ContainsCI(data->bodyText.c_str(), matchBody))
+							return json{ { "accepted", false }, { "reason", "body did not match matchBody" } };
+						const int pick = data->cancelOptionIndex == 0 ? 1 : 0;
+						RE::MessageBoxMenu::SelectOption(pick);
+						return json{ { "accepted", true }, { "index", pick } };
+					});
+				}
 				// Answer the active MessageBoxMenu by button index (default 0) via CommonLib's
 				// SelectOption() — runs the modal's callback and dismisses it; no detour.
 				const int index = a_args.value("index", 0);
@@ -1259,6 +1275,98 @@ namespace dvb
 			return spec;
 		}
 
+		// Case-insensitive ASCII substring (avoids <cctype>; matches the (c|0x20) idiom used elsewhere).
+		bool ContainsCI(const std::string& a_hay, const std::string& a_needle)
+		{
+			if (a_needle.empty())
+				return true;
+			const auto lower = [](char c) { return static_cast<char>((c >= 'A' && c <= 'Z') ? (c | 0x20) : c); };
+			for (size_t i = 0; i + a_needle.size() <= a_hay.size(); ++i) {
+				size_t j = 0;
+				for (; j < a_needle.size() && lower(a_hay[i + j]) == lower(a_needle[j]); ++j) {}
+				if (j == a_needle.size())
+					return true;
+			}
+			return false;
+		}
+
+		std::string JoinNames(const std::vector<std::string>& a_names)
+		{
+			std::string out;
+			for (size_t i = 0; i < a_names.size(); ++i)
+				out += (i ? ", " : "") + a_names[i];
+			return out;
+		}
+
+		// Open menus that would make a replay meaningless — they pause the sim, are modal, or grab the
+		// cursor into menu-mode (inventory/dialogue/lockpick/messagebox). Always-open menus (HUD/cursor)
+		// and the console (SKSE task exec still runs) never block. Reads live UI flags on the main thread.
+		std::vector<std::string> BlockingMenus()
+		{
+			try {
+				const json names = MainThread::RunAndWait([]() -> json {
+					json out = json::array();
+					if (auto* ui = RE::UI::GetSingleton())
+						for (const auto& name : GetOpenMenus()) {
+							if (name == RE::Console::MENU_NAME)
+								continue;
+							const auto menu = ui->GetMenu(name);
+							auto*      m = menu.get();
+							if (!m || m->AlwaysOpen())
+								continue;
+							if (m->PausesGame() || m->Modal() || m->UsesCursor() || m->FreezeFramePause())
+								out.push_back(name);
+						}
+					return out;
+				},
+					milliseconds(1000));
+				return names.get<std::vector<std::string>>();
+			} catch (const ToolError&) {
+				// A pausing menu froze the frame counter → RunAndWait 504; that IS blocked. Name it from
+				// the tracked set instead (no marshal); "<paused>" if only benign names remain.
+				std::vector<std::string> out;
+				for (const auto& n : GetOpenMenus())
+					if (n != "HUD Menu" && n != "Cursor Menu" && n != RE::Console::MENU_NAME)
+						out.push_back(n);
+				if (out.empty())
+					out.emplace_back("<paused>");
+				return out;
+			}
+		}
+
+		// Answer an active MessageBoxMenu whose body contains a_matchBody with its NON-cancel option
+		// (never a blind SelectOption(0)). Returns true if it answered one; no-op otherwise.
+		bool AcceptModalIfMatch(const std::string& a_matchBody)
+		{
+			try {
+				return MainThread::RunAndWait([&a_matchBody]() -> json {
+					auto* data = RE::MessageBoxMenu::GetCurrentMessageBoxData();
+					if (!data || !data->bodyText.c_str() || !ContainsCI(data->bodyText.c_str(), a_matchBody))
+						return false;
+					RE::MessageBoxMenu::SelectOption(data->cancelOptionIndex == 0 ? 1 : 0);
+					return true;
+				},
+					milliseconds(1000))
+				    .get<bool>();
+			} catch (const ToolError&) {
+				return false;
+			}
+		}
+
+		// Cancel the active MessageBoxMenu via its cancel option — the safe way to clear a blocking modal.
+		void CancelActiveModal()
+		{
+			try {
+				MainThread::RunAndWait([]() -> json {
+					if (auto* data = RE::MessageBoxMenu::GetCurrentMessageBoxData())
+						RE::MessageBoxMenu::SelectOption(data->cancelOptionIndex);
+					return true;
+				},
+					milliseconds(1000));
+			} catch (const ToolError&) {
+			}
+		}
+
 		// Live-state conditions for waitUntil. playerLoaded marshals to the main thread;
 		// a mid-load stall (RunAndWait 504) just means "not yet" → keep polling. Menu
 		// conditions read the thread-safe tracked set (no marshal).
@@ -1284,7 +1392,9 @@ namespace dvb
 			}
 			if (a_cond == "noMenu")
 				return GetOpenMenus().empty();
-			throw ToolError(400, std::format("unknown waitUntil condition '{}' (playerLoaded|noModal|noMenu)", a_cond));
+			if (a_cond == "noBlockingMenu")
+				return BlockingMenus().empty();
+			throw ToolError(400, std::format("unknown waitUntil condition '{}' (playerLoaded|noModal|noMenu|noBlockingMenu)", a_cond));
 		}
 
 		// Caller must already know a_args["runId"] is present. A bare get<uint64_t>() on a
@@ -1462,6 +1572,9 @@ namespace dvb
 							r["kind"] = "waitFor";
 							r["topic"] = spec.topic;
 							r["match"] = spec.match;
+							// Optional: auto-answer a matching modal each poll (e.g. the content-mismatch
+							// box a restore raises before postLoadGame can fire).
+							const std::string acceptBody = step.value("acceptModal", json::object()).value("matchBody", std::string{});
 							// Only events published after this step begins count.
 							uint64_t   since = a_events.HeadSeq();
 							bool       satisfied = false;
@@ -1476,6 +1589,8 @@ namespace dvb
 								}
 								if (satisfied)
 									break;
+								if (!acceptBody.empty())
+									AcceptModalIfMatch(acceptBody);
 								std::this_thread::sleep_for(milliseconds(pollMs));
 							}
 							r["satisfied"] = satisfied;
@@ -1525,73 +1640,85 @@ namespace dvb
 							const std::string what = step["assert"].get<std::string>();
 							r["kind"] = "assert";
 							r["assert"] = what;
-							if (what != "scene")
-								throw ToolError(400, std::format("unknown assert '{}' (scene)", what));
-							const bool          interior = step.value("interior", false);
-							const std::uint32_t wsWant = step.value("worldspaceFormID", 0u);
-							const std::uint32_t cellWant = step.value("cellFormID", 0u);
-							const long          timeoutMs = step.value("timeoutMs", static_cast<long>(10000));
-							// soft (consumer forced a looser coupling): a mismatch is reported, not fatal.
-							const bool soft = step.value("soft", false);
-							// The scene may still be loading right after a restore — poll until the
-							// player is loaded, read the current worldspace/cell, compare the coarse id.
-							json       check;
-							bool       ready = false;
-							const auto deadline = steady_clock::now() + milliseconds(timeoutMs);
-							do {
-								try {
-									check = MainThread::RunAndWait([interior, wsWant, cellWant]() -> json {
-										auto* pc = RE::PlayerCharacter::GetSingleton();
-										if (!pc || pc->Get3D() == nullptr)
-											return json{ { "ready", false } };
-										std::uint32_t curWs = 0, curCell = 0;
-										if (auto* ws = pc->GetWorldspace())
-											curWs = ws->GetFormID();
-										if (auto* cell = pc->GetParentCell())
-											curCell = cell->GetFormID();
-										const bool ok = interior ? (curCell == cellWant) : (curWs == wsWant);
-										return json{ { "ready", true }, { "ok", ok }, { "worldspaceFormID", curWs }, { "cellFormID", curCell } };
-									},
-										milliseconds(2000));
-								} catch (const ToolError&) {
-									check = json{ { "ready", false } };  // main thread stalled mid-load — keep polling
-								}
-								if (check.value("ready", false)) {
-									ready = true;
-									break;
-								}
-								std::this_thread::sleep_for(milliseconds(250));
-							} while (steady_clock::now() < deadline);
-
-							if (!ready) {
-								// soft: don't fail the run, just note we couldn't confirm the scene.
-								r["ok"] = soft;
-								r["sceneConfirmed"] = false;
-								(soft ? r["warning"] : r["error"]) = "scene assert: player never finished loading";
-								if (!soft) {
-									r["errorCode"] = 504;
-									stepFailed = true;
-								}
-							} else if (!check.value("ok", false)) {
-								const std::string   wantEid = interior ? step.value("cell", std::string{}) : step.value("worldspace", std::string{});
-								const std::uint32_t cur = interior ? check.value("cellFormID", 0u) : check.value("worldspaceFormID", 0u);
-								const std::string   msg = std::format("scene mismatch: recorded {} '{}' (0x{:X}), currently in 0x{:X}{}",
-									interior ? "cell" : "worldspace", wantEid, interior ? cellWant : wsWant, cur,
-									soft ? " — forced, proceeding" : " — aborting replay");
-								r["sceneMismatch"] = true;
-								r["worldspaceFormID"] = check.value("worldspaceFormID", 0u);
-								r["cellFormID"] = check.value("cellFormID", 0u);
-								// soft: a forced consumer accepted that the scene may not match — warn, don't abort.
-								r["ok"] = soft;
-								(soft ? r["warning"] : r["error"]) = msg;
-								if (!soft) {
+							if (what == "noBlockingMenu") {
+								// Fail (409) if a menu/modal would eat the trajectory; name the offenders.
+								const auto blocking = BlockingMenus();
+								r["ok"] = blocking.empty();
+								if (!blocking.empty()) {
+									r["openMenus"] = blocking;
 									r["errorCode"] = 409;
+									r["error"] = std::format("replay blocked: menu(s) open would eat the trajectory: [{}] — close them (menu {{action:'close'|'accept'}}) then retry, or pass closeMenus:true", JoinNames(blocking));
 									stepFailed = true;
+								}
+							} else if (what == "scene") {
+								const bool          interior = step.value("interior", false);
+								const std::uint32_t wsWant = step.value("worldspaceFormID", 0u);
+								const std::uint32_t cellWant = step.value("cellFormID", 0u);
+								const long          timeoutMs = step.value("timeoutMs", static_cast<long>(10000));
+								// soft (consumer forced a looser coupling): a mismatch is reported, not fatal.
+								const bool soft = step.value("soft", false);
+								// The scene may still be loading right after a restore — poll until the
+								// player is loaded, read the current worldspace/cell, compare the coarse id.
+								json       check;
+								bool       ready = false;
+								const auto deadline = steady_clock::now() + milliseconds(timeoutMs);
+								do {
+									try {
+										check = MainThread::RunAndWait([interior, wsWant, cellWant]() -> json {
+											auto* pc = RE::PlayerCharacter::GetSingleton();
+											if (!pc || pc->Get3D() == nullptr)
+												return json{ { "ready", false } };
+											std::uint32_t curWs = 0, curCell = 0;
+											if (auto* ws = pc->GetWorldspace())
+												curWs = ws->GetFormID();
+											if (auto* cell = pc->GetParentCell())
+												curCell = cell->GetFormID();
+											const bool ok = interior ? (curCell == cellWant) : (curWs == wsWant);
+											return json{ { "ready", true }, { "ok", ok }, { "worldspaceFormID", curWs }, { "cellFormID", curCell } };
+										},
+											milliseconds(2000));
+									} catch (const ToolError&) {
+										check = json{ { "ready", false } };  // main thread stalled mid-load — keep polling
+									}
+									if (check.value("ready", false)) {
+										ready = true;
+										break;
+									}
+									std::this_thread::sleep_for(milliseconds(250));
+								} while (steady_clock::now() < deadline);
+
+								if (!ready) {
+									// soft: don't fail the run, just note we couldn't confirm the scene.
+									r["ok"] = soft;
+									r["sceneConfirmed"] = false;
+									(soft ? r["warning"] : r["error"]) = "scene assert: player never finished loading";
+									if (!soft) {
+										r["errorCode"] = 504;
+										stepFailed = true;
+									}
+								} else if (!check.value("ok", false)) {
+									const std::string   wantEid = interior ? step.value("cell", std::string{}) : step.value("worldspace", std::string{});
+									const std::uint32_t cur = interior ? check.value("cellFormID", 0u) : check.value("worldspaceFormID", 0u);
+									const std::string   msg = std::format("scene mismatch: recorded {} '{}' (0x{:X}), currently in 0x{:X}{}",
+										interior ? "cell" : "worldspace", wantEid, interior ? cellWant : wsWant, cur,
+										soft ? " — forced, proceeding" : " — aborting replay");
+									r["sceneMismatch"] = true;
+									r["worldspaceFormID"] = check.value("worldspaceFormID", 0u);
+									r["cellFormID"] = check.value("cellFormID", 0u);
+									// soft: a forced consumer accepted that the scene may not match — warn, don't abort.
+									r["ok"] = soft;
+									(soft ? r["warning"] : r["error"]) = msg;
+									if (!soft) {
+										r["errorCode"] = 409;
+										stepFailed = true;
+									}
+								} else {
+									r["ok"] = true;
+									r["worldspaceFormID"] = check.value("worldspaceFormID", 0u);
+									r["cellFormID"] = check.value("cellFormID", 0u);
 								}
 							} else {
-								r["ok"] = true;
-								r["worldspaceFormID"] = check.value("worldspaceFormID", 0u);
-								r["cellFormID"] = check.value("cellFormID", 0u);
+								throw ToolError(400, std::format("unknown assert '{}' (scene|noBlockingMenu)", what));
 							}
 						} else {
 							throw ToolError(400, std::format("step {} has none of wait/waitFor/waitUntil/tool/assert", i));
@@ -1882,7 +2009,7 @@ namespace dvb
 			"{\"waitFor\":<event>,…} block on a Skyrim EVENT — string shorthand "
 			"(\"postLoadGame\"/\"saveGame\"/\"newGame\"/\"preLoadGame\"/\"dataLoaded\"/\"deleteGame\", or "
 			"\"menuOpened\"/\"menuClosed\" with a \"name\"), or {\"topic\":\"…\",\"match\":{…}}; "
-			"{\"waitUntil\":\"playerLoaded\"|\"noModal\"|\"noMenu\"} poll live state. "
+			"{\"waitUntil\":\"playerLoaded\"|\"noModal\"|\"noMenu\"|\"noBlockingMenu\"} poll live state. "
 			"PREFER waitFor over a fixed wait — e.g. wait for postLoadGame to know a load truly "
 			"finished. Optional: repeat (≤1000), continueOnError, async. By default action='run' "
 			"BLOCKS the request for the run's duration and returns the transcript directly — the "
@@ -1995,6 +2122,7 @@ namespace dvb
 								{ "restoreScene", json{ { "type", "boolean" }, { "description", "replay: re-establish the recorded entryPoint + wait for load before the trajectory (default false)" } } },
 								{ "coupling", json{ { "type", "string" }, { "enum", json::array({ "anchored", "cell", "worldspace" }) }, { "description", "replay: override the recipe's coupling tier — run looser than the producer signaled (worldspace skips the scene restore)" } } },
 								{ "force", json{ { "type", "boolean" }, { "description", "replay: proceed even if the scene doesn't match the recording — report the mismatch as a warning instead of aborting (default false)" } } },
+								{ "closeMenus", json{ { "type", "boolean" }, { "description", "replay: if a MODAL is open at start, cancel it and continue instead of erroring; non-modal gameplay menus still error (default false)" } } },
 								{ "async", json{ { "type", "boolean" }, { "description", "replay: return {queued:true, runId} immediately and run in the background (default true); false blocks and returns the result directly" } } },
 								{ "runId", json{ { "type", "integer" }, { "description", "status: poll an async replay run started earlier (from replay's 'runId')" } } },
 							} },
@@ -2007,6 +2135,22 @@ namespace dvb
 				// rather than in Recording::Handle.
 				if (action == "replay") {
 					const json plan = Recording::BuildReplaySteps(a_args);
+					// Immediate 409 if a blocking menu is open at start (except restore plans — the
+					// load/coc clears menus, so those defer to the in-trajectory guard step). closeMenus
+					// clears a blocking MODAL (cancel, never affirm); a non-modal menu still errors.
+					if (!plan.value("restored", false)) {
+						auto blocking = BlockingMenus();
+						if (!blocking.empty()) {
+							const bool allModal = std::all_of(blocking.begin(), blocking.end(),
+								[](const std::string& n) { return n == RE::MessageBoxMenu::MENU_NAME; });
+							if (a_args.value("closeMenus", false) && allModal) {
+								CancelActiveModal();
+								blocking = BlockingMenus();
+							}
+							if (!blocking.empty())
+								throw ToolError(409, std::format("replay blocked: menu(s) open: [{}] — close them (menu tool) then retry; a modal can be cleared with closeMenus:true", JoinNames(blocking)));
+						}
+					}
 					const json steps = plan.value("steps", json::array());
 					long       estMs = 0;  // sum of wait steps ≈ replay duration
 					for (const auto& s : steps)
