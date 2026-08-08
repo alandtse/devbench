@@ -13,13 +13,14 @@
 
 #include "SKSEMenuFramework.h"
 
-#include "InputHotkeys.h"    // dvb::GetHotkeys (read-only keybinds display)
+#include "InputHotkeys.h"    // dvb::GetHotkeys (read-only hotkey display)
 #include "Json.h"            // dvb::json (nlohmann) — unrelated to imgui, safe in this TU
 #include "RecordingsView.h"  // dvb::ui row model
 #include "Server.h"          // dvb::RunTool / OpenRecordingsFolder
 
 #include <set>
 #include <string>
+#include <vector>
 
 namespace logger = SKSE::log;
 
@@ -34,10 +35,58 @@ namespace dvb::UI
 		// Menu state (single SMF page → function-local statics are fine).
 		char                  s_filter[128]{};
 		std::set<std::string> s_selected;
-		bool                  s_confirmDelete = false;
+		bool                  s_confirmBulkDelete = false;
+		std::string           s_confirmDeleteFile;  // the row awaiting a delete confirm
 		ui::SortKey           s_sortKey = ui::SortKey::Name;
 		bool                  s_sortAsc = true;
-		std::string           s_lastError;  // last failed action, shown red until the next action
+		std::string           s_lastError, s_lastStatus;  // last action outcome (red / green)
+
+		void Tooltip(const char* a_text)
+		{
+			if (ImGuiMCP::IsItemHovered())
+				ImGuiMCP::SetTooltip("%s", a_text);
+		}
+
+		void SetStatus(const std::string& a_s)
+		{
+			s_lastStatus = a_s;
+			s_lastError.clear();
+		}
+		void SetError(const std::string& a_e)
+		{
+			s_lastError = a_e;
+			s_lastStatus.clear();
+		}
+
+		// Action wrappers over the shared imgui-free helpers — each sets the status/error line.
+		void ReplayAction(const std::string& a_path)
+		{
+			if (const std::string e = ui::Replay(a_path); e.empty())
+				SetStatus("Replay started");
+			else
+				SetError("Replay failed: " + e);
+		}
+		void ValidateAction(const std::string& a_file, bool a_value)
+		{
+			if (const std::string e = ui::Validate(a_file, a_value); e.empty())
+				SetStatus((a_value ? "Validated " : "Unvalidated ") + a_file);
+			else
+				SetError("Validate failed: " + e);
+		}
+		void DeleteAction(const std::string& a_file)
+		{
+			if (const std::string e = ui::Delete(a_file); e.empty())
+				SetStatus("Deleted " + a_file);
+			else
+				SetError("Delete failed: " + e);
+		}
+		void ReportBulk(int a_fail, int a_total, const char* a_verb, const std::string& a_first)
+		{
+			if (a_fail == 0)
+				SetStatus(std::to_string(a_total) + " " + a_verb);
+			else
+				SetError(std::to_string(a_fail) + " of " + std::to_string(a_total) + " " + a_verb + " failed: " + a_first);
+		}
 
 		// The SMF host resolves each ImGuiMCP call via GetProcAddress; the table/sort exports may be
 		// absent on an older host. Probe a fresh module handle (the header's cached one can be NULL
@@ -59,11 +108,6 @@ namespace dvb::UI
 			return smf && ::GetProcAddress(smf, "igInputTextWithHint");
 		}
 
-		// Thin wrappers over the shared imgui-free helpers that capture any error for the page.
-		void ReplayPath(const std::string& a_path) { s_lastError = ui::Replay(a_path); }
-		void Validate(const std::string& a_file, bool a_value, bool a_invalidate = true) { s_lastError = ui::Validate(a_file, a_value, a_invalidate); }
-		void Delete(const std::string& a_file, bool a_invalidate = true) { s_lastError = ui::Delete(a_file, a_invalidate); }
-
 		// Pre-table per-recording block layout, kept as the fallback when the host lacks the table
 		// exports. (Was the whole of RenderRecordings before the table rework.)
 		void RenderRecordingsLegacy(const json& a_recs, const std::string& a_dir)
@@ -83,61 +127,76 @@ namespace dvb::UI
 				ImGuiMCP::TextColored(validated ? kGreen : kGrey, validated ? "| validated" : "| unvalidated");
 
 				if (ImGuiMCP::Button((std::string("Replay") + id).c_str()))
-					ReplayPath(a_dir + "/" + file);
+					ReplayAction(a_dir + "/" + file);
 				ImGuiMCP::SameLine();
 				if (ImGuiMCP::Button((std::string(validated ? "Unvalidate" : "Validate") + id).c_str()))
-					Validate(file, !validated);
+					ValidateAction(file, !validated);
 				ImGuiMCP::SameLine();
 				if (ImGuiMCP::Button((std::string("Delete") + id).c_str()))
-					Delete(file);
+					DeleteAction(file);
 				ImGuiMCP::Separator();
 			}
 		}
 
-		// Bulk action bar over the current selection; a delete needs a second (confirm) click.
-		void RenderActionBar(const json& a_list)
+		// Select-all + bulk action bar over the currently-filtered rows.
+		void RenderActionBar(const std::vector<ui::Row>& a_rows)
 		{
+			if (ImGuiMCP::Button("All"))
+				for (const auto& r : a_rows)
+					s_selected.insert(r.file);
+			ImGuiMCP::SameLine();
+			if (ImGuiMCP::Button("None"))
+				s_selected.clear();
+			ImGuiMCP::SameLine();
+			ImGuiMCP::Text("(%d selected)", static_cast<int>(s_selected.size()));
+
 			ImGuiMCP::BeginDisabled(s_selected.empty());
+			ImGuiMCP::SameLine();
 			if (ImGuiMCP::Button("Validate selected")) {
-				s_lastError.clear();
+				int         fail = 0;
+				std::string first;
 				for (const auto& f : s_selected)
-					if (const auto e = ui::Validate(f, true, false); s_lastError.empty())
-						s_lastError = e;
+					if (const std::string e = ui::Validate(f, true, false); !e.empty() && (++fail, first.empty()))
+						first = e;
 				dvb::InvalidateRecordingsCache();
+				ReportBulk(fail, static_cast<int>(s_selected.size()), "validated", first);
 			}
 			ImGuiMCP::SameLine();
 			if (ImGuiMCP::Button("Unvalidate selected")) {
-				s_lastError.clear();
+				int         fail = 0;
+				std::string first;
 				for (const auto& f : s_selected)
-					if (const auto e = ui::Validate(f, false, false); s_lastError.empty())
-						s_lastError = e;
+					if (const std::string e = ui::Validate(f, false, false); !e.empty() && (++fail, first.empty()))
+						first = e;
 				dvb::InvalidateRecordingsCache();
+				ReportBulk(fail, static_cast<int>(s_selected.size()), "unvalidated", first);
 			}
 			ImGuiMCP::SameLine();
 			if (ImGuiMCP::Button("Delete selected"))
-				s_confirmDelete = true;
+				s_confirmBulkDelete = true;
 			ImGuiMCP::EndDisabled();
-			if (s_confirmDelete && !s_selected.empty()) {
+			if (s_confirmBulkDelete && !s_selected.empty()) {
 				ImGuiMCP::SameLine();
 				ImGuiMCP::TextColored(kRed, "delete %d?", static_cast<int>(s_selected.size()));
 				ImGuiMCP::SameLine();
 				if (ImGuiMCP::Button("Yes##confdel")) {
-					s_lastError.clear();
+					int         fail = 0;
+					std::string first;
 					for (const auto& f : s_selected)
-						if (const auto e = ui::Delete(f, false); s_lastError.empty())
-							s_lastError = e;
+						if (const std::string e = ui::Delete(f, false); !e.empty() && (++fail, first.empty()))
+							first = e;
 					dvb::InvalidateRecordingsCache();
+					ReportBulk(fail, static_cast<int>(s_selected.size()), "deleted", first);
 					s_selected.clear();
-					s_confirmDelete = false;
+					s_confirmBulkDelete = false;
 				}
 				ImGuiMCP::SameLine();
 				if (ImGuiMCP::Button("No##confdel"))
-					s_confirmDelete = false;
+					s_confirmBulkDelete = false;
 			}
 			ImGuiMCP::SameLine();
 			if (ImGuiMCP::Button("Open folder"))
 				dvb::OpenRecordingsFolder();
-			(void)a_list;
 		}
 
 		ui::SortKey ColumnToSort(unsigned a_userID)
@@ -149,8 +208,6 @@ namespace dvb::UI
 				return ui::SortKey::Start;
 			case 4:
 				return ui::SortKey::Time;
-			case 5:
-				return ui::SortKey::Format;
 			case 6:
 				return ui::SortKey::Validated;
 			default:
@@ -158,33 +215,64 @@ namespace dvb::UI
 			}
 		}
 
+		void RenderRowActions(const ui::Row& a_row, const std::string& a_dir)
+		{
+			const std::string id = "##" + a_row.file;
+			if (ImGuiMCP::Button(("Replay" + id).c_str()))
+				ReplayAction(a_dir + "/" + a_row.file);
+			Tooltip("Replay this recording.");
+			ImGuiMCP::SameLine();
+			if (ImGuiMCP::Button(((a_row.validated ? "Unvalidate" : "Validate") + id).c_str()))
+				ValidateAction(a_row.file, !a_row.validated);
+			Tooltip("Mark this recording validated / not.");
+			ImGuiMCP::SameLine();
+			// Per-row delete needs a confirm too (bulk delete already does).
+			if (s_confirmDeleteFile == a_row.file) {
+				if (ImGuiMCP::Button(("Yes" + id).c_str())) {
+					DeleteAction(a_row.file);
+					s_selected.erase(a_row.file);
+					s_confirmDeleteFile.clear();
+				}
+				ImGuiMCP::SameLine();
+				if (ImGuiMCP::Button(("No" + id).c_str()))
+					s_confirmDeleteFile.clear();
+			} else {
+				if (ImGuiMCP::Button(("Delete" + id).c_str()))
+					s_confirmDeleteFile = a_row.file;
+				Tooltip("Delete this recording (asks to confirm).");
+			}
+		}
+
 		void RenderRecordingsTable(const json& a_list, const std::string& a_dir)
 		{
 			static const bool s_filterOk = FilterExportOk();
+			ImGuiMCP::Text("Filter");
+			ImGuiMCP::SameLine();
 			if (s_filterOk)
-				ImGuiMCP::InputTextWithHint("##filter", "filter name / where / start", s_filter, sizeof s_filter);
+				ImGuiMCP::InputTextWithHint("##filter", "name / where / start", s_filter, sizeof s_filter);
 			else
 				ImGuiMCP::TextColored(kGrey, "(filter unavailable on this menu-framework build)");
 
-			RenderActionBar(a_list);
+			// One build per frame; the table reads sort specs to update s_sortKey for the next frame.
+			const auto rows = ui::BuildRows(a_list, s_filter, s_sortKey, s_sortAsc);
+			RenderActionBar(rows);
 
 			constexpr ImGuiMCP::ImGuiTableFlags flags = ImGuiMCP::ImGuiTableFlags_Resizable |
 			                                            ImGuiMCP::ImGuiTableFlags_Sortable |
 			                                            ImGuiMCP::ImGuiTableFlags_RowBg |
 			                                            ImGuiMCP::ImGuiTableFlags_ScrollY |
 			                                            ImGuiMCP::ImGuiTableFlags_BordersInnerH;
-			// Fill the rest of the page rather than a fixed 320px box (ScrollY needs a height).
+			// Fill the rest of the page rather than a fixed box (ScrollY needs a height).
 			ImGuiMCP::ImVec2 avail{ 0.0f, 0.0f };
 			ImGuiMCP::GetContentRegionAvail(&avail);
-			if (!ImGuiMCP::BeginTable("recs", 8, flags, ImGuiMCP::ImVec2(0.0f, avail.y)))
+			if (!ImGuiMCP::BeginTable("recs", 7, flags, ImGuiMCP::ImVec2(0.0f, avail.y)))
 				return;
-			ImGuiMCP::TableSetupColumn("##sel", ImGuiMCP::ImGuiTableColumnFlags_NoSort, 0.0f, 0);
+			ImGuiMCP::TableSetupColumn("Sel", ImGuiMCP::ImGuiTableColumnFlags_NoSort, 0.0f, 0);
 			ImGuiMCP::TableSetupColumn("Name", ImGuiMCP::ImGuiTableColumnFlags_DefaultSort, 0.0f, 1);
 			ImGuiMCP::TableSetupColumn("Where", 0, 0.0f, 2);
 			ImGuiMCP::TableSetupColumn("Start", 0, 0.0f, 3);
 			ImGuiMCP::TableSetupColumn("Time", 0, 0.0f, 4);
-			ImGuiMCP::TableSetupColumn("Fmt", 0, 0.0f, 5);
-			ImGuiMCP::TableSetupColumn("Val", 0, 0.0f, 6);
+			ImGuiMCP::TableSetupColumn("Valid", 0, 0.0f, 6);
 			ImGuiMCP::TableSetupColumn("Actions", ImGuiMCP::ImGuiTableColumnFlags_NoSort, 0.0f, 7);
 			ImGuiMCP::TableSetupScrollFreeze(0, 1);
 			ImGuiMCP::TableHeadersRow();
@@ -194,7 +282,20 @@ namespace dvb::UI
 				s_sortAsc = specs->Specs[0].SortDirection != ImGuiMCP::ImGuiSortDirection_Descending;
 			}
 
-			for (const auto& row : ui::BuildRows(a_list, s_filter, s_sortKey, s_sortAsc)) {
+			if (rows.empty()) {
+				ImGuiMCP::TableNextRow();
+				ImGuiMCP::TableNextColumn();
+				if (s_filter[0])
+					ImGuiMCP::TextColored(kGrey, "No matches for \"%s\"", s_filter);
+				else {
+					int  recKey = 0, repKey = 0;
+					bool recShift = false, repShift = false;
+					dvb::GetHotkeys(recKey, recShift, repKey, repShift);
+					ImGuiMCP::TextColored(kGrey, "No recordings yet — press %s to record.", ui::KeyName(recKey).c_str());
+				}
+			}
+
+			for (const auto& row : rows) {
 				ImGuiMCP::TableNextRow();
 				ImGuiMCP::TableNextColumn();
 				bool sel = s_selected.count(row.file) > 0;
@@ -206,31 +307,22 @@ namespace dvb::UI
 				}
 				ImGuiMCP::TableNextColumn();
 				ImGuiMCP::Text("%s", row.name.c_str());
+				Tooltip(("format: " + row.format).c_str());
 				ImGuiMCP::TableNextColumn();
 				ImGuiMCP::Text("%s", row.where.c_str());
 				ImGuiMCP::TableNextColumn();
 				if (row.restorable)
 					ImGuiMCP::Text("%s", row.startText.c_str());
-				else
+				else {
 					ImGuiMCP::TextColored(kRed, "%s", row.startText.c_str());
+					Tooltip("No save/coc entry captured — replay can't restore the starting scene; comparisons may be unreliable.");
+				}
 				ImGuiMCP::TableNextColumn();
 				ImGuiMCP::Text("%s", row.timeText.c_str());
 				ImGuiMCP::TableNextColumn();
-				ImGuiMCP::Text("%s", row.format.c_str());
-				ImGuiMCP::TableNextColumn();
 				ImGuiMCP::TextColored(row.validated ? kGreen : kGrey, row.validated ? "yes" : "no");
 				ImGuiMCP::TableNextColumn();
-				const std::string id = "##" + row.file;
-				if (ImGuiMCP::Button(("Replay" + id).c_str()))
-					ReplayPath(a_dir + "/" + row.file);
-				ImGuiMCP::SameLine();
-				if (ImGuiMCP::Button(((row.validated ? "Unval" : "Val") + id).c_str()))
-					Validate(row.file, !row.validated);
-				ImGuiMCP::SameLine();
-				if (ImGuiMCP::Button(("Del" + id).c_str())) {
-					Delete(row.file);
-					s_selected.erase(row.file);
-				}
+				RenderRowActions(row, a_dir);
 			}
 			ImGuiMCP::EndTable();
 		}
@@ -241,10 +333,13 @@ namespace dvb::UI
 				"Replay a captured trajectory against the current build. Replay is "
 				"async; it restores the recorded scene first (force = run anyway on a mismatch).");
 			ImGuiMCP::Spacing();
-			if (ImGuiMCP::Button("Replay last"))
-				ReplayPath("");
+			if (ImGuiMCP::Button("Replay most recent"))
+				ReplayAction("");
+			Tooltip("Replay the most recently recorded trajectory (async).");
 			if (!s_lastError.empty())
-				ImGuiMCP::TextColored(kRed, "action failed: %s", s_lastError.c_str());
+				ImGuiMCP::TextColored(kRed, "%s", s_lastError.c_str());
+			else if (!s_lastStatus.empty())
+				ImGuiMCP::TextColored(kGreen, "%s", s_lastStatus.c_str());
 			ImGuiMCP::Separator();
 
 			const json list = dvb::ListRecordingsCached();
@@ -261,13 +356,13 @@ namespace dvb::UI
 				RenderRecordingsLegacy(list.value("recordings", json::array()), dir);
 		}
 
-		void __stdcall RenderKeybinds()
+		void __stdcall RenderHotkeys()
 		{
 			int  recKey = 0, repKey = 0;
 			bool recShift = false, repShift = false;
 			dvb::GetHotkeys(recKey, recShift, repKey, repShift);
-			ImGuiMCP::Text("recordHotkey : %d%s", recKey, recShift ? " +Shift" : "");
-			ImGuiMCP::Text("replayHotkey : %d%s", repKey, repShift ? " +Shift" : "");
+			ImGuiMCP::Text("Record : %s%s", ui::KeyName(recKey).c_str(), recShift ? " +Shift" : "");
+			ImGuiMCP::Text("Replay : %s%s", ui::KeyName(repKey).c_str(), repShift ? " +Shift" : "");
 			ImGuiMCP::Separator();
 			ImGuiMCP::TextWrapped(
 				"Rebind in the FUCK menu (if installed) or edit Data/SKSE/Plugins/devbench/config.json "
@@ -283,7 +378,7 @@ namespace dvb::UI
 		}
 		SKSEMenuFramework::SetSection("devbench");
 		SKSEMenuFramework::AddSectionItem("Recordings", RenderRecordings);
-		SKSEMenuFramework::AddSectionItem("Keybinds", RenderKeybinds);
+		SKSEMenuFramework::AddSectionItem("Hotkeys", RenderHotkeys);
 		logger::info("devbench: registered SMF pages (framework v{:.1f}).", SKSEMenuFramework::GetMenuFrameworkVersion());
 	}
 }

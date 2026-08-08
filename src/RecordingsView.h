@@ -35,6 +35,7 @@ namespace dvb::ui
 	std::string FormatDuration(long long a_ms);    // 91000 -> "1m31s"; < 1s -> "0s"
 	std::string FormatStart(const json& a_entry);  // "save: X" / "coc: X" / "no restore point"
 	std::string FormatWhere(const json& a_rec);    // worldspace else cell; " (interior)" suffix
+	std::string KeyName(int a_dxScanCode);         // DXScanCode -> "F1"/"A"/… ; 0 -> "(unset)"
 
 	// Menu action helpers (imgui-free — shared by both menu TUs). Each drives a devbench tool and
 	// returns the tool's "error" message, or "" on success, so the caller can surface a failure.
