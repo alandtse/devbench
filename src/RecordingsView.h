@@ -35,4 +35,10 @@ namespace dvb::ui
 	std::string FormatDuration(long long a_ms);    // 91000 -> "1m31s"; < 1s -> "0s"
 	std::string FormatStart(const json& a_entry);  // "save: X" / "coc: X" / "no restore point"
 	std::string FormatWhere(const json& a_rec);    // worldspace else cell; " (interior)" suffix
+
+	// Menu action helpers (imgui-free — shared by both menu TUs). Each drives a devbench tool and
+	// returns the tool's "error" message, or "" on success, so the caller can surface a failure.
+	std::string Replay(const std::string& a_path);  // async record replay (empty path = most recent)
+	std::string Validate(const std::string& a_file, bool a_value, bool a_invalidate = true);
+	std::string Delete(const std::string& a_file, bool a_invalidate = true);
 }

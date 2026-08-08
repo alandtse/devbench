@@ -1,5 +1,7 @@
 #include "RecordingsView.h"
 
+#include "Server.h"  // dvb::RunTool / InvalidateRecordingsCache (imgui-free)
+
 #include <algorithm>
 #include <cctype>
 
@@ -50,21 +52,27 @@ namespace dvb::ui
 			for (const auto& r : a_list["recordings"]) {
 				if (r.contains("error"))
 					continue;
-				Row row;
-				row.file = r.value("file", std::string{});
-				row.name = r.value("name", row.file);
-				row.format = r.value("format", std::string{ "?" });
-				row.validated = r.value("validated", false);
-				row.recordedMs = r.value("recordedMs", 0LL);
-				row.timeText = FormatDuration(row.recordedMs);
-				row.where = FormatWhere(r);
-				const json entry = r.value("entry", json::object());
-				row.startText = FormatStart(entry);
-				row.restorable = entry.value("kind", std::string{}) != "unknown";
-				if (!needle.empty() &&
-					Lower(row.name + "\n" + row.where + "\n" + row.startText).find(needle) == std::string::npos)
+				try {
+					// A hand-edited recording with a wrong-type meta field would make .value() throw
+					// on the render thread — skip the bad entry rather than crash the menu.
+					Row row;
+					row.file = r.value("file", std::string{});
+					row.name = r.value("name", row.file);
+					row.format = r.value("format", std::string{ "?" });
+					row.validated = r.value("validated", false);
+					row.recordedMs = r.value("recordedMs", 0LL);
+					row.timeText = FormatDuration(row.recordedMs);
+					row.where = FormatWhere(r);
+					const json entry = r.value("entry", json::object());
+					row.startText = FormatStart(entry);
+					row.restorable = entry.value("kind", std::string{}) != "unknown";
+					if (!needle.empty() &&
+						Lower(row.name + "\n" + row.where + "\n" + row.startText).find(needle) == std::string::npos)
+						continue;
+					rows.push_back(std::move(row));
+				} catch (const std::exception&) {
 					continue;
-				rows.push_back(std::move(row));
+				}
 			}
 		}
 
@@ -88,5 +96,29 @@ namespace dvb::ui
 		std::stable_sort(rows.begin(), rows.end(),
 			[&](const Row& x, const Row& y) { return a_ascending ? less(x, y) : less(y, x); });
 		return rows;
+	}
+
+	std::string Replay(const std::string& a_path)
+	{
+		json args{ { "action", "replay" }, { "restoreScene", true }, { "force", true } };
+		if (!a_path.empty())
+			args["path"] = a_path;
+		return dvb::RunTool("record", args).value("error", std::string{});
+	}
+
+	std::string Validate(const std::string& a_file, bool a_value, bool a_invalidate)
+	{
+		const json r = dvb::RunTool("recordings", json{ { "action", "validate" }, { "file", a_file }, { "value", a_value } });
+		if (a_invalidate)
+			dvb::InvalidateRecordingsCache();
+		return r.value("error", std::string{});
+	}
+
+	std::string Delete(const std::string& a_file, bool a_invalidate)
+	{
+		const json r = dvb::RunTool("recordings", json{ { "action", "delete" }, { "file", a_file } });
+		if (a_invalidate)
+			dvb::InvalidateRecordingsCache();
+		return r.value("error", std::string{});
 	}
 }
