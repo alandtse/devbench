@@ -532,7 +532,8 @@ namespace dvb
 							return json{ { "accepted", false }, { "reason", "no active MessageBoxMenu" } };
 						if (!data->bodyText.c_str() || !ContainsCI(data->bodyText.c_str(), matchBody))
 							return json{ { "accepted", false }, { "reason", "body did not match matchBody" } };
-						const int pick = data->cancelOptionIndex == 0 ? 1 : 0;
+						// Non-cancel button, but never out of range: fall back to 0 on a one-button box.
+						const int pick = (data->cancelOptionIndex == 0 && data->buttonText.size() > 1) ? 1 : 0;
 						RE::MessageBoxMenu::SelectOption(pick);
 						return json{ { "accepted", true }, { "index", pick } };
 					});
@@ -1343,7 +1344,7 @@ namespace dvb
 					auto* data = RE::MessageBoxMenu::GetCurrentMessageBoxData();
 					if (!data || !data->bodyText.c_str() || !ContainsCI(data->bodyText.c_str(), a_matchBody))
 						return false;
-					RE::MessageBoxMenu::SelectOption(data->cancelOptionIndex == 0 ? 1 : 0);
+					RE::MessageBoxMenu::SelectOption((data->cancelOptionIndex == 0 && data->buttonText.size() > 1) ? 1 : 0);
 					return true;
 				},
 					milliseconds(1000))
@@ -2145,7 +2146,15 @@ namespace dvb
 								[](const std::string& n) { return n == RE::MessageBoxMenu::MENU_NAME; });
 							if (a_args.value("closeMenus", false) && allModal) {
 								CancelActiveModal();
-								blocking = BlockingMenus();
+								// The modal dismisses through the UI queue on a later frame, so poll (up
+								// to ~1s) rather than re-checking instantly — an instant check still sees
+								// the closing modal and would 409 spuriously.
+								for (int i = 0; i < 20; ++i) {
+									blocking = BlockingMenus();
+									if (blocking.empty())
+										break;
+									std::this_thread::sleep_for(milliseconds(50));
+								}
 							}
 							if (!blocking.empty())
 								throw ToolError(409, std::format("replay blocked: menu(s) open: [{}] — close them (menu tool) then retry; a modal can be cleared with closeMenus:true", JoinNames(blocking)));
