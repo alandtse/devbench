@@ -6,23 +6,13 @@
 # plugin, attach the .7z mod archive to that release, and — on the source repo —
 # upload to Nexus with the same changelog.
 #
-# Debounce: a leading `debounce` job makes each push wait out a short quiet window before
-# releasing, so several PRs merged in close succession collapse into ONE semantic-release run
-# (and one Nexus upload) instead of one release per push. Each new push starts a fresh debounce
-# that cancels the still-waiting one (cancel-in-progress) and restarts the timer; once main is
-# quiet for the window the surviving run proceeds and semantic-release batches every accumulated
-# commit into a single version bump. workflow_dispatch skips the wait and releases immediately.
-# The version-bump commit carries [skip ci], so it neither starts a debounce nor cuts a release.
-#
-# Concurrency is per-job (one top-level group can't hold both cancel-in-progress semantics):
-#   - debounce         -> group semantic-release-debounce, cancel-in-progress: true  (a newer
-#                         merge cancels only the still-sleeping wait, never a live release job)
-#   - semantic-release -> group semantic-release-publish, cancel-in-progress: false (a live
-#                         bump commit + tag + Release is never aborted; concurrent runs queue)
-#   - nexus            -> its own group, cancel-in-progress: false, so two releases that both
-#                         escape the debounce window can't upload to the same mod page at once
-#                         (the reusable uploader reads the file list then writes — not
-#                         concurrency-safe; the session-cookie secret it still takes is inert).
+# Debounce: a leading `debounce` job waits out a short quiet window; each new push cancels the
+# still-sleeping wait and restarts it, so a burst of merges collapses into ONE release instead of
+# one per push. workflow_dispatch skips the wait; the [skip ci] bump commit triggers neither.
+# Concurrency is per-job (a top-level group can't hold both semantics): `debounce` is
+# cancel-in-progress (only ever a sleeping wait); `semantic-release` and `nexus` are
+# cancel-in-progress:false so a live publish/upload is never aborted, and the `nexus` group also
+# serializes uploads across runs (the reusable uploader reads-then-writes the mod file list).
 #
 # Single workflow on purpose (mirrors CrashLoggerSSE): because build/package/nexus
 # run in the same run as semantic-release, they read its outputs directly and nothing
