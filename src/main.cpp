@@ -1,4 +1,5 @@
 #include "Autorun.h"
+#include "Capture.h"
 #include "Config.h"
 #include "ConsoleHook.h"
 #include "GameEvents.h"
@@ -81,6 +82,8 @@ namespace
 				dvb::Recording::SetLoadSettleMs(cfg.loadSettleMs);
 				dvb::Recording::SetDefaultIntervalMs(cfg.recordIntervalMs);
 				dvb::Recording::SetCoupling(cfg.couplingAnchorMs, cfg.couplingCellMs, cfg.cleanTransition, cfg.cleanTransitionCell);
+				dvb::Capture::SetEvents(&g_server->Events());
+				dvb::Capture::SetDefaults(cfg);
 				dvb::ArmAutoRun(g_server->Tools(), cfg.autoRunPath, cfg.autoRunRestoreScene);
 				dvb::HostApi::Init(g_server->Tools(), g_server->Events());
 				g_server->Start();

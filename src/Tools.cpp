@@ -1,9 +1,11 @@
 #include "Tools.h"
 
+#include "Capture.h"
 #include "ConsoleLogCapture.h"
 #include "EventBus.h"
 #include "GameEvents.h"
 #include "GameState.h"
+#include "HostApi.h"
 #include "Json.h"
 #include "MainThread.h"
 #include "Papyrus.h"
@@ -1097,6 +1099,46 @@ namespace dvb
 				});
 			}
 
+			// 'registrants': who has requested the C-ABI interface, and what they registered
+			// through it — the human/agent-facing view of the ledger HostApi keeps. `capabilities`
+			// is the same ToolExtensions::Keys() data the capture-provider gate reads, surfaced
+			// here so a person can see why a gate failed without reading source. Consumers and
+			// registrations are NOT joined by plugin name — the C-ABI interface has no per-call
+			// caller identity (see ROADMAP.md's "Event source tagging" item), so guessing which
+			// consumer owns which registration would be a confident lie; both lists are returned
+			// side by side instead.
+			if (kind == "registrants") {
+				json consumers = json::array();
+				for (const auto& c : HostApi::Consumers())
+					consumers.push_back(json{ { "name", c.name }, { "atEpoch", c.atEpoch }, { "atFrame", c.atFrame } });
+
+				json registrations = json::array();
+				for (const auto& r : HostApi::Registrations())
+					registrations.push_back(json{
+						{ "kind", r.kind }, { "name", r.name },
+						{ "atEpoch", r.atEpoch }, { "atFrame", r.atFrame }, { "replaced", r.replaced } });
+
+				json capabilities = json::object();
+				for (const char* base : { "capture", "inspect", "menu" }) {
+					json keys = json::array();
+					for (const auto& k : ToolExtensions::Keys(base))
+						keys.push_back(k);
+					capabilities[base] = std::move(keys);
+				}
+
+				return json{
+					{ "consumers", std::move(consumers) },
+					{ "registrations", std::move(registrations) },
+					{ "capabilities", std::move(capabilities) },
+				};
+			}
+
+			// 'screenshots': list image files sitting in the vanilla screenshot directories,
+			// independent of the `capture` tool — lets a human/agent confirm where THIS install
+			// actually writes before relying on the capture tool's native fallback.
+			if (kind == "screenshots")
+				return Capture::ListScreenshots(a_args);
+
 			// 'extensions' lists consumer-registered inspect kinds (C-ABI RegisterToolExtension).
 			if (kind == "extensions") {
 				json out = json::array();
@@ -1113,7 +1155,7 @@ namespace dvb
 			if (auto entry = ToolExtensions::Find("inspect", kind))
 				return entry->handler(a_args, a_ctx);
 
-			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|inventory|quests|effects|refs|extensions, or a registered kind — see inspect kind=extensions)", kind));
+			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|inventory|quests|effects|refs|registrants|screenshots|extensions, or a registered kind — see inspect kind=extensions)", kind));
 		}
 
 		// camera: read or set the player camera point of view, so a recording can capture the
@@ -1862,18 +1904,28 @@ namespace dvb
 				"'refs' → identify reference(s) sharing one shape { formId, formType, name, "
 				"editorId, base, position } — pass 'formId' for one form, 'selected'=true for the "
 				"console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid "
-				"(optional 'formType' filter, 'radius' from player, 'limit' default 100). A consumer mod "
+				"(optional 'formType' filter, 'radius' from player, 'limit' default 100). "
+				"'registrants' → who has requested the C-ABI interface and what they registered "
+				"through it { consumers:[{name,atEpoch,atFrame}], registrations:[{kind,name,atEpoch,"
+				"atFrame,replaced}], capabilities:{capture,inspect,menu → [registered keys]} } — "
+				"consumers and registrations are reported side by side, not joined, since the C-ABI "
+				"has no per-call caller identity. "
+				"'screenshots' → image files in the vanilla screenshot directories (game root + "
+				"'Screenshots/') { dirs, count, returned, truncated, screenshots:[{file,path,bytes,"
+				"mtimeEpoch}] } newest-first (optional 'dir' override, 'limit' default 50) — see also "
+				"the `capture` tool, which has its own native fallback using the same directories. "
+				"A consumer mod "
 				"can add a custom kind via the C-ABI RegisterToolExtension (e.g. load-timing data); "
 				"'extensions' lists those registered kinds + descriptors, and kind=<registered> dispatches.";
 			inspect.description += RegisteredExtensionSummary("inspect", "kinds");
 			inspect.readOnly = true;
-			json kinds = json::array({ "state", "health", "vm", "scene", "mods", "player", "inventory", "quests", "effects", "refs", "extensions" });
+			json kinds = json::array({ "state", "health", "vm", "scene", "mods", "player", "inventory", "quests", "effects", "refs", "registrants", "screenshots", "extensions" });
 			for (const auto& k : ToolExtensions::Keys("inspect"))
 				kinds.push_back(k);
 			inspect.inputSchema = json{
 				{ "type", "object" },
 				{ "properties", json{
-									{ "kind", json{ { "type", "string" }, { "enum", kinds }, { "description", "state | health | vm | scene | mods | player | inventory | quests | effects | refs | extensions (health answers off-thread for liveness+identity; or a registered mod kind — listed here + via kind=extensions)" } } },
+									{ "kind", json{ { "type", "string" }, { "enum", kinds }, { "description", "state | health | vm | scene | mods | player | inventory | quests | effects | refs | registrants | screenshots | extensions (health answers off-thread for liveness+identity; or a registered mod kind — listed here + via kind=extensions)" } } },
 									{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form; inventory: the container ref to read (default player); effects: the actor to read (default player) (hex formId, e.g. 0x14, or EditorID)" } } },
 									{ "selected", json{ { "type", "boolean" }, { "description", "refs: identify the console-selected / crosshair ref instead" } } },
 									{ "formType", json{ { "type", "string" }, { "description", "refs/inventory: keep only entries whose type matches (e.g. Actor, Weapon, Potion)" } } },
@@ -1998,14 +2050,16 @@ namespace dvb
 		};
 		a_registry.Register(std::move(camera), &CameraHandler);
 
-		// inspect/menu are rebuilt (not frozen) so registered mod kinds/menus show in tools/list.
+		// inspect/menu/capture are rebuilt (not frozen) so registered mod kinds/menus/providers
+		// show in tools/list.
 		a_registry.Register(BuildInspectDescriptor(), &InspectHandler);
 		a_registry.Register(BuildMenuDescriptor(), &MenuHandler);
+		a_registry.Register(Capture::BuildCaptureDescriptor(), &Capture::Handle);
 
-		// When a mod registers a kind/menu, rebuild that base tool's descriptor so the new key is
-		// discoverable on the first call (the registry's registration path re-registers it with the
-		// adapters and fires tools/list_changed). Captures the registry by pointer — it outlives this
-		// function (owned by the Server).
+		// When a mod registers a kind/menu/provider, rebuild that base tool's descriptor so the new
+		// key is discoverable on the first call (the registry's registration path re-registers it
+		// with the adapters and fires tools/list_changed). Captures the registry by pointer — it
+		// outlives this function (owned by the Server).
 		ToolExtensions::SetChangeListener([reg = &a_registry](const std::string& a_baseTool) {
 			std::string base = a_baseTool;
 			std::transform(base.begin(), base.end(), base.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -2013,6 +2067,8 @@ namespace dvb
 				reg->Register(BuildInspectDescriptor(), &InspectHandler);
 			else if (base == "menu")
 				reg->Register(BuildMenuDescriptor(), &MenuHandler);
+			else if (base == "capture")
+				reg->Register(Capture::BuildCaptureDescriptor(), &Capture::Handle);
 		});
 
 		ToolDescriptor papyrus;

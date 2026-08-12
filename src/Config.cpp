@@ -40,6 +40,10 @@ namespace dvb
 				{ "couplingCellMs", a_cfg.couplingCellMs },
 				{ "cleanTransition", a_cfg.cleanTransition },
 				{ "cleanTransitionCell", a_cfg.cleanTransitionCell },
+				{ "captureDir", a_cfg.captureDir },
+				{ "captureScanDirs", a_cfg.captureScanDirs },
+				{ "captureTimeoutMs", a_cfg.captureTimeoutMs },
+				{ "captureSettleMs", a_cfg.captureSettleMs },
 			};
 			out << j.dump(2) << '\n';
 		}
@@ -113,6 +117,10 @@ namespace dvb
 			cfg.couplingCellMs = j.value("couplingCellMs", cfg.couplingCellMs);
 			cfg.cleanTransition = j.value("cleanTransition", cfg.cleanTransition);
 			cfg.cleanTransitionCell = j.value("cleanTransitionCell", cfg.cleanTransitionCell);
+			cfg.captureDir = j.value("captureDir", cfg.captureDir);
+			cfg.captureScanDirs = j.value("captureScanDirs", cfg.captureScanDirs);
+			cfg.captureTimeoutMs = j.value("captureTimeoutMs", cfg.captureTimeoutMs);
+			cfg.captureSettleMs = j.value("captureSettleMs", cfg.captureSettleMs);
 
 			// Migrate forward: if the file predates any key (e.g. an install from before
 			// the record hotkeys existed), rewrite it so the new keys appear with their
@@ -122,7 +130,8 @@ namespace dvb
 				"enabled", "port", "logLevel", "recordHotkey", "replayHotkey",
 				"recordHotkeyShift", "replayHotkeyShift", "replayPath", "replayRestoreScene",
 				"recordIntervalMs", "autoRunPath", "autoRunRestoreScene", "loadSettleMs",
-				"couplingAnchorMs", "couplingCellMs", "cleanTransition", "cleanTransitionCell"
+				"couplingAnchorMs", "couplingCellMs", "cleanTransition", "cleanTransitionCell",
+				"captureDir", "captureScanDirs", "captureTimeoutMs", "captureSettleMs"
 			};
 			const bool complete = std::all_of(std::begin(kKeys), std::end(kKeys),
 				[&](const char* k) { return j.contains(k); });

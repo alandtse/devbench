@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace dvb
 {
@@ -51,6 +52,16 @@ namespace dvb
 		// loading screen. Save-loads already tear down, so they skip the bounce.
 		bool        cleanTransition = true;
 		std::string cleanTransitionCell = "QASmoke";
+
+		// `capture` tool: where captured images are written, where the native (vanilla) fallback
+		// looks for the screenshot it just triggered, and default timeouts. captureScanDirs are
+		// relative to the game install root (GetModuleFileNameW's parent dir — vanilla screenshots
+		// and Open Shaders' own default capture path both resolve there, NOT Documents/My Games,
+		// which is a different, SKSE-log-specific convention); "" means the root itself.
+		std::string              captureDir = "Data/SKSE/Plugins/devbench/captures";
+		std::vector<std::string> captureScanDirs = { "", "Screenshots" };
+		int                      captureTimeoutMs = 8000;
+		int                      captureSettleMs = 500;  // default settle before a checkpoint capture
 	};
 
 	// Load Data/SKSE/Plugins/devbench/config.json. If the file is missing it is
