@@ -352,6 +352,14 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--visual-update", action="store_true", default=False,
+        help="test_visual_regression.py: promote captured images over their goldens "
+        "instead of asserting against them (review the diff before committing).",
+    )
+
+
 @pytest.fixture
 def requires_player(player_loaded: bool) -> None:
     """Skip only if no player is loaded and the bootstrap couldn't establish one

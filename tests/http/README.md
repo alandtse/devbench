@@ -74,14 +74,18 @@ how to play a recipe.
 
 ## Layout
 
-| File              | Covers                                                                                 |
-| ----------------- | -------------------------------------------------------------------------------------- |
-| `conftest.py`     | discovery, `base_url`/`client`/`tool_schema` fixtures, `requires_player`, skip helpers |
-| `test_smoke.py`   | discovery (`/api/tools`, `inspect` present) + console/camera/game smoke                |
-| `test_inspect.py` | `inspect` state / vm / scene / refs                                                    |
-| `test_papyrus.py` | `papyrus` list / describe / call (globals + members) + error                           |
-| `test_menu.py`    | `menu` list, and the open→list→close round-trip (guarded)                              |
-| `examples/`       | hand-run example recipes (not collected by pytest) — see below                         |
+| File                        | Covers                                                                                 |
+| --------------------------- | -------------------------------------------------------------------------------------- |
+| `conftest.py`               | discovery, `base_url`/`client`/`tool_schema` fixtures, `requires_player`, skip helpers |
+| `test_smoke.py`             | discovery (`/api/tools`, `inspect` present) + console/camera/game smoke                |
+| `test_inspect.py`           | `inspect` state / vm / scene / refs                                                    |
+| `test_papyrus.py`           | `papyrus` list / describe / call (globals + members) + error                           |
+| `test_menu.py`              | `menu` list, and the open→list→close round-trip (guarded)                              |
+| `visual.py`                 | SSIM/threshold/ROI scoring for capture checkpoints — pure, no server needed            |
+| `test_visual.py`            | unit tests for `visual.py` against synthetic PNGs — no server, no game                 |
+| `test_visual_regression.py` | live: replay a recording's `meta.checkpoints`, score captures against `goldens/`       |
+| `goldens/`                  | reference images for `test_visual_regression.py` — see `goldens/README.md`             |
+| `examples/`                 | hand-run example recipes (not collected by pytest) — see below                         |
 
 ## Examples
 

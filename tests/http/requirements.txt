@@ -1,2 +1,8 @@
 pytest>=7.0
 requests>=2.28
+
+# visual.py / test_visual*.py — SSIM-based capture-checkpoint scoring. Pure
+# Python; the numpy/scikit-image/Pillow trio never runs inside devbench itself.
+numpy>=1.24
+pillow>=10.0
+scikit-image>=0.22
