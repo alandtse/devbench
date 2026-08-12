@@ -2234,7 +2234,10 @@ namespace dvb
 			"replay.finished on GET /api/events (both carry runId; the runId space is shared with "
 			"scenario, so a replay's runId also resolves via scenario{action:'status'}). Pass "
 			"async:false to block the request for the run's duration and get the result object "
-			"directly instead.";
+			"directly. If the recording has meta.checkpoints, each expands into a `capture` step "
+			"at the point in the trajectory its atMs was recorded, tagged with 'variant' for "
+			"correlation (default 'default') — see the `capture` tool; devbench never scores the "
+			"resulting images, only captures them.";
 		record.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
@@ -2242,6 +2245,7 @@ namespace dvb
 								{ "intervalMs", json{ { "type", "integer" }, { "description", "start: pose sample period in ms (default = config recordIntervalMs, min 10)" } } },
 								{ "path", json{ { "type", "string" }, { "description", "replay: recording file to play back (from stop's 'path')" } } },
 								{ "restoreScene", json{ { "type", "boolean" }, { "description", "replay: re-establish the recorded entryPoint + wait for load before the trajectory (default false)" } } },
+								{ "variant", json{ { "type", "string" }, { "description", "replay: tag for any meta.checkpoints captures, for correlation (default 'default')" } } },
 								{ "coupling", json{ { "type", "string" }, { "enum", json::array({ "anchored", "cell", "worldspace" }) }, { "description", "replay: override the recipe's coupling tier — run looser than the producer signaled (worldspace skips the scene restore)" } } },
 								{ "force", json{ { "type", "boolean" }, { "description", "replay: proceed even if the scene doesn't match the recording — report the mismatch as a warning instead of aborting (default false)" } } },
 								{ "closeMenus", json{ { "type", "boolean" }, { "description", "replay: if a MODAL is open at start, cancel it and continue instead of erroring; non-modal gameplay menus still error (default false)" } } },

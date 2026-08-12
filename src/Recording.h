@@ -56,6 +56,10 @@ namespace dvb::Recording
 	/// A recipe's meta.coupling block and a replay call's args override these.
 	void SetCoupling(int a_anchorMs, int a_cellMs, bool a_cleanTransition, const std::string& a_transitionCell);
 
+	/// Default settle delay (ms) inserted before a checkpoint's capture when the checkpoint
+	/// doesn't specify its own settleMs. Local/per-machine (set from config's captureSettleMs).
+	void SetCaptureDefaults(int a_settleMs);
+
 	/// Show a corner HUD message (marshaled to the main thread). Used for hotkey feedback
 	/// (record start/stop, replay) since devbench is otherwise headless. No-op if no task interface.
 	void Notify(const std::string& a_msg);
@@ -67,6 +71,14 @@ namespace dvb::Recording
 	/// scene. The recipe's tier is the producer's signal; a_args.coupling overrides it (run
 	/// looser) and a_args.force turns the scene mismatch from an abort into a reported warning.
 	/// Throws ToolError on a missing/invalid file or an invalid coupling override.
+	///
+	/// A recording's meta.checkpoints (each { id, atMs, pov?, settleMs?, excludeUi?, subrect? })
+	/// expand into `capture` tool steps interleaved into the trajectory at the point the
+	/// recorder's own wait-accumulated clock (atMs) reaches them — a macro over existing scenario
+	/// primitives, not a new step kind. meta.capabilities (currently just {capability:"capture",
+	/// provider?, required?, allowNative?}) is checked up front: a required capture provider that
+	/// isn't registered throws ToolError(409) before anything runs, unless a_args.force or the
+	/// capability's own allowNative permits the low-fidelity native fallback.
 	json BuildReplaySteps(const json& a_args);
 
 	/// `recordings` tool: manage the on-disk recording library (the data layer an in-game menu —
