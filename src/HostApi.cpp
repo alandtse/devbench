@@ -2,10 +2,14 @@
 
 #include "DevBenchAPI.h"
 #include "EventBus.h"
+#include "GameState.h"
 #include "Json.h"
 #include "ToolExtensions.h"
 #include "ToolRegistry.h"
 #include "Version.h"
+
+#include <ctime>
+#include <mutex>
 
 namespace dvb::HostApi
 {
@@ -13,6 +17,37 @@ namespace dvb::HostApi
 	{
 		ToolRegistry* g_registry = nullptr;
 		EventBus*     g_events = nullptr;
+
+		// Registrant ledger: who asked for the C-ABI interface, and what they registered
+		// through it. Both grow only (append-only, process lifetime) — a plugin unregistering
+		// mid-session isn't a thing the C-ABI supports, so there's nothing to remove. One mutex
+		// covers both since they're written from the same call sites and read together by
+		// `inspect kind=registrants`.
+		std::mutex                g_ledgerMutex;
+		std::vector<Consumer>     g_consumers;
+		std::vector<Registration> g_registrations;
+
+		void NoteConsumer(const char* a_sender)
+		{
+			std::lock_guard<std::mutex> lock(g_ledgerMutex);
+			g_consumers.push_back(Consumer{
+				a_sender ? std::string(a_sender) : std::string("<?>"),
+				static_cast<long long>(std::time(nullptr)),
+				static_cast<std::uint32_t>(game::CurrentFrame()),
+			});
+		}
+
+		void NoteRegistration(std::string a_kind, std::string a_name, bool a_replacedExisting)
+		{
+			std::lock_guard<std::mutex> lock(g_ledgerMutex);
+			g_registrations.push_back(Registration{
+				std::move(a_kind),
+				std::move(a_name),
+				static_cast<long long>(std::time(nullptr)),
+				static_cast<std::uint32_t>(game::CurrentFrame()),
+				a_replacedExisting,
+			});
+		}
 
 		// Wrap a consumer's C callback (fn + ctx) as a ToolHandler: args in as a JSON string, result
 		// collected via our host-owned sink. Nothing C++ crosses the DLL boundary — only const char*
@@ -63,7 +98,9 @@ namespace dvb::HostApi
 				d.inputSchema = desc.value("inputSchema", json::object());
 				d.readOnly = desc.value("readOnly", false);
 
-				return g_registry->Register(std::move(d), MakeHandler(a_handler, a_ctx));
+				const bool isNew = g_registry->Register(std::move(d), MakeHandler(a_handler, a_ctx));
+				NoteRegistration("tool", a_name, !isNew);
+				return isNew;
 			}
 
 			bool RegisterMenuHandler(const char* a_menuName, const char* a_descriptorJson,
@@ -87,7 +124,9 @@ namespace dvb::HostApi
 				}
 				if (!desc.is_object())  // a scalar/array descriptor would break the descriptor object contract
 					desc = json::object();
-				return ToolExtensions::Register(a_baseTool, a_key, std::move(desc), MakeHandler(a_handler, a_ctx));
+				const bool isNew = ToolExtensions::Register(a_baseTool, a_key, std::move(desc), MakeHandler(a_handler, a_ctx));
+				NoteRegistration("extension", std::string(a_baseTool) + ":" + a_key, !isNew);
+				return isNew;
 			}
 
 			void EmitEvent(const char* a_topic, const char* a_payloadJson) override
@@ -158,7 +197,20 @@ namespace dvb::HostApi
 	{
 		if (a_message && a_message->type == DevBenchAPI::DevBenchMessage::kMessage_GetInterface && a_message->data) {
 			static_cast<DevBenchAPI::DevBenchMessage*>(a_message->data)->GetApiFunction = GetApi;
+			NoteConsumer(a_message->sender);
 			logs::info("devbench: provided plugin interface to {}", a_message->sender ? a_message->sender : "<?>");
 		}
+	}
+
+	std::vector<Consumer> Consumers()
+	{
+		std::lock_guard<std::mutex> lock(g_ledgerMutex);
+		return g_consumers;
+	}
+
+	std::vector<Registration> Registrations()
+	{
+		std::lock_guard<std::mutex> lock(g_ledgerMutex);
+		return g_registrations;
 	}
 }
