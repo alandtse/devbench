@@ -1574,6 +1574,9 @@ namespace dvb
 			} replayGuard;
 
 			for (int rep = 0; rep < repeat && !aborted; ++rep) {
+				// Per-repetition, not per-run: a scene mismatch on rep N must not poison rep N+1's
+				// captures if rep N+1's own scene assert succeeds.
+				bool runSceneMismatch = false;
 				for (size_t i = 0; i < steps.size() && !aborted; ++i) {
 					const json& step = steps[i];
 					json        r{ { "index", i } };
@@ -1710,11 +1713,22 @@ namespace dvb
 							}
 						} else if (step.contains("tool")) {
 							const std::string tool = step["tool"].get<std::string>();
-							const json        args = step.value("args", json::object());
+							json              args = step.value("args", json::object());  // non-const: run-scoped injection below
 							r["kind"] = "tool";
 							r["tool"] = tool;
 							if (step.contains("label"))
 								r["label"] = step["label"];
+							if (tool == "capture") {
+								// Context the static step list can't carry — a checkpoint's capture step
+								// doesn't know its own runId or whether an earlier scene assert this
+								// repetition failed. Reaches the transcript via the tool's RESULT (which
+								// Capture::Handle echoes these back into), not via these mutated args.
+								args["runId"] = runId;
+								if (repeat > 1)
+									args["repeat"] = rep;
+								if (runSceneMismatch)
+									args["sceneMismatch"] = true;
+							}
 							ToolContext stepCtx = a_ctx;
 							stepCtx.internal = true;  // scenario-driven — don't log each step (replay logs a summary)
 							const ToolResult tr = a_registry.Invoke(tool, args, stepCtx);
@@ -1779,6 +1793,9 @@ namespace dvb
 
 								if (!ready) {
 									// soft: don't fail the run, just note we couldn't confirm the scene.
+									// An unconfirmed scene is as unusable a golden reference as a mismatched
+									// one — a capture step after this must know not to trust it either.
+									runSceneMismatch = true;
 									r["ok"] = soft;
 									r["sceneConfirmed"] = false;
 									(soft ? r["warning"] : r["error"]) = "scene assert: player never finished loading";
@@ -1793,6 +1810,7 @@ namespace dvb
 										interior ? "cell" : "worldspace", wantEid, interior ? cellWant : wsWant, cur,
 										soft ? " — forced, proceeding" : " — aborting replay");
 									r["sceneMismatch"] = true;
+									runSceneMismatch = true;
 									r["worldspaceFormID"] = check.value("worldspaceFormID", 0u);
 									r["cellFormID"] = check.value("cellFormID", 0u);
 									// soft: a forced consumer accepted that the scene may not match — warn, don't abort.
