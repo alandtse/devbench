@@ -37,6 +37,16 @@ namespace dvb::Capture
 			return a_p.generic_string();  // forward slashes, per the provider contract
 		}
 
+		// recording/variant/checkpointId all become single path SEGMENTS under the capture
+		// root (never a sub-path) -- reject anything that could escape it (a separator, "..",
+		// or a bare ".") instead of silently building a path outside g_captureDir/outDir.
+		void ValidatePathSegment(std::string_view a_field, const std::string& a_value)
+		{
+			if (a_value.empty() || a_value == "." || a_value == ".." ||
+				a_value.find('/') != std::string::npos || a_value.find('\\') != std::string::npos)
+				throw ToolError(400, std::format("invalid '{}': must be a single path segment (no '/', '\\\\', '.', or '..')", a_field));
+		}
+
 		// ---- game root / directory scanning (shared by the native fallback and inspect kind=screenshots) ----
 
 		struct ScannedFile
@@ -97,22 +107,28 @@ namespace dvb::Capture
 
 		json ReadSceneStamp()
 		{
-			return MainThread::RunAndWait([]() -> json {
-				json  j;
-				auto* pc = RE::PlayerCharacter::GetSingleton();
-				if (pc) {
-					if (auto* cell = pc->GetParentCell())
-						j["cellFormID"] = cell->GetFormID();
-					if (auto* ws = pc->GetWorldspace())
-						j["worldspaceFormID"] = ws->GetFormID();
-				}
-				if (auto* cal = RE::Calendar::GetSingleton())
-					j["gameHour"] = cal->GetHour();
-				if (auto* sky = RE::Sky::GetSingleton(); sky && sky->currentWeather)
-					j["weatherFormID"] = sky->currentWeather->GetFormID();
-				return j;
-			},
-				milliseconds(1000));
+			try {
+				return MainThread::RunAndWait([]() -> json {
+					json  j;
+					auto* pc = RE::PlayerCharacter::GetSingleton();
+					if (pc) {
+						if (auto* cell = pc->GetParentCell())
+							j["cellFormID"] = cell->GetFormID();
+						if (auto* ws = pc->GetWorldspace())
+							j["worldspaceFormID"] = ws->GetFormID();
+					}
+					if (auto* cal = RE::Calendar::GetSingleton())
+						j["gameHour"] = cal->GetHour();
+					if (auto* sky = RE::Sky::GetSingleton(); sky && sky->currentWeather)
+						j["weatherFormID"] = sky->currentWeather->GetFormID();
+					return j;
+				},
+					milliseconds(1000));
+			} catch (const ToolError&) {
+				// e.g. a stalled main thread -- a scene stamp is enrichment, not a requirement;
+				// the capture itself already succeeded by the time this runs.
+				return json::object();
+			}
 		}
 
 		// ---- image comparison (SSIM) ----
@@ -256,10 +272,17 @@ namespace dvb::Capture
 							ready.error = ev.payload.value("error", std::string("provider reported failure"));
 							return ready;
 						}
+						// A provider reporting ok:true is not proof the file is actually on disk
+						// yet (event and write can race) — verify before trusting it, otherwise
+						// fall through to the file-based fallback below instead of reporting a
+						// false success.
 						std::error_code ec;
+						const auto      size = fs::file_size(a_path, ec);
+						if (ec || size == 0)
+							continue;
 						ready.ok = true;
 						ready.readyBy = "event";
-						ready.bytes = fs::file_size(a_path, ec);
+						ready.bytes = size;
 						if (ev.payload.contains("uiExcluded"))
 							ready.uiExcluded = ev.payload.value("uiExcluded", false);
 						if (ev.payload.contains("width"))
@@ -300,6 +323,7 @@ namespace dvb::Capture
 			const std::string checkpointId = a_args.value("checkpointId", std::string{});
 			if (checkpointId.empty())
 				throw ToolError(400, "capture requires 'checkpointId'");
+			ValidatePathSegment("checkpointId", checkpointId);
 
 			// Preflight: bAllowScreenShot can disable vanilla capture outright.
 			const bool allowed = MainThread::RunAndWait([]() -> json {
@@ -444,6 +468,7 @@ namespace dvb::Capture
 			const std::string checkpointId = a_args.value("checkpointId", std::string{});
 			if (checkpointId.empty())
 				throw ToolError(400, "capture requires 'checkpointId'");
+			ValidatePathSegment("checkpointId", checkpointId);
 			const std::string recording = a_args.value("recording", std::string("adhoc"));
 			const std::string variant = a_args.value("variant", std::string("default"));
 			std::string       stem = checkpointId;
@@ -547,6 +572,8 @@ namespace dvb::Capture
 			base = GameRoot() / base;
 		const std::string recording = a_args.value("recording", std::string("adhoc"));
 		const std::string variant = a_args.value("variant", std::string("default"));
+		ValidatePathSegment("recording", recording);
+		ValidatePathSegment("variant", variant);
 		return base / recording / variant;
 	}
 
@@ -571,7 +598,9 @@ namespace dvb::Capture
 				{ "file", f.path.filename().string() },
 				{ "path", GenericPath(f.path) },
 				{ "bytes", f.size },
-				{ "mtimeEpoch", duration_cast<seconds>(f.mtime.time_since_epoch()).count() },
+				// file_time_type's clock epoch is NOT the Unix epoch (e.g. 1601 on MSVC) --
+				// clock_cast to system_clock first, or this reports a nonsense timestamp.
+				{ "mtimeEpoch", duration_cast<seconds>(std::chrono::clock_cast<std::chrono::system_clock>(f.mtime).time_since_epoch()).count() },
 			});
 		}
 		json dirList = json::array();

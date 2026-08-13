@@ -588,8 +588,12 @@ namespace dvb::Recording
 		void AppendCheckpointSteps(json& a_steps, const json& a_cp, const json& a_cap,
 			const std::string& a_recordingStem, const json& a_args, long a_cumMs, long a_defaultSettleMs)
 		{
-			a_steps.push_back(json{ { "assert", "noBlockingMenu" } });
+			// waitUntil FIRST so a transient menu (a loading spinner, a fading message box) can
+			// clear within its timeout; assert only fails the checkpoint if it's STILL blocked
+			// afterward. The reverse order made the wait pointless -- assert fired on whatever
+			// was open at this exact instant, before the wait ever got a chance to run.
 			a_steps.push_back(json{ { "waitUntil", "noBlockingMenu" }, { "timeoutMs", 5000 }, { "pollMs", 100 } });
+			a_steps.push_back(json{ { "assert", "noBlockingMenu" } });
 			if (a_cp.contains("pov"))
 				a_steps.push_back(json{ { "tool", "camera" }, { "args", json{ { "action", "setPov" }, { "pov", a_cp["pov"] } } } });
 			if (const long settleMs = a_cp.value("settleMs", a_defaultSettleMs); settleMs > 0)
@@ -599,9 +603,13 @@ namespace dvb::Recording
 			// bare "auto" independent of the gate that already validated it above — otherwise the
 			// gate and the macro could disagree (gate passes because the named provider IS
 			// registered, but "auto" 400s at runtime if a second provider also happens to be
-			// registered).
+			// registered). ".value()" only substitutes the default when the key is ABSENT, so an
+			// explicit-but-empty "provider": "" (a malformed recipe) needs its own fallback too.
+			std::string provider = a_cap.value("provider", std::string("auto"));
+			if (provider.empty())
+				provider = "auto";
 			json capArgs{
-				{ "kind", a_cap.value("provider", std::string("auto")) },
+				{ "kind", provider },
 				{ "allowNative", a_cap.value("allowNative", false) },
 				{ "checkpointId", a_cp.at("id") },
 				{ "recording", a_recordingStem },
