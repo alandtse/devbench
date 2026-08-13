@@ -730,10 +730,6 @@ namespace dvb::Recording
 		// reported warning instead of an abort. The consumer explicitly opted into "may not work".
 		const bool force = a_args.value("force", false);
 
-		// A recording's meta.checkpoints is metadata, not a mandate — the same file can serve a
-		// plain tour replay (no provider needed, no captures written) and a visual-review run
-		// (checkpoints expanded, goldens scored) depending on what THIS call wants. Default true
-		// preserves the existing "checkpoints always fire" behavior for every current caller.
 		const bool captureCheckpoints = a_args.value("captureCheckpoints", true);
 
 		// Runtime gate: a flat setpos/setangle recording gives non-comparable frames on VR (HMD
