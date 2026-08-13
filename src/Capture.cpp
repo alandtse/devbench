@@ -6,12 +6,24 @@
 #include "MainThread.h"
 #include "ToolExtensions.h"
 
+// Decode-only: two already-captured images -> pixel buffers, for the native SSIM comparison
+// below. STBI_ONLY_* keeps the codec surface to exactly the formats devbench's own captures can
+// actually be (provider captures are PNG per the provider contract; the native fallback can also
+// land BMP depending on the user's vanilla screenshot .ini setting) -- not a general-purpose
+// image loader.
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#define STBI_ONLY_BMP
+#include <stb_image.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
+#include <optional>
 #include <thread>
 
 namespace dvb::Capture
@@ -110,6 +122,262 @@ namespace dvb::Capture
 				return j;
 			},
 				milliseconds(1000));
+		}
+
+		// ---- image comparison (SSIM) ----
+		//
+		// The ONLY comparison logic devbench itself owns — a fast, single-checkpoint pass/fail
+		// verdict inline in the capture response ("replayed -> matched" in one call). This does
+		// NOT replace tests/http/visual.py, which stays devbench's own batch/corpus-scoring tool
+		// (many recordings, per-checkpoint config files, --visual-update across a whole tree) —
+		// that job needs an ecosystem (report generation, golden management across many files)
+		// that has no business being native code. This one only answers "did THIS capture match
+		// THIS golden," using the same threshold/regions JSON shape visual.py already defined, so
+		// a region written for one is copy-pasteable to the other.
+		//
+		// Decided via a real bounded debate (cross-model, independent judge): the principled line
+		// for what belongs in-process is NOT "small code stays in, big code stays out" — it's
+		// "provider-shaped external-ecosystem concerns stay out (why D3D11 capture is a provider
+		// extension); closed-form deterministic math on data devbench already holds stays in."
+		// SSIM has one universal definition and runs on two buffers devbench already has (one
+		// just came out of the capture call this same request made) — there's no competing
+		// "SSIM provider" ecosystem to be agnostic about the way there is for rendering backends.
+
+		struct GrayImage
+		{
+			std::vector<float> px;  // row-major, 0..255 range as float (SSIM math needs float)
+			int                width = 0;
+			int                height = 0;
+		};
+
+		std::optional<GrayImage> DecodeGray(const fs::path& a_path)
+		{
+			int            w = 0, h = 0, channels = 0;
+			const auto     pathStr = a_path.string();
+			unsigned char* data = stbi_load(pathStr.c_str(), &w, &h, &channels, 1);  // force 1-channel grayscale
+			if (!data)
+				return std::nullopt;
+			GrayImage img;
+			img.width = w;
+			img.height = h;
+			img.px.resize(static_cast<size_t>(w) * h);
+			for (size_t i = 0; i < img.px.size(); ++i)
+				img.px[i] = static_cast<float>(data[i]);
+			stbi_image_free(data);
+			return img;
+		}
+
+		// Crop a 0..1 UV rect {x,y,w,h} — the SAME convention the capture tool's own `subrect`
+		// arg and visual.py's regions both use, so one rect definition works everywhere.
+		GrayImage CropUv(const GrayImage& a_img, const json& a_uv)
+		{
+			const double x0d = a_uv.value("x", 0.0), y0d = a_uv.value("y", 0.0);
+			const double wd = a_uv.value("w", 1.0), hd = a_uv.value("h", 1.0);
+			const int    x0 = std::clamp(static_cast<int>(std::lround(x0d * a_img.width)), 0, a_img.width);
+			const int    y0 = std::clamp(static_cast<int>(std::lround(y0d * a_img.height)), 0, a_img.height);
+			const int    x1 = std::clamp(static_cast<int>(std::lround((x0d + wd) * a_img.width)), x0, a_img.width);
+			const int    y1 = std::clamp(static_cast<int>(std::lround((y0d + hd) * a_img.height)), y0, a_img.height);
+
+			GrayImage out;
+			out.width = x1 - x0;
+			out.height = y1 - y0;
+			out.px.resize(static_cast<size_t>(out.width) * out.height);
+			for (int y = 0; y < out.height; ++y)
+				for (int x = 0; x < out.width; ++x)
+					out.px[static_cast<size_t>(y) * out.width + x] = a_img.px[static_cast<size_t>(y0 + y) * a_img.width + (x0 + x)];
+			return out;
+		}
+
+		// Windowed SSIM (Wang et al.), OVERLAPPING windows with a stride shorter than the window
+		// — a deliberately simpler approximation than skimage's Gaussian-weighted sliding window
+		// (used by visual.py) — uniform weighting, not Gaussian — but critically NOT
+		// non-overlapping blocks: a non-overlapping-block version was tried first and FAILED a
+		// basic sanity check (a fully value-inverted image scored 0.54, not strongly negative) —
+		// any image whose content happens to be flat within each block-sized tile has zero
+		// intra-block variance, which makes the contrast/structure term blind to inversion
+		// entirely, regardless of correlation sign. A stride shorter than the window guarantees
+		// most windows straddle any such boundary, restoring real sensitivity. Verified against
+		// synthetic images: identical -> ~1.0, a value-inverted image -> strongly negative,
+		// matching the standard algorithm's known behavior (confirmed independently against
+		// tests/http/visual.py's skimage-based SSIM on the same class of input). Standard
+		// constants (K1=0.01, K2=0.03, L=255 dynamic range).
+		double ComputeSsim(const GrayImage& a_a, const GrayImage& a_b)
+		{
+			constexpr double kC1 = (0.01 * 255.0) * (0.01 * 255.0);
+			constexpr double kC2 = (0.03 * 255.0) * (0.03 * 255.0);
+			constexpr int    kWindow = 8;
+			constexpr int    kStride = 3;  // < kWindow so windows overlap and straddle any block-periodic content
+
+			const int w = a_a.width, h = a_a.height;
+			if (w <= 0 || h <= 0)
+				return 0.0;
+			const int win = std::min({ kWindow, w, h });
+			if (win <= 1)
+				return 0.0;
+
+			double sum = 0.0;
+			int    windows = 0;
+			for (int by = 0; by <= h - win; by += kStride) {
+				for (int bx = 0; bx <= w - win; bx += kStride) {
+					const int n = win * win;
+
+					double meanA = 0.0, meanB = 0.0;
+					for (int y = 0; y < win; ++y)
+						for (int x = 0; x < win; ++x) {
+							const size_t idx = static_cast<size_t>(by + y) * w + (bx + x);
+							meanA += a_a.px[idx];
+							meanB += a_b.px[idx];
+						}
+					meanA /= n;
+					meanB /= n;
+
+					double varA = 0.0, varB = 0.0, covAB = 0.0;
+					for (int y = 0; y < win; ++y)
+						for (int x = 0; x < win; ++x) {
+							const size_t idx = static_cast<size_t>(by + y) * w + (bx + x);
+							const double da = a_a.px[idx] - meanA;
+							const double db = a_b.px[idx] - meanB;
+							varA += da * da;
+							varB += db * db;
+							covAB += da * db;
+						}
+					varA /= (n - 1);
+					varB /= (n - 1);
+					covAB /= (n - 1);
+
+					const double numerator = (2 * meanA * meanB + kC1) * (2 * covAB + kC2);
+					const double denominator = (meanA * meanA + meanB * meanB + kC1) * (varA + varB + kC2);
+					sum += denominator > 0.0 ? (numerator / denominator) : 1.0;
+					++windows;
+				}
+			}
+			// win > w or win > h (a crop smaller than the window) — fall back to one whole-image window.
+			if (windows == 0) {
+				double       meanA = 0.0, meanB = 0.0;
+				const size_t n = static_cast<size_t>(w) * h;
+				for (size_t i = 0; i < n; ++i) {
+					meanA += a_a.px[i];
+					meanB += a_b.px[i];
+				}
+				meanA /= n;
+				meanB /= n;
+				double varA = 0.0, varB = 0.0, covAB = 0.0;
+				for (size_t i = 0; i < n; ++i) {
+					const double da = a_a.px[i] - meanA;
+					const double db = a_b.px[i] - meanB;
+					varA += da * da;
+					varB += db * db;
+					covAB += da * db;
+				}
+				varA /= (n - 1);
+				varB /= (n - 1);
+				covAB /= (n - 1);
+				const double numerator = (2 * meanA * meanB + kC1) * (2 * covAB + kC2);
+				const double denominator = (meanA * meanA + meanB * meanB + kC1) * (varA + varB + kC2);
+				return denominator > 0.0 ? (numerator / denominator) : 1.0;
+			}
+			return sum / windows;
+		}
+
+		struct RegionScore
+		{
+			std::string name;
+			double      score = 0.0;
+			double      threshold = 0.0;
+			bool        passed = false;
+		};
+
+		// Everything a `golden` result needs, whether it succeeded or not — a decode failure
+		// (missing golden, corrupt file, dimension mismatch) is reported as `error`, not thrown:
+		// a checkpoint that can't be scored still has a real capture worth returning, it just
+		// can't carry a verdict.
+		struct GoldenScore
+		{
+			bool                     ok = false;
+			std::string              error;
+			double                   score = 0.0;
+			double                   threshold = 0.0;
+			bool                     passed = false;
+			std::vector<RegionScore> regions;
+		};
+
+		GoldenScore ScoreAgainstGolden(const fs::path& a_capturedPath, const json& a_goldenCfg)
+		{
+			GoldenScore       result;
+			const std::string goldenArg = a_goldenCfg.value("golden", std::string{});
+			if (goldenArg.empty()) {
+				result.error = "goldenCfg missing 'golden'";
+				return result;
+			}
+			fs::path goldenPath(goldenArg);
+			if (goldenPath.is_relative())
+				goldenPath = GameRoot() / goldenPath;
+
+			result.threshold = a_goldenCfg.value("threshold", 0.98);
+
+			if (!fs::exists(goldenPath)) {
+				result.error = std::format("no golden at {}", GenericPath(goldenPath));
+				return result;
+			}
+			const auto candidate = DecodeGray(a_capturedPath);
+			const auto golden = DecodeGray(goldenPath);
+			if (!candidate || !golden) {
+				result.error = "failed to decode candidate or golden image";
+				return result;
+			}
+			if (candidate->width != golden->width || candidate->height != golden->height) {
+				result.error = std::format("shape mismatch: candidate {}x{} vs golden {}x{}",
+					candidate->width, candidate->height, golden->width, golden->height);
+				return result;
+			}
+
+			const json regionCfgs = a_goldenCfg.value("regions", json::array());
+			if (!regionCfgs.empty()) {
+				double worst = 1.0;
+				bool   allPassed = true;
+				for (const auto& r : regionCfgs) {
+					const GrayImage rc = CropUv(*candidate, r);
+					const GrayImage rg = CropUv(*golden, r);
+					const double    score = ComputeSsim(rc, rg);
+					const double    threshold = r.value("threshold", result.threshold);
+					const bool      passed = score >= threshold;
+					result.regions.push_back(RegionScore{ r.value("name", std::string("?")), score, threshold, passed });
+					worst = std::min(worst, score);
+					allPassed = allPassed && passed;
+				}
+				result.ok = true;
+				result.score = worst;
+				result.passed = allPassed;
+				return result;
+			}
+
+			result.ok = true;
+			result.score = ComputeSsim(*candidate, *golden);
+			result.passed = result.score >= result.threshold;
+			return result;
+		}
+
+		// Merges {ssim, threshold, passed, regions?} into a_result IN PLACE when a_args carries a
+		// "golden" config -- a no-op (result unchanged) when it doesn't, so every existing caller
+		// that never passes a golden sees no behavior change at all.
+		void MaybeScoreAgainstGolden(json& a_result, const json& a_args, const fs::path& a_capturedPath)
+		{
+			if (!a_args.contains("golden") || !a_args["golden"].is_string() || a_args["golden"].get<std::string>().empty())
+				return;
+			const GoldenScore score = ScoreAgainstGolden(a_capturedPath, a_args);
+			if (!score.ok) {
+				a_result["goldenError"] = score.error;
+				return;
+			}
+			a_result["ssim"] = score.score;
+			a_result["threshold"] = score.threshold;
+			a_result["passed"] = score.passed;
+			if (!score.regions.empty()) {
+				json regions = json::array();
+				for (const auto& r : score.regions)
+					regions.push_back(json{ { "name", r.name }, { "ssim", r.score }, { "threshold", r.threshold }, { "passed", r.passed } });
+				a_result["regions"] = std::move(regions);
+			}
 		}
 
 		// ---- sidecar + events ----
@@ -296,7 +564,7 @@ namespace dvb::Capture
 			std::string       stem = checkpointId;
 			if (a_args.contains("repeat"))
 				stem += "__r" + std::to_string(a_args.value("repeat", 0));
-			const fs::path  capDir = fs::path(g_captureDir) / recording / variant;
+			const fs::path  capDir = CaptureDir(a_args);
 			std::error_code ec;
 			fs::create_directories(capDir, ec);
 			const fs::path dest = capDir / (stem + found.extension().string());
@@ -347,6 +615,7 @@ namespace dvb::Capture
 				if (a_args.contains(k))
 					result[k] = a_args[k];
 			result.update(sceneStamp);
+			MaybeScoreAgainstGolden(result, a_args, dest);
 
 			WriteSidecar(dest, result);
 			PublishSaved(result);
@@ -371,7 +640,7 @@ namespace dvb::Capture
 			if (a_args.contains("repeat"))
 				stem += "__r" + std::to_string(a_args.value("repeat", 0));
 
-			const fs::path  capDir = fs::path(g_captureDir) / recording / variant;
+			const fs::path  capDir = CaptureDir(a_args);
 			std::error_code ec;
 			fs::create_directories(capDir, ec);
 			const fs::path outputPath = capDir / (stem + ".png");
@@ -437,6 +706,7 @@ namespace dvb::Capture
 				if (a_args.contains(k))
 					result[k] = a_args[k];
 			result.update(sceneStamp);
+			MaybeScoreAgainstGolden(result, a_args, outputPath);
 
 			WriteSidecar(outputPath, result);
 			PublishSaved(result);
@@ -451,6 +721,22 @@ namespace dvb::Capture
 		if (length == 0 || length >= MAX_PATH)
 			return fs::current_path();
 		return fs::path(buffer).parent_path();
+	}
+
+	std::filesystem::path CaptureDir(const json& a_args)
+	{
+		// ALWAYS absolute — this is what the provider contract promises callers ("outputPath —
+		// absolute, forward-slash") and what a `capture` result's returned `path` must be too.
+		// A relative path here silently resolves against the GAME's cwd on the caller's end,
+		// not the caller's own — confirmed live as a real bug (an external tool's cwd rarely
+		// matches the Skyrim install dir). `outDir` overrides the configured base; both are
+		// resolved against GameRoot() when relative, absolute when already absolute.
+		fs::path base = a_args.value("outDir", g_captureDir);
+		if (base.is_relative())
+			base = GameRoot() / base;
+		const std::string recording = a_args.value("recording", std::string("adhoc"));
+		const std::string variant = a_args.value("variant", std::string("default"));
+		return base / recording / variant;
 	}
 
 	json ListScreenshots(const json& a_args)
@@ -542,16 +828,20 @@ namespace dvb::Capture
 		d.name = "capture";
 		d.description =
 			"Capture a frame (screenshot) and return its file path plus correlation metadata. "
-			"devbench never scores images — comparison/SSIM/thresholds/pass-fail are entirely an "
-			"external concern; this tool only captures and signals readiness. kind='auto' (default) "
-			"picks the sole registered capture provider (a mod that registered under the C-ABI "
-			"RegisterToolExtension(\"capture\", <key>, …) — see inspect kind=registrants); zero "
-			"registered providers is a 404 UNLESS allowNative=true, and two or more is a 400 naming "
-			"them (never silently guessed). kind='native' forces the low-fidelity vanilla fallback "
-			"(main-thread MenuControls::QueueScreenshot() + a directory poll — no path control, no "
-			"completion signal beyond polling, format fixed by the user's .ini, may include open UI) "
-			"— NOT comparable against a provider-authored golden image. kind='providers' lists "
-			"registered provider keys; kind='extensions' lists them with descriptors.";
+			"kind='auto' (default) picks the sole registered capture provider (a mod that "
+			"registered under the C-ABI RegisterToolExtension(\"capture\", <key>, …) — see inspect "
+			"kind=registrants); zero registered providers is a 404 UNLESS allowNative=true, and two "
+			"or more is a 400 naming them (never silently guessed). kind='native' forces the "
+			"low-fidelity vanilla fallback (main-thread MenuControls::QueueScreenshot() + a "
+			"directory poll — no path control, no completion signal beyond polling, format fixed by "
+			"the user's .ini, may include open UI) — NOT comparable against a provider-authored "
+			"golden image. kind='providers' lists registered provider keys; kind='extensions' lists "
+			"them with descriptors. Optional 'golden' compares the capture against a reference image "
+			"via SSIM and adds {ssim, threshold, passed} to the result (or 'regions' for independent "
+			"per-region scores, {name,ssim,threshold,passed} each, overall 'passed' is AND across "
+			"all — see record{action:'replay'}'s 'goldens' arg, the normal way this gets set for a "
+			"checkpoint). This is devbench's fast single-checkpoint verdict; batch/corpus regression "
+			"across many recordings stays in tests/http/visual.py.";
 		d.readOnly = false;
 		json kinds = json::array({ "auto", "native", "providers", "extensions" });
 		for (const auto& k : ToolExtensions::Keys("capture"))
@@ -570,6 +860,9 @@ namespace dvb::Capture
 								{ "pollMs", json{ { "type", "integer" }, { "description", "poll interval while waiting (default 100)" } } },
 								{ "subrect", json{ { "type", "object" }, { "description", "optional {x,y,w,h} in 0..1 UV — provider-only, native ignores it" } } },
 								{ "cleanup", json{ { "type", "boolean" }, { "description", "native only: delete the game's source screenshot after copying (default false)" } } },
+								{ "golden", json{ { "type", "string" }, { "description", "path to a reference image to SSIM-compare this capture against (absolute, or relative to the game root); adds {ssim,threshold,passed} to the result" } } },
+								{ "threshold", json{ { "type", "number" }, { "description", "golden: SSIM >= threshold passes (default 0.98)" } } },
+								{ "regions", json{ { "type", "array" }, { "description", "golden: optional [{name,x,y,w,h,threshold?}] in 0..1 UV — score independent regions instead of the whole frame; overall passed is AND across all" } } },
 							} },
 			{ "required", json::array({ "checkpointId" }) },
 		};

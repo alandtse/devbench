@@ -1,10 +1,22 @@
-"""Visual-regression scoring for devbench capture checkpoints.
+"""Batch/corpus visual-regression scoring for devbench capture checkpoints.
 
-ALL image comparison lives here, in Python — devbench and its capture providers
-never compute pixel similarity in-process (see
-docs/plans/replay-checkpoint-capture.md for why). This module is pure: it never
-talks to the devbench server, only to PNG files on disk, so it's unit-testable
-against static fixtures with no game running (see test_visual.py).
+devbench ALSO has a native, single-checkpoint SSIM verdict now (the `capture`
+tool's `golden`/`threshold`/`regions` args, normally supplied via
+`record{action:"replay", goldens:{...}}`) — that is the primary, mod-author-
+facing way to get "did this checkpoint match" as {ssim, threshold, passed}
+inline in the SAME HTTP/MCP call that ran the replay, no Python required. This
+module is NOT that interface. It exists for the different job of scoring many
+recordings/checkpoints at once, generating reports, and managing a `goldens/`
+tree with `--visual-update` — genuine batch/corpus work, not a single
+checkpoint's fast pass/fail. Reach for this when you're comfortable with Python
+and want that; otherwise use the native `capture`/`record` args directly.
+
+This module is pure: it never talks to the devbench server, only to PNG files
+on disk, so it's unit-testable against static fixtures with no game running
+(see test_visual.py). Its SSIM implementation (scikit-image, Gaussian-weighted
+sliding window) is independent of devbench's own native C++ implementation
+(uniform-weighted overlapping window) — the two are NOT guaranteed bit-exact
+against each other, by design; each is suited to its own use case.
 
 Layout convention (not enforced elsewhere — just what this module expects):
 

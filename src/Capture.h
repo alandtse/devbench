@@ -38,6 +38,13 @@ namespace dvb::Capture
 	/// not against Documents/My Games (that's SKSE's log/save convention, a different one).
 	std::filesystem::path GameRoot();
 
+	/// The (always absolute) directory a checkpoint's capture bundle lands in:
+	/// <outDir|config.captureDir>/<recording>/<variant>, resolved against GameRoot() when
+	/// relative. Always absolute because it feeds the `path` a capture result returns to the
+	/// caller — a relative path there resolves against the GAME's cwd on the caller's end, not
+	/// the caller's own, which is a real bug for any external tool.
+	std::filesystem::path CaptureDir(const json& a_args);
+
 	ToolDescriptor BuildCaptureDescriptor();
 
 	/// Wired from RegisterCoreTools/main.cpp before the tool is reachable.

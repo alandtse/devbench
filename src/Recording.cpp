@@ -613,6 +613,24 @@ namespace dvb::Recording
 			};
 			if (a_cp.contains("subrect"))
 				capArgs["subrect"] = a_cp["subrect"];
+
+			// golden/threshold/regions come from THIS replay call's "goldens" map, keyed by
+			// checkpoint id — never from the checkpoint itself (meta.checkpoints carries no
+			// golden; see record{action:"checkpoint"}'s doc comment for why). Lets the same
+			// recording be replayed against different variants' goldens without touching the
+			// recording file at all.
+			if (const json goldens = a_args.value("goldens", json::object());
+				goldens.is_object() && goldens.contains(a_cp.at("id").get<std::string>())) {
+				const json& g = goldens.at(a_cp.at("id").get<std::string>());
+				if (g.is_object()) {
+					if (g.contains("golden"))
+						capArgs["golden"] = g["golden"];
+					if (g.contains("threshold"))
+						capArgs["threshold"] = g["threshold"];
+					if (g.contains("regions"))
+						capArgs["regions"] = g["regions"];
+				}
+			}
 			a_steps.push_back(json{ { "tool", "capture" }, { "args", std::move(capArgs) } });
 		}
 	}

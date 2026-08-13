@@ -2,7 +2,7 @@
 
 **Scope:** devbench (host, `E:\Documents\source\repos\devbench`) + Open Shaders (reference capture provider, `E:\Documents\source\repos\open-shaders`).
 **Goal:** capture a frame at deterministic checkpoints during a recording replay, signal reliably when the file is on disk, and return the path plus correlation metadata. All comparison (SSIM, thresholds, goldens, pass/fail) lives in Python.
-**Status:** final — produced via supervisor plan (Opus) → adversarial review (Gemini/agy-bridge) → rebuttal/reconciliation → consolidation. Self-contained; supersedes all earlier drafts.
+**Status:** historical — the "all comparison lives in Python" decision below was reconsidered after live testing surfaced two real gaps (checkpoint authoring required hand-editing JSON; the Python harness wasn't actually usable by a third-party mod author). A second bounded debate (cross-model, independent judge) reversed the comparison-location call: devbench now ALSO computes a native, single-checkpoint SSIM verdict in-process (`capture`'s `golden`/`threshold`/`regions` args, normally reached via `record{action:"replay", goldens:{...}}`) — see `Capture.cpp`'s "image comparison (SSIM)" section for the current design and reasoning. `tests/http/visual.py` remains for the batch/corpus-scoring job it was always suited to; it is no longer positioned as the primary consumer interface. `record{action:"checkpoint"}` (live checkpoint marking, closing the authoring gap this doc's Part 2 left open) also postdates this document. Kept as-is below for the historical record of the original decision, not as current documentation.
 
 ---
 
