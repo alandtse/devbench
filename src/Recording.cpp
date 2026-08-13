@@ -730,6 +730,12 @@ namespace dvb::Recording
 		// reported warning instead of an abort. The consumer explicitly opted into "may not work".
 		const bool force = a_args.value("force", false);
 
+		// A recording's meta.checkpoints is metadata, not a mandate — the same file can serve a
+		// plain tour replay (no provider needed, no captures written) and a visual-review run
+		// (checkpoints expanded, goldens scored) depending on what THIS call wants. Default true
+		// preserves the existing "checkpoints always fire" behavior for every current caller.
+		const bool captureCheckpoints = a_args.value("captureCheckpoints", true);
+
 		// Runtime gate: a flat setpos/setangle recording gives non-comparable frames on VR (HMD
 		// drives pitch + culling), and a VR recording won't drive a flat game. Abort on a runtime
 		// the recording wasn't marked for; force downgrades it to a warning. Unmarked (v1) = ungated.
@@ -752,7 +758,7 @@ namespace dvb::Recording
 		// clearly and early instead of 400ing on the first checkpoint's capture step deep
 		// into the trajectory.
 		const json captureCap = FindCaptureCapability(meta);
-		if (!captureCap.empty() && captureCap.value("required", true)) {
+		if (captureCheckpoints && !captureCap.empty() && captureCap.value("required", true)) {
 			const std::string want = captureCap.value("provider", std::string{});
 			const auto        keys = ToolExtensions::Keys("capture");
 			bool              ok = want.empty() ? !keys.empty() : ToolExtensions::Find("capture", want).has_value();
@@ -875,7 +881,7 @@ namespace dvb::Recording
 		// steps below — the coc/cow settle steps injected right after them, and the restore
 		// prologue's settle waits above, are NOT part of that clock and must never be added in.
 		const long        txnSettleMs = a_args.value("settleMs", static_cast<long>(g_loadSettleMs));
-		const json        checkpoints = SortedCheckpoints(meta);
+		const json        checkpoints = captureCheckpoints ? SortedCheckpoints(meta) : json::array();
 		const std::string recordingStem = fs::path(path).stem().string();
 		long              cumMs = 0;
 		size_t            cpIdx = 0;

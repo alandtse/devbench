@@ -2278,7 +2278,11 @@ namespace dvb
 			"async:false to block the request for the run's duration and get the result object "
 			"directly. If the recording has meta.checkpoints, each expands into a `capture` step "
 			"at the point in the trajectory its atMs was recorded, tagged with 'variant' for "
-			"correlation (default 'default') — see the `capture` tool. Pass 'goldens' to also get "
+			"correlation (default 'default') — see the `capture` tool. Pass "
+			"captureCheckpoints:false to replay the same recording as a plain trajectory-only run "
+			"instead — checkpoints are skipped entirely (no capture provider required, nothing "
+			"captured), so one recording can serve as both a general tour and a visual-review run "
+			"depending on the call. Pass 'goldens' to also get "
 			"an inline SSIM verdict per checkpoint: {\"<checkpointId>\": {golden, threshold?, "
 			"regions?}}; a checkpoint with no matching entry is captured but not scored. The "
 			"result's top-level 'checkpoints' array rolls up every capture step into "
@@ -2294,6 +2298,7 @@ namespace dvb
 								{ "path", json{ { "type", "string" }, { "description", "replay: recording file to play back (from stop's 'path')" } } },
 								{ "restoreScene", json{ { "type", "boolean" }, { "description", "replay: re-establish the recorded entryPoint + wait for load before the trajectory (default false)" } } },
 								{ "variant", json{ { "type", "string" }, { "description", "replay: tag for any meta.checkpoints captures, for correlation (default 'default')" } } },
+								{ "captureCheckpoints", json{ { "type", "boolean" }, { "description", "replay: expand meta.checkpoints into capture steps (default true) — pass false for a plain trajectory-only replay of a checkpoint-bearing recording (no provider required, nothing captured)" } } },
 								{ "goldens", json{ { "type", "object" }, { "description", "replay: per-checkpoint SSIM comparison config, keyed by checkpoint id — {\"<id>\": {golden, threshold?, regions?}} — see the `capture` tool. Never stored in the recording itself; supply it fresh per replay so the same recording can check against different variants' goldens." } } },
 								{ "coupling", json{ { "type", "string" }, { "enum", json::array({ "anchored", "cell", "worldspace" }) }, { "description", "replay: override the recipe's coupling tier — run looser than the producer signaled (worldspace skips the scene restore)" } } },
 								{ "force", json{ { "type", "boolean" }, { "description", "replay: proceed even if the scene doesn't match the recording — report the mismatch as a warning instead of aborting (default false)" } } },
