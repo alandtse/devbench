@@ -181,7 +181,8 @@ namespace dvb::Recording
 			std::thread              worker;
 			std::mutex               mtx;
 			std::vector<json>        samples;
-			std::vector<json>        commands;  // console commands seen mid-recording: { command, frame }
+			std::vector<json>        commands;     // console commands seen mid-recording: { command, frame }
+			std::vector<json>        checkpoints;  // screenshot checkpoints marked mid-recording: { id, atMs, excludeUi }
 			json                     manifest;
 			long                     intervalMs = kDefaultIntervalMs;
 			steady_clock::time_point startTick;
@@ -283,6 +284,12 @@ namespace dvb::Recording
 			meta["commandCount"] = a_rec.commands.size();
 			meta["recordedMs"] = a_recordedMs;
 			meta["recordedAt"] = static_cast<long long>(std::time(nullptr));  // record-time epoch, for tooling
+			// Checkpoints marked live via record{action:"checkpoint"} during this session. Each
+			// entry's atMs is already the recorder's own elapsed-ms clock (steady_clock since
+			// startTick) -- the SAME clock BuildReplaySteps reconstructs by summing this scenario's
+			// own "wait" values, so no reconciliation is needed here; the values just carry over.
+			if (!a_rec.checkpoints.empty())
+				meta["checkpoints"] = a_rec.checkpoints;
 			return json{ { "meta", std::move(meta) }, { "steps", std::move(steps) } };
 		}
 
@@ -358,6 +365,7 @@ namespace dvb::Recording
 				std::lock_guard lock(rec.mtx);
 				rec.samples.clear();
 				rec.commands.clear();
+				rec.checkpoints.clear();
 				rec.manifest = std::move(manifest);
 				rec.intervalMs = interval;
 			}
@@ -370,6 +378,39 @@ namespace dvb::Recording
 			Notify("devbench: recording started");
 			logs::info("devbench: recording started (interval {}ms)", interval);
 			return json{ { "action", "start" }, { "recording", true }, { "intervalMs", interval } };
+		}
+
+		if (action == "checkpoint") {
+			// Mark a screenshot checkpoint at THIS moment of an active recording -- mirrors how
+			// `stop` already captures the trajectory with zero manual JSON editing after the fact.
+			// Deliberately carries NO golden/threshold here: at mark-time there is by definition
+			// no golden yet for a first-time checkpoint, and for a regression check the comparison
+			// target belongs to replay (see record{action:"replay"}'s `goldens` arg), not to the
+			// act of marking a moment -- baking it in here would reintroduce exactly the kind of
+			// side-channel bookkeeping this action exists to eliminate.
+			if (!rec.running.load())
+				return json{ { "error", "not recording — call action=start first" } };
+			const std::string id = a_args.value("id", std::string{});
+			if (id.empty())
+				return json{ { "error", "checkpoint requires a non-empty 'id'" } };
+
+			const long atMs = static_cast<long>(
+				duration_cast<milliseconds>(steady_clock::now() - rec.startTick).count());
+			json entry{ { "id", id }, { "atMs", atMs }, { "excludeUi", a_args.value("excludeUi", true) } };
+
+			size_t count = 0;
+			{
+				std::lock_guard lock(rec.mtx);
+				if (std::any_of(rec.checkpoints.begin(), rec.checkpoints.end(),
+						[&](const json& c) { return c.value("id", std::string{}) == id; }))
+					return json{ { "error", std::format("checkpoint id '{}' already marked this recording", id) } };
+				rec.checkpoints.push_back(entry);
+				count = rec.checkpoints.size();
+			}
+			a_events.Publish("record.checkpoint", entry);
+			Notify(std::format("devbench: checkpoint '{}' marked", id));
+			logs::info("devbench: checkpoint '{}' marked at {}ms", id, atMs);
+			return json{ { "action", "checkpoint" }, { "id", id }, { "atMs", atMs }, { "checkpointCount", count } };
 		}
 
 		if (action == "stop") {
@@ -396,6 +437,7 @@ namespace dvb::Recording
 			return json{
 				{ "action", "stop" },
 				{ "sampleCount", rec.samples.size() },
+				{ "checkpointCount", rec.checkpoints.size() },
 				{ "recordedMs", recordedMs },
 				{ "path", pathStr },
 				{ "meta", scenario["meta"] },
@@ -408,10 +450,11 @@ namespace dvb::Recording
 				{ "recording", rec.running.load() },
 				{ "sampleCount", rec.samples.size() },
 				{ "intervalMs", rec.intervalMs },
+				{ "checkpointCount", rec.checkpoints.size() },
 			};
 		}
 
-		return json{ { "error", "unknown action (start|stop|status)" }, { "action", action } };
+		return json{ { "error", "unknown action (start|stop|status|checkpoint)" }, { "action", action } };
 	}
 
 	void Notify(const std::string& a_msg)

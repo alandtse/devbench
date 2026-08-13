@@ -2214,9 +2214,15 @@ namespace dvb
 			"intervalMs (default from config recordIntervalMs, min 10) on a background thread "
 			"and captures a one-time scene manifest "
 			"(worldspace/cell, time of day, weather, anchor pose, and the entryPoint — the save "
-			"loaded or coc'd to reach the scene, or 'unknown'); a game must be loaded. 'stop' "
+			"loaded or coc'd to reach the scene, or 'unknown'); a game must be loaded. "
+			"'checkpoint' marks THIS moment (while recording is active) as a screenshot checkpoint "
+			"— requires 'id' (unique this recording); optional excludeUi (default true). Mirrors "
+			"'stop' capturing the trajectory: no manual JSON editing needed. Carries no golden/"
+			"threshold — those are supplied later, per-checkpoint, on replay's 'goldens' arg, since "
+			"a golden reference doesn't exist yet at mark-time. 'stop' "
 			"writes the trajectory to Data/SKSE/Plugins/devbench/recordings/recording_<stamp>.json "
-			"and returns its path + meta. 'status' reports recording/sampleCount/intervalMs. "
+			"and returns its path + meta (meta.checkpoints holds any marked via 'checkpoint'). "
+			"'status' reports recording/sampleCount/intervalMs/checkpointCount. "
 			"'replay' runs a recording file ('path'): with restoreScene=true it re-establishes "
 			"the entryPoint and waits for the player before the trajectory, so the run reproduces "
 			"the recorded scene (interiors coc the cell; exterior entries use cow with the "
@@ -2241,8 +2247,10 @@ namespace dvb
 		record.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "start", "stop", "status", "replay" }) }, { "description", "start | stop | status | replay" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "start", "stop", "status", "replay", "checkpoint" }) }, { "description", "start | stop | status | replay | checkpoint" } } },
 								{ "intervalMs", json{ { "type", "integer" }, { "description", "start: pose sample period in ms (default = config recordIntervalMs, min 10)" } } },
+								{ "id", json{ { "type", "string" }, { "description", "checkpoint: unique id for this checkpoint (required)" } } },
+								{ "excludeUi", json{ { "type", "boolean" }, { "description", "checkpoint: request a pre-UI capture source at replay (default true) — see the `capture` tool" } } },
 								{ "path", json{ { "type", "string" }, { "description", "replay: recording file to play back (from stop's 'path')" } } },
 								{ "restoreScene", json{ { "type", "boolean" }, { "description", "replay: re-establish the recorded entryPoint + wait for load before the trajectory (default false)" } } },
 								{ "variant", json{ { "type", "string" }, { "description", "replay: tag for any meta.checkpoints captures, for correlation (default 'default')" } } },
