@@ -153,10 +153,11 @@ target("devbench-tests")
 set_kind("binary")
 set_default(false)
 set_languages("c++23")
-add_packages("nlohmann_json")
+add_packages("nlohmann_json", "stb")
 add_includedirs("src")
 add_files("tests/*.cpp")
 add_files("src/ToolRegistry.cpp") -- exercised directly; pure logic, no game deps
+add_files("src/Ssim.cpp") -- exercised directly; pure logic, no game deps
 add_headerfiles("tests/*.h")
 set_pcxxheader("tests/pch.h")
 add_defines("_WINSOCKAPI_")
