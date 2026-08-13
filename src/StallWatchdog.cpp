@@ -5,6 +5,7 @@
 #include "GameState.h"
 #include "Json.h"
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 
@@ -13,20 +14,23 @@ namespace dvb::StallWatchdog
 	namespace
 	{
 		using namespace std::chrono;
-		constexpr int kPollMs = 1000;
 	}
 
 	void Start(EventBus& a_bus, int a_stallMs)
 	{
 		if (a_stallMs <= 0)
 			return;
+		// A fixed 1s poll can't reliably detect a threshold shorter than that (the stall could
+		// come and go between two samples) — scale the interval down for a low threshold, but
+		// never poll tighter than 100ms or looser than 1s.
+		const int pollMs = std::clamp(a_stallMs / 3, 100, 1000);
 		EventBus* bus = &a_bus;
-		std::thread([bus, a_stallMs]() {
+		std::thread([bus, a_stallMs, pollMs]() {
 			int  lastFrame = game::CurrentFrame();
 			auto lastAdvance = steady_clock::now();
 			bool stalled = false;
 			for (;;) {
-				std::this_thread::sleep_for(milliseconds(kPollMs));
+				std::this_thread::sleep_for(milliseconds(pollMs));
 				const int frame = game::CurrentFrame();
 				if (frame < 0)
 					continue;  // address library not resolved yet -- nothing to watch
