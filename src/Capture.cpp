@@ -357,6 +357,30 @@ namespace dvb::Capture
 			return result;
 		}
 
+		// Mirrors tests/http/visual.py's capture_inconclusive_reason(): a sceneMismatch, any
+		// `degraded` stamp, or a native-fallback capture all mean "don't trust this as a real
+		// verdict." Computed HERE, once, in the result every caller already reads — a live
+		// multi-checkpoint test surfaced that without this, an LLM (or any caller) had to
+		// re-derive the same judgment from raw `sceneMismatch`/`degraded`/`provider` fields
+		// every time, which both surfaces (native and visual.py) would inevitably drift on.
+		void ComputeInconclusive(json& a_result)
+		{
+			std::string reason;
+			if (a_result.value("sceneMismatch", false)) {
+				reason = "sceneMismatch";
+			} else if (const json& degraded = a_result.value("degraded", json::array()); !degraded.empty()) {
+				std::string list;
+				for (const auto& d : degraded)
+					list += (list.empty() ? "" : ", ") + d.get<std::string>();
+				reason = "degraded: " + list;
+			} else if (a_result.value("provider", std::string{}) == "native") {
+				reason = "captured via the low-fidelity native fallback, not a registered provider";
+			}
+			a_result["inconclusive"] = !reason.empty();
+			if (!reason.empty())
+				a_result["inconclusiveReason"] = reason;
+		}
+
 		// Merges {ssim, threshold, passed, regions?} into a_result IN PLACE when a_args carries a
 		// "golden" config -- a no-op (result unchanged) when it doesn't, so every existing caller
 		// that never passes a golden sees no behavior change at all.
@@ -603,7 +627,7 @@ namespace dvb::Capture
 				{ "sceneMismatch", a_args.value("sceneMismatch", false) },
 				{ "uiExcluded", false },
 				{ "readyBy", "poll" },
-				{ "elapsedMs", duration_cast<milliseconds>(steady_clock::now() - start).count() },
+				{ "captureElapsedMs", duration_cast<milliseconds>(steady_clock::now() - start).count() },
 				{ "degraded", std::move(degraded) },
 				{ "sourcePath", GenericPath(found) },
 			};
@@ -615,6 +639,7 @@ namespace dvb::Capture
 				if (a_args.contains(k))
 					result[k] = a_args[k];
 			result.update(sceneStamp);
+			ComputeInconclusive(result);
 			MaybeScoreAgainstGolden(result, a_args, dest);
 
 			WriteSidecar(dest, result);
@@ -690,7 +715,7 @@ namespace dvb::Capture
 				{ "sceneMismatch", a_args.value("sceneMismatch", false) },
 				{ "uiExcluded", ready.uiExcluded.value_or(false) },
 				{ "readyBy", ready.readyBy },
-				{ "elapsedMs", duration_cast<milliseconds>(steady_clock::now() - start).count() },
+				{ "captureElapsedMs", duration_cast<milliseconds>(steady_clock::now() - start).count() },
 				{ "requestId", requestId },
 				{ "degraded", std::move(degraded) },
 			};
@@ -706,6 +731,7 @@ namespace dvb::Capture
 				if (a_args.contains(k))
 					result[k] = a_args[k];
 			result.update(sceneStamp);
+			ComputeInconclusive(result);
 			MaybeScoreAgainstGolden(result, a_args, outputPath);
 
 			WriteSidecar(outputPath, result);
@@ -840,7 +866,10 @@ namespace dvb::Capture
 			"via SSIM and adds {ssim, threshold, passed} to the result (or 'regions' for independent "
 			"per-region scores, {name,ssim,threshold,passed} each, overall 'passed' is AND across "
 			"all — see record{action:'replay'}'s 'goldens' arg, the normal way this gets set for a "
-			"checkpoint). This is devbench's fast single-checkpoint verdict; batch/corpus regression "
+			"checkpoint). Every result also carries {inconclusive, inconclusiveReason?} — true when "
+			"sceneMismatch, any 'degraded' entry, or a native-fallback capture means 'passed' (if "
+			"present) should NOT be trusted as a real verdict; always check this before acting on "
+			"'passed'. This is devbench's fast single-checkpoint verdict; batch/corpus regression "
 			"across many recordings stays in tests/http/visual.py.";
 		d.readOnly = false;
 		json kinds = json::array({ "auto", "native", "providers", "extensions" });

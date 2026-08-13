@@ -1343,6 +1343,42 @@ namespace dvb
 			return out;
 		}
 
+		// Summarizes a scenario transcript's `capture` steps into a flat, per-checkpoint rollup
+		// — {id, ok, path, inconclusive, inconclusiveReason?, ssim?, threshold?, passed?} — so a
+		// caller doesn't have to filter the full step transcript (which can run into the hundreds
+		// for a multi-checkpoint recording; a live test with 3 checkpoints produced 467 steps) to
+		// answer "did my checkpoints pass." Every field devbench already computed per capture; this
+		// just collects them where a caller — an LLM in particular — can find them in one place
+		// without re-deriving anything.
+		json SummarizeCheckpoints(const json& a_scenarioResult)
+		{
+			json out = json::array();
+			for (const auto& r : a_scenarioResult.value("results", json::array())) {
+				if (r.value("kind", std::string{}) != "tool" || r.value("tool", std::string{}) != "capture")
+					continue;
+				if (!r.value("ok", false) || !r.contains("result"))
+					continue;
+				const json& cap = r["result"];
+				if (!cap.contains("checkpointId"))
+					continue;
+				json entry{
+					{ "id", cap.value("checkpointId", std::string{}) },
+					{ "ok", cap.value("ok", false) },
+					{ "path", cap.value("path", std::string{}) },
+					{ "inconclusive", cap.value("inconclusive", false) },
+				};
+				if (cap.contains("inconclusiveReason"))
+					entry["inconclusiveReason"] = cap["inconclusiveReason"];
+				if (cap.contains("ssim")) {
+					entry["ssim"] = cap["ssim"];
+					entry["threshold"] = cap["threshold"];
+					entry["passed"] = cap["passed"];
+				}
+				out.push_back(std::move(entry));
+			}
+			return out;
+		}
+
 		// Open menus that would make a replay meaningless — they pause the sim, are modal, or grab the
 		// cursor into menu-mode (inventory/dialogue/lockpick/messagebox). Always-open menus (HUD/cursor)
 		// and the console (SKSE task exec still runs) never block. Reads live UI flags on the main thread.
@@ -2244,7 +2280,10 @@ namespace dvb
 			"at the point in the trajectory its atMs was recorded, tagged with 'variant' for "
 			"correlation (default 'default') — see the `capture` tool. Pass 'goldens' to also get "
 			"an inline SSIM verdict per checkpoint: {\"<checkpointId>\": {golden, threshold?, "
-			"regions?}}; a checkpoint with no matching entry is captured but not scored.";
+			"regions?}}; a checkpoint with no matching entry is captured but not scored. The "
+			"result's top-level 'checkpoints' array rolls up every capture step into "
+			"{id, ok, path, inconclusive, inconclusiveReason?, ssim?, threshold?, passed?} — read "
+			"this instead of filtering the (often much larger) 'results' step transcript yourself.";
 		record.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
@@ -2319,6 +2358,7 @@ namespace dvb
 							throw;
 						}
 						result["coupling"] = coupling;  // surface effective tier / override
+						result["checkpoints"] = SummarizeCheckpoints(result);
 						logs::info("devbench: replay finished — {} steps, ok={}",
 							result.value("stepsRun", 0), result.value("ok", false));
 						a_events.Publish("replay.finished", json{ { "runId", runId }, { "ok", result.value("ok", false) }, { "stepsRun", result.value("stepsRun", 0) } });
