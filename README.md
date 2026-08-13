@@ -28,7 +28,7 @@ shared registry every mod can extend.
 - **Performance / A-B testing.** A recorded play-through replays the **same path and conditions
   every run**, so an A/B shader/feature comparison measures the _change_, not your hands.
   devbench publishes **semantic `EventBus` events** — `record.started`/`record.stopped`,
-  `scene.cellLoaded`, `menu`, `lifecycle` — so a profiler client can align a capture to those
+  `scene.cellLoaded`, `menu`, `lifecycle`, `health.stalled`/`health.resumed` — so a profiler client can align a capture to those
   boundaries; pair it with a Tracy-instrumented build (via the `tracy` MCP) to attribute
   frametime/GPU cost to a specific moment, toggle a feature through its tool, replay the same
   recipe, and diff the numbers.
@@ -129,6 +129,12 @@ Missing → auto-created with defaults. Invalid → defaults (logged). All keys 
   // cleanTransitionCell to force a clean loading screen. Save-loads already tear down.
   "cleanTransition": true,
   "cleanTransitionCell": "QASmoke",
+
+  // If the engine frame counter hasn't advanced for this long (ms), publish a
+  // "health.stalled" EventBus event (and "health.resumed" once it recovers) — catches a
+  // frozen main thread, which a menu/lifecycle event can never report on its own (those are
+  // published BY the main thread). 0 disables the watchdog.
+  "stallWatchdogMs": 5000,
 }
 ```
 
@@ -371,7 +377,7 @@ interface is shared), so **namespace your topics** the way you namespace tool na
 ## Performance data
 
 devbench publishes semantic **`EventBus` events** — `record.started`/`record.stopped`,
-`scene.cellLoaded`, `menu`, and `lifecycle` — so a client can align a capture to those
+`scene.cellLoaded`, `menu`, `lifecycle`, and `health.stalled`/`health.resumed` — so a client can align a capture to those
 boundaries (and the `scenario` tool returns per-step timings synchronously) — but devbench does
 not collect or serve profiling data itself.
 Frametime and GPU metrics are left to dedicated clients: pair devbench with a Tracy-instrumented

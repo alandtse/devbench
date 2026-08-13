@@ -62,6 +62,12 @@ namespace dvb
 		std::vector<std::string> captureScanDirs = { "", "Screenshots" };
 		int                      captureTimeoutMs = 8000;
 		int                      captureSettleMs = 500;  // default settle before a checkpoint capture
+
+		// Background watchdog: if the engine frame counter hasn't advanced for this long,
+		// publish a "health.stalled" EventBus event (and "health.resumed" once it recovers) —
+		// covers a frozen main thread, which a `menu`/`lifecycle` event never can (those are
+		// published BY the main thread). 0 disables the watchdog.
+		int stallWatchdogMs = 5000;
 	};
 
 	// Load Data/SKSE/Plugins/devbench/config.json. If the file is missing it is

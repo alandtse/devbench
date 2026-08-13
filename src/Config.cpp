@@ -44,6 +44,7 @@ namespace dvb
 				{ "captureScanDirs", a_cfg.captureScanDirs },
 				{ "captureTimeoutMs", a_cfg.captureTimeoutMs },
 				{ "captureSettleMs", a_cfg.captureSettleMs },
+				{ "stallWatchdogMs", a_cfg.stallWatchdogMs },
 			};
 			out << j.dump(2) << '\n';
 		}
@@ -121,6 +122,7 @@ namespace dvb
 			cfg.captureScanDirs = j.value("captureScanDirs", cfg.captureScanDirs);
 			cfg.captureTimeoutMs = j.value("captureTimeoutMs", cfg.captureTimeoutMs);
 			cfg.captureSettleMs = j.value("captureSettleMs", cfg.captureSettleMs);
+			cfg.stallWatchdogMs = j.value("stallWatchdogMs", cfg.stallWatchdogMs);
 
 			// Migrate forward: if the file predates any key (e.g. an install from before
 			// the record hotkeys existed), rewrite it so the new keys appear with their
@@ -131,7 +133,8 @@ namespace dvb
 				"recordHotkeyShift", "replayHotkeyShift", "replayPath", "replayRestoreScene",
 				"recordIntervalMs", "autoRunPath", "autoRunRestoreScene", "loadSettleMs",
 				"couplingAnchorMs", "couplingCellMs", "cleanTransition", "cleanTransitionCell",
-				"captureDir", "captureScanDirs", "captureTimeoutMs", "captureSettleMs"
+				"captureDir", "captureScanDirs", "captureTimeoutMs", "captureSettleMs",
+				"stallWatchdogMs"
 			};
 			const bool complete = std::all_of(std::begin(kKeys), std::end(kKeys),
 				[&](const char* k) { return j.contains(k); });

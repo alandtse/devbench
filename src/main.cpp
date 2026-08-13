@@ -9,6 +9,7 @@
 #include "Recording.h"
 #include "RecordingsMenu.h"
 #include "Server.h"
+#include "StallWatchdog.h"
 #include "Tools.h"
 #include "Version.h"
 
@@ -89,6 +90,7 @@ namespace
 				dvb::HostApi::Init(g_server->Tools(), g_server->Events());
 				g_server->Start();
 				dvb::InstallGameEvents(g_server->Events());
+				dvb::StallWatchdog::Start(g_server->Events(), cfg.stallWatchdogMs);
 				dvb::ConsoleHook::Install(g_server->Events());  // observe console commands as events / for recording
 
 				// Receive cross-plugin interface requests from ANY plugin (nullptr sender),
