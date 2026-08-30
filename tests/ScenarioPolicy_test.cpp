@@ -25,6 +25,22 @@ TEST_CASE("scenario rejects explicit ok false receipts")
 	CHECK(dvb::ScenarioPolicy::EmbeddedToolErrorCode(result) == 422);
 }
 
+TEST_CASE("scenario evaluates ok false after an empty error")
+{
+	const json result{ { "error", "" }, { "ok", false } };
+
+	CHECK(dvb::ScenarioPolicy::IsEmbeddedToolFailure(result));
+	CHECK(dvb::ScenarioPolicy::EmbeddedToolErrorMessage(result) == "tool returned ok:false");
+}
+
+TEST_CASE("scenario uses the fallback message for a null error")
+{
+	const json result{ { "error", nullptr }, { "ok", false } };
+
+	CHECK(dvb::ScenarioPolicy::IsEmbeddedToolFailure(result));
+	CHECK(dvb::ScenarioPolicy::EmbeddedToolErrorMessage(result) == "tool returned ok:false");
+}
+
 TEST_CASE("semantic waiter outcomes remain successful tool steps")
 {
 	const json result{
