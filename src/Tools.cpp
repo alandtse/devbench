@@ -1576,6 +1576,7 @@ namespace dvb
 			std::map<uint64_t, State> m_runs;
 		};
 
+		/// Execute a scenario step list and return its complete transcript.
 		json ScenarioHandler(const json& a_args, const ToolContext& a_ctx,
 			const ToolRegistry& a_registry, EventBus& a_events)
 		{
