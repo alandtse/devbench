@@ -553,6 +553,37 @@ namespace dvb
 			throw ToolError(400, std::format("unknown action '{}' (list|open|close|describe|accept|invoke)", action));
 		}
 
+		json WaitOrSleepHandler(const json& a_args, bool a_sleep)
+		{
+			const int hours = a_args.value("hours", 0);
+			if (hours <= 0)
+				throw ToolError(400, "'hours' must be a positive integer");
+
+			return MainThread::RunAndWait([hours, a_sleep]() -> json {
+				auto* pc = RE::PlayerCharacter::GetSingleton();
+				if (!pc)
+					return json{ { "completed", false }, { "reason", "no PlayerCharacter" } };
+				if (!pc->CanSleepWait(nullptr))
+					return json{ { "completed", false }, { "reason", "blocked (see the in-game HUD message just shown)" } };
+
+				if (a_sleep)
+					pc->StartSleeping(hours);
+				else
+					pc->StartWaiting(hours);
+
+				// SleepWaitMenu's own Update loop also relies on reading back its AS3 slider's
+				// displayed value each tick, so it can't be driven to completion by a native-only
+				// caller; call the tick function it uses directly instead, bounded by how many
+				// ticks the requested duration needs.
+				using namespace RE::literals;
+				const std::int32_t secondsPerTick = "iSecondsToSleepPerUpdate"_gs.value_or(900);
+				const int          maxTicks = (hours * 3600 / secondsPerTick) + 1;
+				for (int i = 0; i < maxTicks; ++i)
+					pc->AdvanceSleepWaitTick();
+				return json{ { "completed", true }, { "hours", hours } };
+			});
+		}
+
 		// Identify any form as { formId, formType, name, editorId } — CommonLib's RE'd accessors.
 		json IdentifyForm(const RE::TESForm* a_form)
 		{
@@ -2414,5 +2445,41 @@ namespace dvb
 			[](const json& a_args, const ToolContext&) {
 				return Recording::ManageRecordings(a_args);
 			});
+
+		ToolDescriptor wait;
+		wait.name = "wait";
+		wait.description =
+			"Advance time by waiting `hours`, synchronously and without touching the Wait "
+			"menu's UI at all: starts the wait, then drives its completion (autosave, script "
+			"events) to done before returning — no polling needed. Refuses with "
+			"{ completed:false, reason } on the same gate the menu itself enforces (combat, "
+			"trespassing, midair, hostiles nearby, etc.).";
+		wait.inputSchema = json{
+			{ "type", "object" },
+			{ "properties", json{
+								{ "hours", json{ { "type", "integer" }, { "description", "hours to wait (> 0)" } } },
+							} },
+			{ "required", json::array({ "hours" }) },
+		};
+		a_registry.Register(std::move(wait), [](const json& a_args, const ToolContext&) {
+			return WaitOrSleepHandler(a_args, false);
+		});
+
+		ToolDescriptor sleep;
+		sleep.name = "sleep";
+		sleep.description =
+			"Advance time by sleeping `hours` (the rest variant — drives the well-rested / "
+			"lover's-comfort bonus). Same mechanics as `wait`: synchronous, no menu UI, "
+			"refuses with { completed:false, reason } on the same gate the menu enforces.";
+		sleep.inputSchema = json{
+			{ "type", "object" },
+			{ "properties", json{
+								{ "hours", json{ { "type", "integer" }, { "description", "hours to sleep (> 0)" } } },
+							} },
+			{ "required", json::array({ "hours" }) },
+		};
+		a_registry.Register(std::move(sleep), [](const json& a_args, const ToolContext&) {
+			return WaitOrSleepHandler(a_args, true);
+		});
 	}
 }
