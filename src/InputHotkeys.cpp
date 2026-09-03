@@ -2,6 +2,7 @@
 
 #include "Config.h"
 #include "Json.h"
+#include "Recording.h"
 #include "ToolRegistry.h"
 
 #include <RE/Skyrim.h>
@@ -67,6 +68,9 @@ namespace dvb
 			{
 				if (!a_events)
 					return RE::BSEventNotifyControl::kContinue;
+				// The recording path is independent of hotkeys. Capture the normalized chain
+				// before filtering it down to the optional record/replay bindings below.
+				Recording::NoteInputEvents(a_events);
 				for (auto* e = *a_events; e; e = e->next) {
 					auto* btn = e->AsButtonEvent();
 					if (!btn || !btn->IsDown())  // first frame down only — no key-repeat
@@ -99,8 +103,6 @@ namespace dvb
 
 	void InstallInputHotkeys(ToolRegistry& a_registry, const Config& a_config)
 	{
-		if (a_config.recordHotkey == 0 && a_config.replayHotkey == 0)
-			return;  // opt-in; nothing configured
 		g_registry = &a_registry;
 		g_recordKey.store(a_config.recordHotkey);
 		g_replayKey.store(a_config.replayHotkey);
@@ -110,10 +112,10 @@ namespace dvb
 		g_replayRestore = a_config.replayRestoreScene;
 		if (auto* idm = RE::BSInputDeviceManager::GetSingleton()) {
 			idm->AddEventSink(&g_inputSink);
-			logs::info("devbench: input hotkeys installed (record={} shift={}, replay={} shift={})",
+			logs::info("devbench: input activity sink installed (record hotkey={} shift={}, replay hotkey={} shift={})",
 				g_recordKey.load(), g_recordShift.load(), g_replayKey.load(), g_replayShift.load());
 		} else {
-			logs::warn("devbench: BSInputDeviceManager unavailable — input hotkeys NOT installed");
+			logs::warn("devbench: BSInputDeviceManager unavailable — input activity sink NOT installed (no hotkeys or input capture)");
 		}
 	}
 

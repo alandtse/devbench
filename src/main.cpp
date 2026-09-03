@@ -6,11 +6,13 @@
 #include "GameState.h"
 #include "HostApi.h"
 #include "InputHotkeys.h"
+#include "KeyboardInput.h"
 #include "Recording.h"
 #include "RecordingsMenu.h"
 #include "Server.h"
 #include "StallWatchdog.h"
 #include "Tools.h"
+#include "VRInput.h"
 #include "Version.h"
 
 #include <cstring>
@@ -102,8 +104,11 @@ namespace
 		}
 		// Register input hotkeys at kInputLoaded — BSInputDeviceManager is null at kPostLoad,
 		// so registering then silently no-ops. kInputLoaded fires once the input subsystem is up.
-		if (a_msg->type == SKSE::MessagingInterface::kInputLoaded && g_server)
+		if (a_msg->type == SKSE::MessagingInterface::kInputLoaded && g_server) {
+			dvb::MarkKeyboardInputReady();
+			dvb::MarkVRInputReady(g_server->Events());
 			dvb::InstallInputHotkeys(g_server->Tools(), g_config);
+		}
 
 		// Register the optional in-game menus at kDataLoaded (the frameworks are up by then). Each
 		// is inert if its framework isn't installed; both drive devbench via dvb::RunTool, so they
@@ -114,6 +119,16 @@ namespace
 		}
 
 		if (g_server) {
+			// Never carry a synthetic held key across a scene reset. This callback is on Skyrim's
+			// main thread, so the keyboard layer hands cleanup to a worker and returns immediately.
+			if (a_msg->type == SKSE::MessagingInterface::kPreLoadGame) {
+				dvb::ReleaseKeyboardInputForLifecycle("preLoadGame");
+				dvb::ReleaseVRInputForLifecycle("preLoadGame");
+			} else if (a_msg->type == SKSE::MessagingInterface::kNewGame) {
+				dvb::ReleaseKeyboardInputForLifecycle("newGame");
+				dvb::ReleaseVRInputForLifecycle("newGame");
+			}
+
 			// Publish lifecycle events (dataLoaded and later load/save/new-game).
 			dvb::OnSKSEMessage(a_msg->type);
 			// Remember the save the player loaded or just wrote, so a recording started

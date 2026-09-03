@@ -38,6 +38,7 @@ namespace dvb
 					}
 					if (g_bus)
 						g_bus->Publish("menu", json{ { "name", name }, { "opening", a_event->opening } });
+					Recording::NoteMenuState(name, a_event->opening);
 				}
 				return RE::BSEventNotifyControl::kContinue;
 			}
@@ -148,6 +149,7 @@ namespace dvb
 			return;
 		}
 		g_bus->Publish("lifecycle", json{ { "event", event } });
+		Recording::NoteLifecycleEvent(event);
 	}
 
 	std::vector<std::string> GetOpenMenus()

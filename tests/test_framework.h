@@ -101,6 +101,19 @@ namespace tf
 			::tf::fail(__FILE__, __LINE__, "expected exception from: " #expr); \
 	} while (0)
 
+#define CHECK_THROWS_AS(expr, exception_type)                                            \
+	do {                                                                                 \
+		bool tf_threw_expected = false;                                                  \
+		try {                                                                            \
+			(void)(expr);                                                                \
+		} catch (const exception_type&) {                                                \
+			tf_threw_expected = true;                                                    \
+		} catch (...) {                                                                  \
+		}                                                                                \
+		if (!tf_threw_expected)                                                          \
+			::tf::fail(__FILE__, __LINE__, "expected " #exception_type " from: " #expr); \
+	} while (0)
+
 #define CHECK_NOTHROW(expr)                                                      \
 	do {                                                                         \
 		try {                                                                    \
