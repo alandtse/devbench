@@ -4,6 +4,11 @@
 ci:
   autoupdate_commit_msg: "ci: pre-commit autoupdate"
   autofix_commit_msg: "style: auto fixes from pre-commit.com hooks"
+  # pre-commit.ci's hosted environment only understands language: backends declared here —
+  # it can't run our own GitHub Actions setup steps (e.g. `npm ci` in bridge/), so it can't
+  # find bridge/node_modules/.bin/eslint. The real "Lint" workflow (.github/workflows/lint.yaml)
+  # runs `npm ci` first and lints there instead.
+  skip: [eslint-bridge]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
