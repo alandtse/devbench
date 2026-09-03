@@ -54,17 +54,22 @@ function firstExisting(candidates: string[]): string | undefined {
 }
 
 /** Resolve a Target from parsed CLI args. Throws with a clear message if none found. */
-export function resolveTarget(args: { game?: string; install?: string }): Target {
+export function resolveTarget(args: {
+  game?: string;
+  install?: string;
+}): Target {
   if (args.install) {
     return { label: args.install, runtimeDir: runtimeDirFor(args.install) };
   }
   if (args.game === "se" || args.game === "vr") {
-    const candidates = (args.game === "se" ? DEFAULT_SE_INSTALLS : DEFAULT_VR_INSTALLS).map(runtimeDirFor);
+    const candidates = (
+      args.game === "se" ? DEFAULT_SE_INSTALLS : DEFAULT_VR_INSTALLS
+    ).map(runtimeDirFor);
     const found = firstExisting(candidates);
     if (!found) {
       throw new Error(
         `Could not find a devbench install for --game ${args.game} in any default Steam ` +
-          `location. Pass --install <path-to-Skyrim-folder> instead.`
+          `location. Pass --install <path-to-Skyrim-folder> instead.`,
       );
     }
     return { label: args.game.toUpperCase(), runtimeDir: found };
@@ -77,7 +82,9 @@ export function resolveBaseUrl(target: Target): string {
   const raw = readFileSync(join(target.runtimeDir, "runtime.json"), "utf-8");
   const parsed = JSON.parse(raw) as RuntimeJson;
   if (typeof parsed.port !== "number") {
-    throw new Error(`runtime.json at ${target.runtimeDir} has no numeric "port" field.`);
+    throw new Error(
+      `runtime.json at ${target.runtimeDir} has no numeric "port" field.`,
+    );
   }
   return `http://127.0.0.1:${parsed.port}`;
 }

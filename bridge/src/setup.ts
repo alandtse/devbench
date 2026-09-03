@@ -13,5 +13,7 @@ export function printSetupSnippet(exePath: string, game: string): void {
   };
   console.log(`Add this to your MCP client's config (e.g. .mcp.json):\n`);
   console.log(JSON.stringify(snippet, null, 2));
-  console.log(`\nThen restart/reload your MCP client to pick up the "${name}" server.`);
+  console.log(
+    `\nThen restart/reload your MCP client to pick up the "${name}" server.`,
+  );
 }

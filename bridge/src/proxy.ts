@@ -24,23 +24,32 @@ async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
   try {
     res = await fetch(url, init);
   } catch (e) {
-    throw new GameUnavailableError(`devbench not reachable at ${url}: ${(e as Error).message}`);
+    throw new GameUnavailableError(
+      `devbench not reachable at ${url}: ${(e as Error).message}`,
+    );
   }
-  const body = await res.json().catch(() => undefined);
+  const body: unknown = await res.json().catch(() => undefined);
   if (!res.ok) {
-    const message = (body as { error?: string } | undefined)?.error ?? res.statusText;
+    const message =
+      (body as { error?: string } | undefined)?.error ?? res.statusText;
     throw new Error(`devbench returned ${res.status}: ${message}`);
   }
   return body;
 }
 
-export async function listTools(target: Target): Promise<DevbenchToolDescriptor[]> {
+export async function listTools(
+  target: Target,
+): Promise<DevbenchToolDescriptor[]> {
   const base = resolveBaseUrl(target);
   const body = (await fetchJson(`${base}/api/tools`)) as DevbenchToolsResponse;
   return body.tools;
 }
 
-export async function callTool(target: Target, name: string, args: Record<string, unknown>): Promise<unknown> {
+export async function callTool(
+  target: Target,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
   const base = resolveBaseUrl(target);
   return fetchJson(`${base}/api/tool/${encodeURIComponent(name)}`, {
     method: "POST",

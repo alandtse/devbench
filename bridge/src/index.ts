@@ -1,13 +1,20 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 
 import { callTool, GameUnavailableError, listTools } from "./proxy.js";
 import { resolveTarget } from "./runtime.js";
 import { printSetupSnippet } from "./setup.js";
 
-function parseArgs(argv: string[]): { game?: string; install?: string; setup: boolean } {
+function parseArgs(argv: string[]): {
+  game?: string;
+  install?: string;
+  setup: boolean;
+} {
   let game: string | undefined;
   let install: string | undefined;
   let setup = false;
@@ -32,19 +39,28 @@ async function main(): Promise<void> {
   const target = resolveTarget(args);
 
   if (args.setup) {
-    printSetupSnippet(process.execPath === process.argv[0] ? process.argv[1] : process.argv[0], args.game ?? "se");
+    printSetupSnippet(
+      process.execPath === process.argv[0] ? process.argv[1] : process.argv[0],
+      args.game ?? "se",
+    );
     return;
   }
 
   const server = new Server(
     { name: "devbench-bridge", version: "0.1.0" },
-    { capabilities: { tools: {} } }
+    { capabilities: { tools: {} } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
       const tools = await listTools(target);
-      return { tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) };
+      return {
+        tools: tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          inputSchema: t.inputSchema,
+        })),
+      };
     } catch (e) {
       if (e instanceof GameUnavailableError) {
         // No game running yet: report an empty tool set rather than failing the whole
@@ -57,11 +73,26 @@ async function main(): Promise<void> {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
-      const result = await callTool(target, request.params.name, (request.params.arguments ?? {}) as Record<string, unknown>);
+      const result = await callTool(
+        target,
+        request.params.name,
+        request.params.arguments ?? {},
+      );
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     } catch (e) {
-      const message = e instanceof GameUnavailableError ? `game not running (target: ${target.label})` : (e as Error).message;
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, reason: message }) }], isError: true };
+      const message =
+        e instanceof GameUnavailableError
+          ? `game not running (target: ${target.label})`
+          : (e as Error).message;
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ ok: false, reason: message }),
+          },
+        ],
+        isError: true,
+      };
     }
   });
 
