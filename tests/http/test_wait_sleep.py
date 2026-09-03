@@ -6,6 +6,8 @@ returning, no polling needed.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from conftest import require_tool
@@ -27,8 +29,18 @@ def sleep(tool_schema):
 SAFE_COC_CELL = "WhiterunDragonsreach"
 
 
-def _goto_safe_cell(client) -> None:
+def _goto_safe_cell(client, timeout: float = 15.0) -> None:
+    # console queues the coc command and returns before the cell transition
+    # completes, so poll for the target cell rather than assuming it landed.
     client.ok("console", {"command": f"coc {SAFE_COC_CELL}"})
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        scene = client.ok("inspect", {"kind": "scene"})
+        cell = scene.get("cell") or {}
+        if cell.get("editorId") == SAFE_COC_CELL:
+            return
+        time.sleep(0.5)
+    pytest.fail(f"never reached cell '{SAFE_COC_CELL}' within {timeout}s")
 
 
 @pytest.mark.parametrize("hours", [0, -1])
