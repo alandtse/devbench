@@ -5,13 +5,33 @@ import { createServer } from "node:http";
 const server = createServer((req, res) => {
   if (req.method === "GET" && req.url === "/api/tools") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({
-      tools: [
-        { name: "ping", description: "Self-test.", inputSchema: { type: "object", properties: {} }, readOnly: true },
-        { name: "wait", description: "Advance time.", inputSchema: { type: "object", properties: { hours: { type: "integer" } } }, readOnly: false },
-      ],
-      mcp_bridge: { exePath: "C:/fake/devbench-bridge.exe", args: ["--game", "se"], mcpJsonSnippet: {}, installCommand: "fake" },
-    }));
+    res.end(
+      JSON.stringify({
+        tools: [
+          {
+            name: "ping",
+            description: "Self-test.",
+            inputSchema: { type: "object", properties: {} },
+            readOnly: true,
+          },
+          {
+            name: "wait",
+            description: "Advance time.",
+            inputSchema: {
+              type: "object",
+              properties: { hours: { type: "integer" } },
+            },
+            readOnly: false,
+          },
+        ],
+        mcp_bridge: {
+          exePath: "C:/fake/devbench-bridge.exe",
+          args: ["--game", "se"],
+          mcpJsonSnippet: {},
+          installCommand: "fake",
+        },
+      }),
+    );
     return;
   }
   const m = req.url?.match(/^\/api\/tool\/([^/]+)$/);
