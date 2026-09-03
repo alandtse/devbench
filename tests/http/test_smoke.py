@@ -24,6 +24,23 @@ def test_inspect_present(tool_schema):
     assert "inspect" in tool_schema, sorted(tool_schema)
 
 
+def test_mcp_bridge_discovery_present(client):
+    info = client.mcp_bridge_info()
+    assert isinstance(info, dict), info
+    for key in ("exePath", "args", "mcpJsonSnippet", "installCommand"):
+        assert key in info, info
+    assert "mcpServers" in info["mcpJsonSnippet"], info
+
+
+def test_mcp_bridge_setup_tool_present(client, tool_schema):
+    # Same info as mcp_bridge_info(), but reachable as an actual tool call — this is what a
+    # client already connected via the DLL's own /mcp endpoint (no REST envelope) can use.
+    require_tool(tool_schema, "mcp_bridge_setup")
+    body = client.ok("mcp_bridge_setup")
+    for key in ("exePath", "args", "mcpJsonSnippet", "installCommand"):
+        assert key in body, body
+
+
 # --------------------------------------------------------------------------- #
 # console
 # --------------------------------------------------------------------------- #

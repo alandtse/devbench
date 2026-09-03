@@ -71,6 +71,21 @@ Bound to `127.0.0.1` only. The bench has no auth and can execute arbitrary comma
 game process — that is acceptable for a _local dev bench_ but it must never be bound to a
 network-reachable address, and `eval`-class tools are gated behind an explicit enable.
 
+## MCP client setup
+
+Two ways to connect an MCP client, for two different needs:
+
+- **Direct**, for a quick single-session debug: point your client at `http://127.0.0.1:8920/mcp`
+  (or `8921`, or whatever `runtime.json` reports). Zero extra setup, but the connection dies the
+  instant the game process exits — including every rebuild-and-relaunch during normal dev
+  iteration — and needs a manual reconnect.
+- **[devbench-bridge](bridge/README.md)**, for anything that needs to survive the game
+  restarting: a small companion process your MCP client spawns over stdio, which proxies to
+  devbench's REST API instead of connecting to `/mcp` directly. Ships inside the install
+  (`Data/SKSE/Plugins/devbench/devbench-bridge.exe`) — call the `mcp_bridge_setup` tool (or read
+  `GET /api/tools`'s `mcp_bridge` field, or `mcp-bridge.json` next to `runtime.json`) for the
+  exact config snippet to paste into your client.
+
 ## Build
 
 xmake, C++23, CommonLibSSE-NG (submodule). cpp-mcp is vendored as the `lib/cpp-mcp`
