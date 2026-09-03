@@ -21,8 +21,19 @@ def sleep(tool_schema):
     return require_tool(tool_schema, "sleep")
 
 
-def test_wait_requires_positive_hours(client, wait):
-    status, body = client.call("wait", {"hours": 0})
+# Vanilla, light interior with no hostiles/ownership gates -- forced fresh in each
+# live test (not just relying on the suite's own bootstrap cell) so a prior test's
+# console fiddling can't leave the player somewhere that spuriously refuses.
+SAFE_COC_CELL = "WhiterunDragonsreach"
+
+
+def _goto_safe_cell(client) -> None:
+    client.ok("console", {"command": f"coc {SAFE_COC_CELL}"})
+
+
+@pytest.mark.parametrize("hours", [0, -1])
+def test_wait_requires_positive_hours(client, wait, hours):
+    status, body = client.call("wait", {"hours": hours})
     assert status == 400, (status, body)
     assert isinstance(body, dict) and "error" in body, body
 
@@ -33,14 +44,25 @@ def test_sleep_requires_positive_hours(client, sleep):
     assert isinstance(body, dict) and "error" in body, body
 
 
+def test_wait_rejects_fractional_hours(client, wait):
+    status, body = client.call("wait", {"hours": 1.5})
+    assert status == 400, (status, body)
+    assert isinstance(body, dict) and "error" in body, body
+
+
+def test_wait_rejects_excessive_hours(client, wait):
+    status, body = client.call("wait", {"hours": 1_000_000})
+    assert status == 400, (status, body)
+    assert isinstance(body, dict) and "error" in body, body
+
+
 @pytest.mark.requires_player
 def test_wait_advances_time(client, wait):
+    _goto_safe_cell(client)
     before = client.ok("inspect", {"kind": "scene"}).get("daysPassed")
     assert isinstance(before, (int, float)), before
     body = client.ok("wait", {"hours": 1})
     assert isinstance(body, dict), body
-    if body.get("completed") is False:
-        pytest.skip(f"wait refused: {body.get('reason')}")
     assert body.get("completed") is True, body
     assert body.get("hours") == 1, body
     after = client.ok("inspect", {"kind": "scene"}).get("daysPassed")
@@ -49,12 +71,11 @@ def test_wait_advances_time(client, wait):
 
 @pytest.mark.requires_player
 def test_sleep_advances_time(client, sleep):
+    _goto_safe_cell(client)
     before = client.ok("inspect", {"kind": "scene"}).get("daysPassed")
     assert isinstance(before, (int, float)), before
     body = client.ok("sleep", {"hours": 1})
     assert isinstance(body, dict), body
-    if body.get("completed") is False:
-        pytest.skip(f"sleep refused: {body.get('reason')}")
     assert body.get("completed") is True, body
     after = client.ok("inspect", {"kind": "scene"}).get("daysPassed")
     assert isinstance(after, (int, float)) and after > before, (before, after)

@@ -553,11 +553,24 @@ namespace dvb
 			throw ToolError(400, std::format("unknown action '{}' (list|open|close|describe|accept|invoke)", action));
 		}
 
+		// Generous ceiling on requested duration (~11 years) -- comfortably covers any real
+		// test scenario while keeping hours*3600 and the tick-count math well clear of
+		// overflow. kMaxTicks is the actual safety bound: AdvanceSleepWaitTick() runs
+		// synchronously on the main thread once per tick, so an unbounded tick count would
+		// hang the game, not just take a while.
+		constexpr long long kMaxWaitHours = 100000;
+		constexpr long long kMaxWaitTicks = 20000;
+
 		json WaitOrSleepHandler(const json& a_args, bool a_sleep)
 		{
-			const int hours = a_args.value("hours", 0);
+			const auto it = a_args.find("hours");
+			if (it == a_args.end() || !it->is_number_integer())
+				throw ToolError(400, "'hours' must be a positive integer");
+			const long long hours = it->get<long long>();
 			if (hours <= 0)
 				throw ToolError(400, "'hours' must be a positive integer");
+			if (hours > kMaxWaitHours)
+				throw ToolError(400, std::format("'hours' must be <= {}", kMaxWaitHours));
 
 			return MainThread::RunAndWait([hours, a_sleep]() -> json {
 				auto* pc = RE::PlayerCharacter::GetSingleton();
@@ -566,19 +579,23 @@ namespace dvb
 				if (!pc->CanSleepWait(nullptr))
 					return json{ { "completed", false }, { "reason", "blocked (see the in-game HUD message just shown)" } };
 
-				if (a_sleep)
-					pc->StartSleeping(hours);
-				else
-					pc->StartWaiting(hours);
-
 				// SleepWaitMenu's own Update loop also relies on reading back its AS3 slider's
 				// displayed value each tick, so it can't be driven to completion by a native-only
 				// caller; call the tick function it uses directly instead, bounded by how many
-				// ticks the requested duration needs.
+				// ticks the requested duration needs at the current (possibly mod-changed) rate.
 				using namespace RE::literals;
-				const std::int32_t secondsPerTick = "iSecondsToSleepPerUpdate"_gs.value_or(900);
-				const int          maxTicks = (hours * 3600 / secondsPerTick) + 1;
-				for (int i = 0; i < maxTicks; ++i)
+				std::int32_t secondsPerTick = "iSecondsToSleepPerUpdate"_gs.value_or(900);
+				if (secondsPerTick <= 0)
+					secondsPerTick = 900;
+				const long long maxTicks = (hours * 3600 / secondsPerTick) + 1;
+				if (maxTicks > kMaxWaitTicks)
+					throw ToolError(400, std::format("'hours' needs {} ticks at the current {}s/tick rate (> {} limit)", maxTicks, secondsPerTick, kMaxWaitTicks));
+
+				if (a_sleep)
+					pc->StartSleeping(static_cast<std::int32_t>(hours));
+				else
+					pc->StartWaiting(static_cast<std::int32_t>(hours));
+				for (long long i = 0; i < maxTicks; ++i)
 					pc->AdvanceSleepWaitTick();
 				return json{ { "completed", true }, { "hours", hours } };
 			});
@@ -2457,7 +2474,7 @@ namespace dvb
 		wait.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "hours", json{ { "type", "integer" }, { "description", "hours to wait (> 0)" } } },
+								{ "hours", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", kMaxWaitHours }, { "description", "hours to wait (> 0)" } } },
 							} },
 			{ "required", json::array({ "hours" }) },
 		};
@@ -2474,7 +2491,7 @@ namespace dvb
 		sleep.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "hours", json{ { "type", "integer" }, { "description", "hours to sleep (> 0)" } } },
+								{ "hours", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", kMaxWaitHours }, { "description", "hours to sleep (> 0)" } } },
 							} },
 			{ "required", json::array({ "hours" }) },
 		};
