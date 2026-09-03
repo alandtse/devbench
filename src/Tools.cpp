@@ -561,6 +561,37 @@ namespace dvb
 		constexpr long long kMaxWaitHours = 100000;
 		constexpr long long kMaxWaitTicks = 20000;
 
+		// StartWaiting/StartSleeping trigger a synchronous autosave (bSaveOnWait/bSaveOnRest)
+		// before doing anything else. Live-tested on VR: that save deadlocks the main thread
+		// when triggered from here (a devbench task-queue callback) rather than the real
+		// input-driven Wait menu -- reproduced twice, confirmed fixed by disabling the pref for
+		// the call and restoring it after. SE was not observed to hang, but suppressing the
+		// pref for the scope of a one-off automated wait/sleep is harmless there too.
+		class ScopedAutoSaveSuppress
+		{
+		public:
+			explicit ScopedAutoSaveSuppress(const char* a_prefName)
+			{
+				if (auto* coll = RE::INIPrefSettingCollection::GetSingleton())
+					m_setting = coll->GetSetting(a_prefName);
+				if (m_setting) {
+					m_original = m_setting->GetBool();
+					m_setting->SetBool(false);
+				}
+			}
+			~ScopedAutoSaveSuppress()
+			{
+				if (m_setting)
+					m_setting->SetBool(m_original);
+			}
+			ScopedAutoSaveSuppress(const ScopedAutoSaveSuppress&) = delete;
+			ScopedAutoSaveSuppress& operator=(const ScopedAutoSaveSuppress&) = delete;
+
+		private:
+			RE::Setting* m_setting = nullptr;
+			bool         m_original = false;
+		};
+
 		json WaitOrSleepHandler(const json& a_args, bool a_sleep)
 		{
 			const auto it = a_args.find("hours");
@@ -591,6 +622,7 @@ namespace dvb
 				if (maxTicks > kMaxWaitTicks)
 					throw ToolError(400, std::format("'hours' needs {} ticks at the current {}s/tick rate (> {} limit)", maxTicks, secondsPerTick, kMaxWaitTicks));
 
+				ScopedAutoSaveSuppress noAutoSave(a_sleep ? "bSaveOnRest" : "bSaveOnWait");
 				if (a_sleep)
 					pc->StartSleeping(static_cast<std::int32_t>(hours));
 				else
