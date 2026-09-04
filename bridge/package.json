@@ -1,0 +1,26 @@
+{
+  "name": "devbench-bridge",
+  "version": "0.1.0",
+  "description": "Stdio MCP proxy for devbench — bridges an MCP client to devbench's REST API inside a live Skyrim SE/AE/VR process, surviving game restarts that would otherwise kill a direct MCP connection.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "devbench-bridge": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "compile": "bun build --compile --outfile dist/devbench-bridge src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.10.0",
+    "eslint": "^10.9.1",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.69.0"
+  }
+}

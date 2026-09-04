@@ -26,6 +26,12 @@ jobs:
         with:
           python-version: "3.x"
 
-      # clang-format / prettier / stylua are fetched by the hook repos themselves,
-      # so no extra toolchain setup is needed here.
+      # eslint-bridge needs bridge/node_modules/.bin/eslint on disk (skipped on
+      # pre-commit.ci, which can't run this step -- see .pre-commit-config.yaml).
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - run: npm ci
+        working-directory: bridge
+
       - uses: pre-commit/action@v3.0.1
