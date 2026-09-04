@@ -1,13 +1,19 @@
 // Prints a ready-to-paste MCP client config snippet. Never writes to any config file
 // itself — per the architecture decision, the bridge proposes, a human approves/pastes.
 
-export function printSetupSnippet(exePath: string, game: string): void {
-  const name = `devbench-${game}`;
+export function printSetupSnippet(
+  exePath: string,
+  args: { game?: string; install?: string },
+): void {
+  const name = `devbench-${args.game ?? "custom"}`;
+  const cliArgs = args.install
+    ? ["--install", args.install]
+    : ["--game", args.game ?? "se"];
   const snippet = {
     mcpServers: {
       [name]: {
         command: exePath,
-        args: ["--game", game],
+        args: cliArgs,
       },
     },
   };

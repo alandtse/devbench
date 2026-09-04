@@ -36,15 +36,13 @@ function parseArgs(argv: string[]): {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const target = resolveTarget(args);
 
   if (args.setup) {
-    printSetupSnippet(
-      process.execPath === process.argv[0] ? process.argv[1] : process.argv[0],
-      args.game ?? "se",
-    );
+    printSetupSnippet(process.execPath, args);
     return;
   }
+
+  const target = resolveTarget(args);
 
   const server = new Server(
     { name: "devbench-bridge", version: "0.1.0" },

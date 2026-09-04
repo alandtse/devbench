@@ -272,7 +272,7 @@ namespace dvb
 			{ "args", json::array({ "--game", game }) },
 			{ "mcpJsonSnippet",
 				json{ { "mcpServers", json{ { name, json{ { "command", exePath }, { "args", json::array({ "--game", game }) } } } } } } },
-			{ "installCommand", exePath + " setup --game " + game },
+			{ "installCommand", std::format("\"{}\" setup --game {}", exePath, game) },
 			{ "note",
 				"Add mcpJsonSnippet to your MCP client's config (e.g. .mcp.json), or run installCommand "
 				"to print the same thing — devbench never edits your client config itself." },

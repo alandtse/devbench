@@ -26,9 +26,8 @@ jobs:
         with:
           python-version: "3.x"
 
-      # eslint-bridge (a local pre-commit hook, skipped on pre-commit.ci — see
-      # .pre-commit-config.yaml) needs bridge/node_modules/.bin/eslint on disk;
-      # everything else is fetched by the hook repos themselves.
+      # eslint-bridge needs bridge/node_modules/.bin/eslint on disk (skipped on
+      # pre-commit.ci, which can't run this step -- see .pre-commit-config.yaml).
       - uses: actions/setup-node@v5
         with:
           node-version: "22"

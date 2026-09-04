@@ -17,6 +17,16 @@ interface DevbenchToolsResponse {
 
 export class GameUnavailableError extends Error {}
 
+function resolveBaseUrlOrThrowUnavailable(target: Target): string {
+  try {
+    return resolveBaseUrl(target);
+  } catch (e) {
+    throw new GameUnavailableError(
+      `runtime discovery failed for ${target.label}: ${(e as Error).message}`,
+    );
+  }
+}
+
 async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
   let res: Response;
   try {
@@ -38,8 +48,11 @@ async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
 export async function listTools(
   target: Target,
 ): Promise<DevbenchToolDescriptor[]> {
-  const base = resolveBaseUrl(target);
+  const base = resolveBaseUrlOrThrowUnavailable(target);
   const body = (await fetchJson(`${base}/api/tools`)) as DevbenchToolsResponse;
+  if (!Array.isArray(body.tools)) {
+    throw new Error(`devbench /api/tools response missing a "tools" array`);
+  }
   return body.tools;
 }
 
@@ -48,7 +61,7 @@ export async function callTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<unknown> {
-  const base = resolveBaseUrl(target);
+  const base = resolveBaseUrlOrThrowUnavailable(target);
   return fetchJson(`${base}/api/tool/${encodeURIComponent(name)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

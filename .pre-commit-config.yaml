@@ -4,10 +4,8 @@
 ci:
   autoupdate_commit_msg: "ci: pre-commit autoupdate"
   autofix_commit_msg: "style: auto fixes from pre-commit.com hooks"
-  # pre-commit.ci's hosted environment only understands language: backends declared here —
-  # it can't run our own GitHub Actions setup steps (e.g. `npm ci` in bridge/), so it can't
-  # find bridge/node_modules/.bin/eslint. The real "Lint" workflow (.github/workflows/lint.yaml)
-  # runs `npm ci` first and lints there instead.
+  # pre-commit.ci can't run our npm ci setup step, so it can't find eslint; the real
+  # "Lint" workflow (.github/workflows/lint.yaml) runs this hook instead.
   skip: [eslint-bridge]
 
 repos:
@@ -49,9 +47,8 @@ repos:
 
   - repo: local
     hooks:
-      # Type-aware (typescript-eslint recommendedTypeChecked) linting needs the
-      # project's own installed node_modules/tsconfig, not an isolated pre-commit
-      # env — run it via npm in bridge/ rather than the eslint mirror.
+      # Type-aware linting needs the project's own node_modules/tsconfig, not an
+      # isolated pre-commit env.
       - id: eslint-bridge
         name: eslint (bridge/)
         entry: npm --prefix bridge run lint

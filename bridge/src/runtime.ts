@@ -39,8 +39,8 @@ function firstExisting(candidates: string[]): string | undefined {
     try {
       readFileSync(join(dir, "runtime.json"), "utf-8");
       return dir;
-    } catch {
-      // not this one
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
     }
   }
   return undefined;
@@ -74,9 +74,13 @@ export function resolveTarget(args: {
 export function resolveBaseUrl(target: Target): string {
   const raw = readFileSync(join(target.runtimeDir, "runtime.json"), "utf-8");
   const parsed = JSON.parse(raw) as RuntimeJson;
-  if (typeof parsed.port !== "number") {
+  if (
+    !Number.isInteger(parsed.port) ||
+    parsed.port < 1 ||
+    parsed.port > 65535
+  ) {
     throw new Error(
-      `runtime.json at ${target.runtimeDir} has no numeric "port" field.`,
+      `runtime.json at ${target.runtimeDir} has no valid "port" field (1-65535).`,
     );
   }
   return `http://127.0.0.1:${parsed.port}`;
