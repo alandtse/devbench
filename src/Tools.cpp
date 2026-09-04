@@ -2415,10 +2415,8 @@ namespace dvb
 				return Recording::ManageRecordings(a_args);
 			});
 
-		// A registered tool (not just a REST response field) so a client already connected to
-		// this DLL's own /mcp endpoint — which has no equivalent of REST's response envelope to
-		// carry a sibling field — sees it too, including via tools/list_changed if it connected
-		// before this tool existed.
+		// A registered tool, not just a REST field, so a client on this DLL's own /mcp
+		// endpoint (no REST envelope to carry a sibling field) sees it too.
 		ToolDescriptor bridgeSetup;
 		bridgeSetup.name = "mcp_bridge_setup";
 		bridgeSetup.description =

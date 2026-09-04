@@ -69,10 +69,8 @@ namespace dvb
 
 	void RestAdapter::Mount(httplib::Server& a_http)
 	{
-		// Discovery: descriptors double as documentation. `mcp_bridge` sits at the top
-		// level (not inside a tool's own description) because this is the first call any
-		// REST-discovering agent makes — see BridgeDiscoveryInfo()'s doc comment for why
-		// placement here, specifically, is what makes it actually get noticed.
+		// `mcp_bridge` sits at the top level, not inside a tool's own description --
+		// see BridgeDiscoveryInfo()'s doc comment for why placement here matters.
 		a_http.Get("/api/tools", [this](const httplib::Request&, httplib::Response& res) {
 			json arr = json::array();
 			for (const auto& d : m_registry.List())

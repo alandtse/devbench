@@ -1,10 +1,5 @@
-// Resolves which devbench REST endpoint this bridge instance talks to.
-//
-// devbench itself never picks a fixed port (its default can iterate if busy), so the
-// live port for a given install is always read from that install's own runtime.json
-// (Data/SKSE/Plugins/devbench/runtime.json), written fresh every time the game boots.
-// This file is re-read on every call, not cached, so the bridge survives the game
-// restarting underneath it without needing to be relaunched itself.
+// runtime.json is re-read on every call (never cached), since devbench's port can
+// change across a game restart.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -21,9 +16,7 @@ interface RuntimeJson {
   [key: string]: unknown;
 }
 
-// Best-effort default Steam library locations. Real installs vary by machine; --install
-// is the reliable path when these don't match. Not exhaustive by design — this is a
-// convenience for the common case, not a substitute for explicit targeting.
+// Best-effort default Steam library locations; --install covers anything else.
 const DEFAULT_SE_INSTALLS = [
   "C:/Program Files (x86)/Steam/steamapps/common/Skyrim Special Edition",
   "C:/SteamLibrary/steamapps/common/Skyrim Special Edition",

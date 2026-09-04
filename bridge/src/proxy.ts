@@ -1,7 +1,5 @@
-// Translates MCP tools/list + tools/call into devbench's existing REST contract
-// (GET /api/tools, POST /api/tool/<name>). No tool schema is cached or baked in —
-// every list is fetched live, so the bridge never drifts from whatever DLL build is
-// actually running.
+// Every tool list is fetched live (never cached), so the bridge never drifts from
+// whatever DLL build is actually running.
 
 import { resolveBaseUrl, type Target } from "./runtime.js";
 
