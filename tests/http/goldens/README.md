@@ -2,7 +2,8 @@
 
 Reference images for `test_visual_regression.py`, scored via `visual.py`
 (SSIM). Never generated or scored by devbench itself — comparison is entirely
-external, on purpose (see `docs/plans/replay-checkpoint-capture.md`).
+external, on purpose: devbench's job is reproducing a frame deterministically,
+not judging whether it looks right.
 
 ## Layout
 
