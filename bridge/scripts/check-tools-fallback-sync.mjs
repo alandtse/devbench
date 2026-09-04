@@ -7,6 +7,7 @@
 // Usage: node scripts/check-tools-fallback-sync.mjs <base-ref>
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 const baseRef = process.argv[2];
 if (!baseRef) {
@@ -20,6 +21,36 @@ const REGISTRATION_FILES = [
   "src/ToolRegistry.h",
 ];
 const FALLBACK_FILE = "bridge/src/tools-fallback.json";
+
+// Structural validation, independent of whether a registration file changed --
+// this is what would have caught a malformed hand-edit (or the actual
+// mcp_bridge_setup inputSchema bug this fallback was built to route around)
+// that the file-touched check alone can't; it only proves the file moved, not
+// that its content is sane.
+const fallback = JSON.parse(readFileSync(FALLBACK_FILE, "utf-8"));
+if (!Array.isArray(fallback.tools) || fallback.tools.length === 0) {
+  console.error(`${FALLBACK_FILE}: "tools" must be a non-empty array.`);
+  process.exit(1);
+}
+for (const t of fallback.tools) {
+  if (typeof t.name !== "string" || !t.name) {
+    console.error(`${FALLBACK_FILE}: a tool entry is missing a valid "name".`);
+    process.exit(1);
+  }
+  if (typeof t.description !== "string" || !t.description) {
+    console.error(
+      `${FALLBACK_FILE}: tool "${t.name}" is missing a "description".`,
+    );
+    process.exit(1);
+  }
+  if (t.inputSchema?.type !== "object") {
+    console.error(
+      `${FALLBACK_FILE}: tool "${t.name}" has no inputSchema.type === "object" ` +
+        "(would fail MCP's schema validation).",
+    );
+    process.exit(1);
+  }
+}
 
 // Run from the repo root (CI does; a local run should too) so the paths below
 // match git's own repo-relative output.

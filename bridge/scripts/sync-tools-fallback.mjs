@@ -10,6 +10,30 @@
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+// Consumer-registered extension tools (openshaders.*, companionexpeditions.*,
+// ...) use a dotted "consumer.verb" name by convention, but that convention
+// isn't enforced anywhere devbench's C-ABI RegisterTool is called -- a mod
+// could register an undotted name, which a bare dot-filter would then
+// silently bake into devbench's own "core" fallback. Filtering on this
+// explicit allowlist instead means a rogue extension can never get in;
+// update it (and re-run this script) whenever a core tool is added/removed.
+const CORE_TOOL_NAMES = new Set([
+  "menu",
+  "console",
+  "scenario",
+  "inspect",
+  "game",
+  "camera",
+  "papyrus",
+  "capture",
+  "record",
+  "recordings",
+  "wait",
+  "sleep",
+  "mcp_bridge_setup",
+  "ping",
+]);
+
 const base = process.argv[2] ?? "http://127.0.0.1:8920";
 const res = await fetch(`${base}/api/tools`);
 if (!res.ok) {
@@ -17,12 +41,25 @@ if (!res.ok) {
 }
 const body = await res.json();
 
-// Consumer-registered extension tools (openshaders.*, companionexpeditions.*,
-// ...) use a dotted "consumer.verb" name; every core devbench tool is a bare
-// identifier. Filtering on that convention -- rather than a hardcoded name
-// list -- means a newly added core tool is picked up automatically.
+const liveNames = new Set(body.tools.map((t) => t.name));
+for (const expected of CORE_TOOL_NAMES) {
+  if (!liveNames.has(expected)) {
+    console.warn(
+      `WARNING: expected core tool "${expected}" not found live -- renamed or removed?`,
+    );
+  }
+}
+for (const t of body.tools) {
+  if (!t.name.includes(".") && !CORE_TOOL_NAMES.has(t.name)) {
+    console.warn(
+      `WARNING: undotted tool "${t.name}" isn't in CORE_TOOL_NAMES -- ` +
+        "add it there if it's a real core tool, or investigate if it's a mod that should use a dotted name.",
+    );
+  }
+}
+
 const core = body.tools
-  .filter((t) => !t.name.includes("."))
+  .filter((t) => CORE_TOOL_NAMES.has(t.name))
   .map(({ name, description, inputSchema, readOnly }) => ({
     name,
     description,

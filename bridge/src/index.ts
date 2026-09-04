@@ -11,6 +11,25 @@ import { isSupportedGame, resolveTarget } from "./runtime.js";
 import { printSetupSnippet } from "./setup.js";
 import toolsFallback from "./tools-fallback.json" with { type: "json" };
 
+interface DevbenchTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  readOnly?: boolean;
+}
+
+// devbench's REST shape uses a bare `readOnly`; MCP's is `annotations.readOnlyHint`.
+// One conversion used by both the live and fallback paths, so they can't drift
+// out of sync with each other the way two separate inline mappings did before.
+function toMcpTool(t: DevbenchTool) {
+  return {
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+    ...(t.readOnly ? { annotations: { readOnlyHint: true } } : {}),
+  };
+}
+
 // A compiled standalone executable's embedded entry script lives under this
 // virtual path; a plain `node dist/index.js` invocation does not.
 function isCompiledExecutable(): boolean {
@@ -65,20 +84,14 @@ async function main(): Promise<void> {
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
       const tools = await listTools(target);
-      return {
-        tools: tools.map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-        })),
-      };
+      return { tools: tools.map(toMcpTool) };
     } catch (e) {
       if (e instanceof GameUnavailableError) {
         // No client can be relied on to notice a later tools/list_changed push
         // (most cache tools/list for the session), so the static fallback --
         // not an empty list -- is what a not-yet-running game reports; a call
         // still fails live with GameUnavailableError's own message.
-        return { tools: toolsFallback.tools };
+        return { tools: toolsFallback.tools.map(toMcpTool) };
       }
       throw e;
     }
