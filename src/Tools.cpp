@@ -553,6 +553,79 @@ namespace dvb
 			throw ToolError(400, std::format("unknown action '{}' (list|open|close|describe|accept|invoke)", action));
 		}
 
+		constexpr long long kMaxWaitHours = 100000;
+		// AdvanceSleepWaitTick() runs synchronously on the main thread once per tick, so an
+		// unbounded tick count hangs the game rather than just delaying it.
+		constexpr long long kMaxWaitTicks = 20000;
+
+		// StartWaiting/StartSleeping's synchronous autosave (bSaveOnWait/bSaveOnRest) deadlocks
+		// the VR main thread when triggered from here instead of the real Wait menu -- fixed by
+		// suppressing the pref for the call and restoring it after.
+		class ScopedAutoSaveSuppress
+		{
+		public:
+			explicit ScopedAutoSaveSuppress(const char* a_prefName)
+			{
+				if (auto* coll = RE::INIPrefSettingCollection::GetSingleton())
+					m_setting = coll->GetSetting(a_prefName);
+				if (m_setting) {
+					m_original = m_setting->GetBool();
+					m_setting->SetBool(false);
+				}
+			}
+			~ScopedAutoSaveSuppress()
+			{
+				if (m_setting)
+					m_setting->SetBool(m_original);
+			}
+			ScopedAutoSaveSuppress(const ScopedAutoSaveSuppress&) = delete;
+			ScopedAutoSaveSuppress& operator=(const ScopedAutoSaveSuppress&) = delete;
+
+		private:
+			RE::Setting* m_setting = nullptr;
+			bool         m_original = false;
+		};
+
+		json WaitOrSleepHandler(const json& a_args, bool a_sleep)
+		{
+			const auto it = a_args.find("hours");
+			if (it == a_args.end() || !it->is_number_integer())
+				throw ToolError(400, "'hours' must be a positive integer");
+			const long long hours = it->get<long long>();
+			if (hours <= 0)
+				throw ToolError(400, "'hours' must be a positive integer");
+			if (hours > kMaxWaitHours)
+				throw ToolError(400, std::format("'hours' must be <= {}", kMaxWaitHours));
+
+			return MainThread::RunAndWait([hours, a_sleep]() -> json {
+				auto* pc = RE::PlayerCharacter::GetSingleton();
+				if (!pc)
+					return json{ { "completed", false }, { "reason", "no PlayerCharacter" } };
+				if (!pc->CanSleepWait(nullptr))
+					return json{ { "completed", false }, { "reason", "blocked (see the in-game HUD message just shown)" } };
+
+				// SleepWaitMenu's own Update loop reads back its AS3 slider's displayed value each
+				// tick, so a native-only caller can't drive it to completion this way; call the
+				// tick function directly instead, bounded by how many ticks this duration needs.
+				using namespace RE::literals;
+				std::int32_t secondsPerTick = "iSecondsToSleepPerUpdate"_gs.value_or(900);
+				if (secondsPerTick <= 0)
+					secondsPerTick = 900;
+				const long long maxTicks = (hours * 3600 / secondsPerTick) + 1;
+				if (maxTicks > kMaxWaitTicks)
+					throw ToolError(400, std::format("'hours' needs {} ticks at the current {}s/tick rate (> {} limit)", maxTicks, secondsPerTick, kMaxWaitTicks));
+
+				ScopedAutoSaveSuppress noAutoSave(a_sleep ? "bSaveOnRest" : "bSaveOnWait");
+				if (a_sleep)
+					pc->StartSleeping(static_cast<std::int32_t>(hours));
+				else
+					pc->StartWaiting(static_cast<std::int32_t>(hours));
+				for (long long i = 0; i < maxTicks; ++i)
+					pc->AdvanceSleepWaitTick();
+				return json{ { "completed", true }, { "hours", hours } };
+			});
+		}
+
 		// Identify any form as { formId, formType, name, editorId } — CommonLib's RE'd accessors.
 		json IdentifyForm(const RE::TESForm* a_form)
 		{
@@ -2414,6 +2487,42 @@ namespace dvb
 			[](const json& a_args, const ToolContext&) {
 				return Recording::ManageRecordings(a_args);
 			});
+
+		ToolDescriptor wait;
+		wait.name = "wait";
+		wait.description =
+			"Advance time by waiting `hours`, synchronously and without touching the Wait "
+			"menu's UI at all: starts the wait, then drives its completion (autosave, script "
+			"events) to done before returning — no polling needed. Refuses with "
+			"{ completed:false, reason } on the same gate the menu itself enforces (combat, "
+			"trespassing, midair, hostiles nearby, etc.).";
+		wait.inputSchema = json{
+			{ "type", "object" },
+			{ "properties", json{
+								{ "hours", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", kMaxWaitHours }, { "description", "hours to wait (> 0)" } } },
+							} },
+			{ "required", json::array({ "hours" }) },
+		};
+		a_registry.Register(std::move(wait), [](const json& a_args, const ToolContext&) {
+			return WaitOrSleepHandler(a_args, false);
+		});
+
+		ToolDescriptor sleep;
+		sleep.name = "sleep";
+		sleep.description =
+			"Advance time by sleeping `hours` (the rest variant — drives the well-rested / "
+			"lover's-comfort bonus). Same mechanics as `wait`: synchronous, no menu UI, "
+			"refuses with { completed:false, reason } on the same gate the menu enforces.";
+		sleep.inputSchema = json{
+			{ "type", "object" },
+			{ "properties", json{
+								{ "hours", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", kMaxWaitHours }, { "description", "hours to sleep (> 0)" } } },
+							} },
+			{ "required", json::array({ "hours" }) },
+		};
+		a_registry.Register(std::move(sleep), [](const json& a_args, const ToolContext&) {
+			return WaitOrSleepHandler(a_args, true);
+		});
 
 		// A registered tool, not just a REST field, so a client on this DLL's own /mcp
 		// endpoint (no REST envelope to carry a sibling field) sees it too.
