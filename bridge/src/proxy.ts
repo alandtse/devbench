@@ -17,6 +17,10 @@ interface DevbenchToolsResponse {
 
 export class GameUnavailableError extends Error {}
 
+// A stale/wrong port can accept the connection but never respond; bound how long
+// a call waits before treating it as unreachable rather than hanging indefinitely.
+const FETCH_TIMEOUT_MS = 30_000;
+
 function resolveBaseUrlOrThrowUnavailable(target: Target): string {
   try {
     return resolveBaseUrl(target);
@@ -30,7 +34,10 @@ function resolveBaseUrlOrThrowUnavailable(target: Target): string {
 async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
   let res: Response;
   try {
-    res = await fetch(url, init);
+    res = await fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
   } catch (e) {
     throw new GameUnavailableError(
       `devbench not reachable at ${url}: ${(e as Error).message}`,

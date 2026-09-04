@@ -1,7 +1,7 @@
 // runtime.json is re-read on every call (never cached), since devbench's port can
 // change across a game restart.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export interface Target {
@@ -34,16 +34,25 @@ function runtimeDirFor(installPath: string): string {
   return join(installPath, "Data", "SKSE", "Plugins", "devbench");
 }
 
-function firstExisting(candidates: string[]): string | undefined {
+// runtime.json survives after the game exits, so picking the first readable
+// candidate can pin a stale install over a live one; pick the most recently
+// written file instead (devbench rewrites it fresh on every boot).
+function freshestExisting(candidates: string[]): string | undefined {
+  let best: { dir: string; mtimeMs: number } | undefined;
   for (const dir of candidates) {
     try {
-      readFileSync(join(dir, "runtime.json"), "utf-8");
-      return dir;
+      const mtimeMs = statSync(join(dir, "runtime.json")).mtimeMs;
+      if (!best || mtimeMs > best.mtimeMs) best = { dir, mtimeMs };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
     }
   }
-  return undefined;
+  return best?.dir;
+}
+
+/** Whether `game` is a supported --game value. */
+export function isSupportedGame(game: string | undefined): game is "se" | "vr" {
+  return game === "se" || game === "vr";
 }
 
 /** Resolve a Target from parsed CLI args. Throws with a clear message if none found. */
@@ -54,11 +63,11 @@ export function resolveTarget(args: {
   if (args.install) {
     return { label: args.install, runtimeDir: runtimeDirFor(args.install) };
   }
-  if (args.game === "se" || args.game === "vr") {
+  if (isSupportedGame(args.game)) {
     const candidates = (
       args.game === "se" ? DEFAULT_SE_INSTALLS : DEFAULT_VR_INSTALLS
     ).map(runtimeDirFor);
-    const found = firstExisting(candidates);
+    const found = freshestExisting(candidates);
     if (!found) {
       throw new Error(
         `Could not find a devbench install for --game ${args.game} in any default Steam ` +

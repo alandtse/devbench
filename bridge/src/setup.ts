@@ -3,12 +3,16 @@
 
 export function printSetupSnippet(
   exePath: string,
+  scriptArgs: (string | undefined)[],
   args: { game?: string; install?: string },
 ): void {
   const name = `devbench-${args.game ?? "custom"}`;
-  const cliArgs = args.install
-    ? ["--install", args.install]
-    : ["--game", args.game ?? "se"];
+  const cliArgs = [
+    ...scriptArgs.filter((a): a is string => a !== undefined),
+    ...(args.install
+      ? ["--install", args.install]
+      : ["--game", args.game ?? "se"]),
+  ];
   const snippet = {
     mcpServers: {
       [name]: {

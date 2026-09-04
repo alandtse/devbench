@@ -7,8 +7,14 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { callTool, GameUnavailableError, listTools } from "./proxy.js";
-import { resolveTarget } from "./runtime.js";
+import { isSupportedGame, resolveTarget } from "./runtime.js";
 import { printSetupSnippet } from "./setup.js";
+
+// A compiled standalone executable's embedded entry script lives under this
+// virtual path; a plain `node dist/index.js` invocation does not.
+function isCompiledExecutable(): boolean {
+  return process.argv[1]?.includes("$bunfs") ?? false;
+}
 
 function parseArgs(argv: string[]): {
   game?: string;
@@ -38,7 +44,13 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
   if (args.setup) {
-    printSetupSnippet(process.execPath, args);
+    if (!args.install && !isSupportedGame(args.game)) {
+      throw new Error(
+        "devbench-bridge setup requires --game se|vr or --install <path>.",
+      );
+    }
+    const scriptArgs = isCompiledExecutable() ? [] : [process.argv[1]];
+    printSetupSnippet(process.execPath, scriptArgs, args);
     return;
   }
 
@@ -76,7 +88,9 @@ async function main(): Promise<void> {
         request.params.name,
         request.params.arguments ?? {},
       );
-      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+      return {
+        content: [{ type: "text", text: JSON.stringify(result ?? null) }],
+      };
     } catch (e) {
       const message =
         e instanceof GameUnavailableError
