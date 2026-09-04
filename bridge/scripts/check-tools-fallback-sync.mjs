@@ -23,10 +23,7 @@ const REGISTRATION_FILES = [
 const FALLBACK_FILE = "bridge/src/tools-fallback.json";
 
 // Structural validation, independent of whether a registration file changed --
-// this is what would have caught a malformed hand-edit (or the actual
-// mcp_bridge_setup inputSchema bug this fallback was built to route around)
-// that the file-touched check alone can't; it only proves the file moved, not
-// that its content is sane.
+// the file-touched check below only proves the file moved, not that it's sane.
 const fallback = JSON.parse(readFileSync(FALLBACK_FILE, "utf-8"));
 if (!Array.isArray(fallback.tools) || fallback.tools.length === 0) {
   console.error(`${FALLBACK_FILE}: "tools" must be a non-empty array.`);

@@ -19,8 +19,7 @@ interface DevbenchTool {
 }
 
 // devbench's REST shape uses a bare `readOnly`; MCP's is `annotations.readOnlyHint`.
-// One conversion used by both the live and fallback paths, so they can't drift
-// out of sync with each other the way two separate inline mappings did before.
+// Shared by both tools/list paths so they can't drift out of sync with each other.
 function toMcpTool(t: DevbenchTool) {
   return {
     name: t.name,
@@ -87,10 +86,9 @@ async function main(): Promise<void> {
       return { tools: tools.map(toMcpTool) };
     } catch (e) {
       if (e instanceof GameUnavailableError) {
-        // No client can be relied on to notice a later tools/list_changed push
-        // (most cache tools/list for the session), so the static fallback --
-        // not an empty list -- is what a not-yet-running game reports; a call
-        // still fails live with GameUnavailableError's own message.
+        // A not-yet-running game reports the static fallback, not an empty list --
+        // a client typically fetches tools/list only once per session. A call still
+        // fails live with GameUnavailableError's own message.
         return { tools: toolsFallback.tools.map(toMcpTool) };
       }
       throw e;

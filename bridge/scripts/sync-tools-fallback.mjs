@@ -10,13 +10,10 @@
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-// Consumer-registered extension tools (openshaders.*, companionexpeditions.*,
-// ...) use a dotted "consumer.verb" name by convention, but that convention
-// isn't enforced anywhere devbench's C-ABI RegisterTool is called -- a mod
-// could register an undotted name, which a bare dot-filter would then
-// silently bake into devbench's own "core" fallback. Filtering on this
-// explicit allowlist instead means a rogue extension can never get in;
-// update it (and re-run this script) whenever a core tool is added/removed.
+// Explicit allowlist, not a "no dot in the name" filter -- devbench's C-ABI
+// RegisterTool never enforces the dotted "consumer.verb" naming convention
+// extension tools otherwise follow, so a bare filter could admit a rogue one.
+// Update this set (and re-run) whenever a core tool is added or removed.
 const CORE_TOOL_NAMES = new Set([
   "menu",
   "console",
