@@ -1,0 +1,462 @@
+{
+  "tools": [
+    {
+      "name": "menu",
+      "description": "Inspect, open, answer, or dismiss menus. action='list' returns { openMenus, messageBoxOpen, registered } tracked live from menu open/close events. 'describe' returns the active MessageBoxMenu as { messageBoxOpen, bodyText, buttons:[…], cancelIndex } (read the buttons, then pick one), or with a 'name' the registered menu's descriptor. 'accept' answers a MessageBoxMenu by button 'index' (default 0) — runs its callback and dismisses it (this is how you clear a Yes/No modal, e.g. the content-mismatch dialog gating a load; kHide does NOT). 'open' shows an ENGINE menu by 'name' via the UI queue (kShow) — opens hub menus from a plain name (TweenMenu, 'Journal Menu', MagicMenu, MapMenu, StatsMenu, InventoryMenu, FavoritesMenu); context menus that need a target ref (ContainerMenu/BarterMenu/BookMenu) won't open this way. 'close' hides a menu by 'name' via the UI queue (kHide). 'invoke' dispatches to a consumer-registered (mod) menu by 'name' — NOT 'open' (mod menus aren't engine menus). A mod exposes its menu via the C-ABI RegisterMenuHandler; 'list' returns those under 'registered'. Registered (mod) menus (invoke with action='invoke', name=<x>): CommunityShaders — Open, close, or toggle the Open Shaders in-game settings menu headlessly, the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). page: OPTIONAL built-in page name (e.g. \"Performance\", \"Home\") or a feature's shortName (see openshaders.feature list) to navigate to on the next frame, same as clicking it in the left pane. Returns {op,page,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).; devbench.selftest — devbench menu-extension self-test; echoes its args..",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "description": "list | describe | accept | open | close | invoke",
+            "enum": ["list", "describe", "accept", "open", "close", "invoke"],
+            "type": "string"
+          },
+          "index": {
+            "description": "accept: 0-based button index to select (default 0). See describe's buttons/cancelIndex.",
+            "type": "integer"
+          },
+          "name": {
+            "description": "open/close: ENGINE menu to show/hide (e.g. TweenMenu). invoke/describe: a registered mod menu (see list .registered, or this tool's description).",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "console",
+      "description": "Run a Skyrim console command. action='exec' (default) queues `command` onto the main thread (runs next tick). With capture=true it is fenced between marker commands; a later action='read' slices ConsoleLog's buffer between the markers and returns the command's output as { markersFound, lines:[…] }. Useful for printing commands (getav, getgs, getpos, help). Read promptly after exec — heavy ConsoleLog spam can scroll the markers out of the buffer (then markersFound=false, no wrong data). `save <name>`/`load <name>` are rerouted to the `game` tool's BGSSaveLoadManager path and return { redirected:'game' } — running them as raw console commands deadlocks the engine (SkyrimVM::Freeze vs blocked main loop).",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "description": "'exec' (default) runs `command`; 'read' returns the fenced output and closes the window",
+            "enum": ["exec", "read"],
+            "type": "string"
+          },
+          "capture": {
+            "description": "exec: fence and capture this command's output for the next read",
+            "type": "boolean"
+          },
+          "command": {
+            "description": "the console command, exactly as typed after ~ (required for exec)",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "scenario",
+      "description": "Run a timed sequence of steps server-side (reproducible tests/benchmarks) and return a per-step transcript. action='run' (default, requires 'steps'). Each step is one of: {\"tool\":\"<name>\",\"args\":{…}} dispatch any registered tool (e.g. console, game); {\"wait\":<ms>} fixed pacing; {\"waitFor\":<event>,…} block on a Skyrim EVENT — string shorthand (\"postLoadGame\"/\"saveGame\"/\"newGame\"/\"preLoadGame\"/\"dataLoaded\"/\"deleteGame\", or \"menuOpened\"/\"menuClosed\" with a \"name\"), or {\"topic\":\"…\",\"match\":{…}}; {\"waitUntil\":\"playerLoaded\"|\"noModal\"|\"noMenu\"|\"noBlockingMenu\"} poll live state. PREFER waitFor over a fixed wait — e.g. wait for postLoadGame to know a load truly finished. Optional: repeat (≤1000), continueOnError, async. By default action='run' BLOCKS the request for the run's duration and returns the transcript directly — the primary use is asserting against that return value in the same call. Pass async=true to instead get {queued:true, runId, steps} immediately and poll action='status'+runId (returns {done:false} while running, or {done:true, ok, result} / {done:true, ok:false, error} once finished — runId is shared with record{action:'replay'}, so either tool's status action resolves either tool's runId). Publishes scenario.started/scenario.step/scenario.finished events (index/total/kind/tool on each step) in both modes — poll GET /api/events to follow a run; if the game wedges mid-run, the last scenario.step names the culprit step.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "description": "run (default, requires 'steps') | status (requires 'runId')",
+            "enum": ["run", "status"],
+            "type": "string"
+          },
+          "async": {
+            "description": "run: return {queued:true, runId} immediately and run in the background (default false); true does not block",
+            "type": "boolean"
+          },
+          "continueOnError": {
+            "description": "run: keep going after a failed/timed-out step instead of aborting (default false)",
+            "type": "boolean"
+          },
+          "repeat": {
+            "description": "run: run the whole step list N times (default 1, max 1000)",
+            "type": "integer"
+          },
+          "runId": {
+            "description": "status: poll an async run started earlier (from run's 'runId')",
+            "type": "integer"
+          },
+          "steps": {
+            "description": "run: ordered steps; each is one of tool/wait/waitFor/waitUntil (see description)",
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "inspect",
+      "description": "Read live game/plugin state. Runs on the main thread and returns the value synchronously (times out if the game is mid-load / not pumping tasks). kinds: 'state' → { plugin, version, vr, playerLoaded, frame, pid, port, exe } — pid/port/exe identify the answering instance, so a multi-instance session (e.g. SE + VR both running, on adjacent auto-iterated ports) can confirm it's talking to the intended one; 'vm' → Papyrus VM health { loadedTypes, attachedScripts, arrays, runningStacks, frozenStacks, overstressed }; 'scene' → player context { cell, worldspace, location, position, gameHour, daysPassed, weather }; 'mods' → active load order { count, lightCount, total, plugins:[{index, name}], lightPlugins:[…] }; 'player' → player snapshot { name, level, sex, gold, race, actorValues:{health,magicka,stamina,carryWeight each {current,max}}, equipped:{right,left,ammo} }; 'inventory' → items held by the player (or a container 'formId') { owner, count, items:[{formId, name, formType, count, value, weight, equipped}] } (filters: 'formType', 'limit'); 'quests' → journal (running/completed) { count, quests:[{formId, name, stage, type, active, completed, objectives:[{index, text, state}]}] } ('limit'); 'effects' → active magic effects on the player (or an actor 'formId') { target, count, activeEffects:[{spell, effect, magnitude, duration, elapsed}] }; 'refs' → identify reference(s) sharing one shape { formId, formType, name, editorId, base, position } — pass 'formId' for one form, 'selected'=true for the console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid (optional 'formType' filter, 'radius' from player, 'limit' default 100). 'registrants' → who has requested the C-ABI interface and what they registered through it { consumers:[{name,atEpoch,atFrame}], registrations:[{kind,name,atEpoch,atFrame,replaced}], capabilities:{capture,inspect,menu → [registered keys]} } — consumers and registrations are reported side by side, not joined, since the C-ABI has no per-call caller identity. 'screenshots' → image files in the vanilla screenshot directories (game root + 'Screenshots/') { dirs, count, returned, truncated, screenshots:[{file,path,bytes,mtimeEpoch}] } newest-first (optional 'dir' override, 'limit' default 50) — see also the `capture` tool, which has its own native fallback using the same directories. A consumer mod can add a custom kind via the C-ABI RegisterToolExtension (e.g. load-timing data); 'extensions' lists those registered kinds + descriptors, and kind=<registered> dispatches. Registered (mod) kinds: devbench.selftest — devbench inspect-extension self-test; echoes its args.; featureissues — Open Shaders feature-issue tracking -> {featureIssues:[{shortName,displayName,version,issueType,rejectionReason,replacementFeature,replacementFeatureDisplayName,replacementFeatureInstalled,replacementFeatureModLink,userMessage,minimumVersionRequired,modifiedShaderDirectory,iniPath,removedInVersion}],hasIssues,hasObsoleteShaderModifyingFeatures,hasPotentialShaderModifyingFeatures}. Surfaces the same detection FeatureIssues.h already does at boot for the in-menu warning banner -- obsolete features with a known replacement, INI version mismatches, override files that failed to apply, and unrecognized/unknown feature INIs left in Data/Shaders/Features. issueType: OBSOLETE|VERSION_MISMATCH|OVERRIDE_FAILED|UNKNOWN. modifiedShaderDirectory/hasObsoleteShaderModifyingFeatures flag features whose obsolete files could still be holding stale shader source -- the more likely of the two shader-modifying flags to explain an otherwise-unexplained compile problem elsewhere.; llfshadows — Open Shaders Light Limit Fix shadow-scheduler diagnostics -> {valid,frame,total,chosen,excess,invalid*,slotsInUse,lights:[{ptr,reason}],slots:[{slot,ptr,importance,score,desiredScale,budgetScale,pendingScale,renderedScale,tile:{x,y,size,contentValid}}],classes:{full,half,quarter,eighth,sixteenth},atlas:{dim,capacityCells,occupancy,vramBytes},budget:{avgLightCostUs,avgRedrawsPerFrame,estPassMsPerFrame,staticBakesTotal}}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. slots covers occupied point-light pool slots (tile.size 0 = no atlas tile); classes buckets renderedScale; atlas is all-zero when the shadow atlas is inactive; budget is the GPU-timestamp tracker (estPassMsPerFrame = avg cost x avg redraws, the REST perf A/B metric). The scheduler fills this only while the settings menu is open or a dump was recently requested; calling this primes it, so if valid==false (idle) poll again after a frame (use inspect kind=openshaders frame_count to know a tick passed).; openshaders — Open Shaders engine state -> {plugin,frame_count,vr}. frame_count increases each render tick — use it as ground truth that a queued operation has had a frame to run.; profiler — Open Shaders GPU/CPU profiler snapshot -> {enabled,capturing,frame_count,capturedFrameCount,totalMs,cpuTotalMs,resolvedTotalMs,resolvedCpuTotalMs,acquiredSlots,peakAcquiredSlots,slotRefusals,maxTimers,timers:[{name,gpuMs,topLevelMs,avgMs,p95Ms,p99Ms,cpuMs,cpuAvgMs,cpuP95Ms,cpuP99Ms,hasGpu,hasCpu,activeGpu,activeCpu,historyHead,historyCount,cpuHistoryHead,cpuHistoryCount}]}. Calling this primes a capture (like llfshadows), so an idle first call may show stale data -- capturedFrameCount is the engine frame the returned timers were actually recorded on (both it and frame_count are read in the same call, so they're always comparable). Results lag capture by kFrameLatency (3) frames by construction, so frame_count - capturedFrameCount == 3 is a maximally fresh snapshot and it is never less than 3; larger values mean staleness (e.g. capture was off, or the game is paused/loading). totalMs/cpuTotalMs are the LIVE values shown in the menu (zeroed while idle so the overlay doesn't show a stale sum); resolvedTotalMs/resolvedCpuTotalMs pair with capturedFrameCount and the timers array instead, so they never zero on their own and are the ones to use for exact checks. topLevelMs is the portion of gpuMs from top-level (non-nested) intervals only; for a feature with nested passes, resolvedTotalMs should equal the sum of topLevelMs across its timers. historyHead advances by exactly 1 per rolling-history sample regardless of how many call sites shared a name -- CollectResults sums same-name intervals into one entry before pushing, so a pass invoked twice in one frame (e.g. by a screenshot/crop-preview path recomposing the same output) never doubles its delta; comparing historyHead's delta between two polls across every hasGpu timer PRESENT IN BOTH polls should be identical (a timer first seen between polls starts fresh and is exempt) -- a mismatched delta means a missed/skipped cycle, not a duplicate call site. acquiredSlots is the GPU timer-slot count used in the most recently completed cycle (0 for a CPU-only cycle with no GPU frame; vs maxTimers, currently 256); peakAcquiredSlots is the session high-water mark of the same, since a sparse poll would likely miss a transient spike that acquiredSlots alone would show. slotRefusals is a cumulative session count of BeginPass calls that failed for lack of a free slot -- any nonzero value means timing data was silently dropped at some point this session, not necessarily the current frame. Enable/disable capture via openshaders.profiler.; shadercache — Open Shaders shader-cache status -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,recentFailures,diskHitTasks,digestHitTasks,digestMissTasks,digestComputeCount,digestComputeTimeUs,frame_count,diskCacheHeld,featureSetChanged,featureSetRevertPending,featureSetCacheBackedUp,previousDiskCacheAvailable,cacheMismatches,previousCacheMismatches}. Poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished; watch failedTasks/currentFailedCount for failed compiles. recentFailures is the last 32 compile failures this session, each {key,path,error,epoch,frame} -- key is GetShaderString's cache key (shader class + merged feature #defines, identifying WHICH feature's shader broke without a separate lookup; for ImageSpace shaders the filename embedded in key can differ from path), path is the actual source file that was compiled, error is the compiler's own message (truncated to 2000 chars). digestHitTasks/digestMissTasks count disk-cache validity checks where the content-digest manifest matched (hit) or differed (miss); the later blob load or recompilation can still fail; digestComputeTimeUs is the cumulative microseconds spent computing content digests this session. diskCacheHeld true means a feature-set mismatch (see cacheMismatches, each {kind,shortName,feature,detail,nowPresent}) is holding the whole disk cache this session -- resolve with openshaders.shadercache acceptRebuild or restorePrevious. previousDiskCacheAvailable/previousCacheMismatches describe the rollback slot (the pre-change cache) a restorePrevious call would swap back in..",
+      "inputSchema": {
+        "properties": {
+          "formId": {
+            "description": "refs: identify this form; inventory: the container ref to read (default player); effects: the actor to read (default player) (hex formId, e.g. 0x14, or EditorID)",
+            "type": "string"
+          },
+          "formType": {
+            "description": "refs/inventory: keep only entries whose type matches (e.g. Actor, Weapon, Potion)",
+            "type": "string"
+          },
+          "kind": {
+            "description": "state | health | vm | scene | mods | player | inventory | quests | effects | refs | registrants | screenshots | extensions (health answers off-thread for liveness+identity; or a registered mod kind — listed here + via kind=extensions)",
+            "enum": [
+              "state",
+              "health",
+              "vm",
+              "scene",
+              "mods",
+              "player",
+              "inventory",
+              "quests",
+              "effects",
+              "refs",
+              "registrants",
+              "screenshots",
+              "extensions",
+              "devbench.selftest",
+              "featureissues",
+              "llfshadows",
+              "openshaders",
+              "profiler",
+              "shadercache"
+            ],
+            "type": "string"
+          },
+          "limit": {
+            "description": "refs/inventory: max entries to return (default 100)",
+            "type": "integer"
+          },
+          "radius": {
+            "description": "refs enumerate: only refs within this distance of the player (0 = whole loaded grid)",
+            "type": "number"
+          },
+          "selected": {
+            "description": "refs: identify the console-selected / crosshair ref instead",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "readOnly": true
+    },
+    {
+      "name": "game",
+      "description": "Save/load and list saves. action='list' returns { count, returned, truncated, saves: [{name, mtimeUnix}, ...] }, sorted newest-first (saves[0] is what 'loadLast' loads) — count is post-filter (how many matched), returned/saves are post-limit. 'filter' keeps only names containing a substring (case-insensitive; save names embed the location, e.g. 'Whiterun'), 'limit' caps how many are returned, 'detail'=true adds a 'meta' object per matched save (characterName, location, race, level, experience, playTime, saveNumber, saveType [inferred from the filename], screenshot, fileTimeUnix — read directly from the save's own .ess header, same bytes the vanilla Load menu shows, so it works even before anything has loaded) plus top-level metaAvailable/metaNote if none parsed; 'loadLast' loads the most recent save (a settled real-game state — avoids coc's heavy new-game init); 'load'/'save' take a 'name' ('load' skips the mod-mismatch confirmation modal). All but 'list' are fire-and-forget; watch lifecycle events / inspect playerLoaded for completion.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "description": "list | save | load | loadLast",
+            "enum": ["list", "save", "load", "loadLast"],
+            "type": "string"
+          },
+          "detail": {
+            "description": "list only: add per-save character/location/level metadata (default false)",
+            "type": "boolean"
+          },
+          "dir": {
+            "description": "list/load/loadLast: override the saves directory (default resolves from sLocalSavePath)",
+            "type": "string"
+          },
+          "filter": {
+            "description": "list only: case-insensitive substring to match against save names",
+            "type": "string"
+          },
+          "limit": {
+            "description": "list only: cap the number of saves returned (newest-first); must be > 0 if given",
+            "type": "integer"
+          },
+          "name": {
+            "description": "save file name (required for save/load; from action='list')",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "camera",
+      "description": "Read or set the player camera. action='get' (default) returns { pov, freeCam, camX, camY, camZ, camPitch, camYaw } read live on the main thread, where pov is first | third | vanity | other. action='setPov' applies a switch (param 'pov': first | third | vanity) on the main thread and returns { pov: <applied>, requestedPov } read back the same tick — Skyrim's idle-vanity timer can still override it a few ticks later while the player is stationary, so poll action='get' if you need certainty after idling. action='freecam' (param 'on', default true) queues toggling free-camera mode (fire-and-forget, takes effect a tick later) — poll action='get'.freeCam until true before 'drive'. action='drive' (params 'x','y','z','pitch','yaw', all default 0) sets the free camera's world transform — requires free-cam mode already on. Recordings capture the POV per sample and replay restores it via this tool, since what is rendered (and benchmarked) differs by POV.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "description": "get (default) | setPov | freecam | drive",
+            "enum": ["get", "setPov", "freecam", "drive"],
+            "type": "string"
+          },
+          "on": {
+            "description": "freecam: enable (default) or disable free-camera mode",
+            "type": "boolean"
+          },
+          "pitch": {
+            "description": "drive: free-cam pitch",
+            "type": "number"
+          },
+          "pov": {
+            "description": "setPov: target point of view",
+            "enum": ["first", "third", "vanity"],
+            "type": "string"
+          },
+          "x": {
+            "description": "drive: world X (requires free-cam mode)",
+            "type": "number"
+          },
+          "y": {
+            "description": "drive: world Y (requires free-cam mode)",
+            "type": "number"
+          },
+          "yaw": {
+            "description": "drive: free-cam yaw",
+            "type": "number"
+          },
+          "z": {
+            "description": "drive: world Z (requires free-cam mode)",
+            "type": "number"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "papyrus",
+      "description": "Inspect the live Papyrus surface and invoke global functions, returning the value. action='list' returns loaded script class names { total, returned, truncated, scripts } (optional 'filter' substring, 'limit' default 200). 'describe' takes a 'script' (class name) and returns its { globalFunctions, memberFunctions, properties }, each function with params + returnType — use it to discover what 'call' can invoke. 'call' runs a function via the VM: 'script' + 'function' (+ optional 'args' array, 'timeoutMs' default 3000) and returns { called, returned, returnedType }. Unlike console 'cgf', this hands the return value back (e.g. Utility.GetCurrentGameTime → a Float). Pass 'self' to call a MEMBER function on a target: { \"form\": \"0x14 | EditorID\" } targets any form, or \"selected\" uses the console/crosshair ref (set via prid); without 'self' only global/native functions are callable. args and returns support bool/number/string, { \"form\": … } (a form return resolves to { formId, formType, editorId, name }), and arrays of scalars.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "description": "list | describe | call",
+            "enum": ["list", "describe", "call"],
+            "type": "string"
+          },
+          "args": {
+            "description": "call: arguments; each a bool/number/string, { \"form\": \"0x14 | EditorID\" }, or an array of scalars",
+            "type": "array"
+          },
+          "filter": {
+            "description": "list: case-insensitive substring to match class names",
+            "type": "string"
+          },
+          "function": {
+            "description": "call: the function name, e.g. GetCurrentGameTime or GetActorValue",
+            "type": "string"
+          },
+          "limit": {
+            "description": "list: max class names to return (default 200)",
+            "type": "integer"
+          },
+          "script": {
+            "description": "describe/call: the Papyrus script class name, e.g. Utility, Game, Actor",
+            "type": "string"
+          },
+          "self": {
+            "description": "call: target a member function — { \"form\": \"0x14 | EditorID\" } or \"selected\" (console/crosshair ref). Omit for global/native functions."
+          },
+          "timeoutMs": {
+            "description": "call: ms to wait for the result before 504 (default 3000)",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "capture",
+      "description": "Capture a frame (screenshot) and return its file path plus correlation metadata. kind='auto' (default) picks the sole registered capture provider (a mod that registered under the C-ABI RegisterToolExtension(\"capture\", <key>, …) — see inspect kind=registrants); zero registered providers is a 404 UNLESS allowNative=true, and two or more is a 400 naming them (never silently guessed). kind='native' forces the low-fidelity vanilla fallback (main-thread MenuControls::QueueScreenshot() + a directory poll — no path control, no completion signal beyond polling, format fixed by the user's .ini, may include open UI) — NOT comparable against a provider-authored golden image. kind='providers' lists registered provider keys; kind='extensions' lists them with descriptors. Optional 'golden' compares the capture against a reference image via SSIM and adds {ssim, threshold, passed} to the result (or 'regions' for independent per-region scores, {name,ssim,threshold,passed} each, overall 'passed' is AND across all — see record{action:'replay'}'s 'goldens' arg, the normal way this gets set for a checkpoint). Every result also carries {inconclusive, inconclusiveReason?} — true when sceneMismatch, any 'degraded' entry, or a native-fallback capture means 'passed' (if present) should NOT be trusted as a real verdict; always check this before acting on 'passed'. This is devbench's fast single-checkpoint verdict; batch/corpus regression across many recordings stays in tests/http/visual.py.",
+      "inputSchema": {
+        "properties": {
+          "allowNative": {
+            "description": "permit kind=auto to fall back to the vanilla path when no provider is registered (default false)",
+            "type": "boolean"
+          },
+          "checkpointId": {
+            "description": "REQUIRED — stable file stem and correlation key",
+            "type": "string"
+          },
+          "cleanup": {
+            "description": "native only: delete the game's source screenshot after copying (default false)",
+            "type": "boolean"
+          },
+          "excludeUi": {
+            "description": "request a pre-UI capture source; native cannot honor this (default true)",
+            "type": "boolean"
+          },
+          "golden": {
+            "description": "path to a reference image to SSIM-compare this capture against (absolute, or relative to the game root); adds {ssim,threshold,passed} to the result",
+            "type": "string"
+          },
+          "kind": {
+            "description": "auto (default) | native | providers | extensions | a registered provider key",
+            "enum": ["auto", "native", "providers", "extensions"],
+            "type": "string"
+          },
+          "outDir": {
+            "description": "override the capture bundle directory",
+            "type": "string"
+          },
+          "pollMs": {
+            "description": "poll interval while waiting (default 100)",
+            "type": "integer"
+          },
+          "recording": {
+            "description": "recording file stem, for correlation (default 'adhoc')",
+            "type": "string"
+          },
+          "regions": {
+            "description": "golden: optional [{name,x,y,w,h,threshold?}] in 0..1 UV — score independent regions instead of the whole frame; overall passed is AND across all",
+            "type": "array"
+          },
+          "subrect": {
+            "description": "optional {x,y,w,h} in 0..1 UV — provider-only, native ignores it",
+            "type": "object"
+          },
+          "threshold": {
+            "description": "golden: SSIM >= threshold passes (default 0.98)",
+            "type": "number"
+          },
+          "timeoutMs": {
+            "description": "how long to wait for the capture to be ready (default 8000)",
+            "type": "integer"
+          },
+          "variant": {
+            "description": "variant under test, for correlation (default 'default')",
+            "type": "string"
+          }
+        },
+        "required": ["checkpointId"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "record",
+      "description": "Capture a manual play-through as a replayable scenario. action='start' begins sampling the player pose (x/y/z/angleZ/angleX + camera pos + POV + game frame) every intervalMs (default from config recordIntervalMs, min 10) on a background thread and captures a one-time scene manifest (worldspace/cell, time of day, weather, anchor pose, and the entryPoint — the save loaded or coc'd to reach the scene, or 'unknown'); a game must be loaded. 'checkpoint' marks THIS moment (while recording is active) as a screenshot checkpoint — requires 'id' (unique this recording); optional excludeUi (default true). Mirrors 'stop' capturing the trajectory: no manual JSON editing needed. Carries no golden/threshold — those are supplied later, per-checkpoint, on replay's 'goldens' arg, since a golden reference doesn't exist yet at mark-time. 'stop' writes the trajectory to Data/SKSE/Plugins/devbench/recordings/recording_<stamp>.json and returns its path + meta (meta.checkpoints holds any marked via 'checkpoint'). 'status' reports recording/sampleCount/intervalMs/checkpointCount. 'replay' runs a recording file ('path'): with restoreScene=true it re-establishes the entryPoint and waits for the player before the trajectory, so the run reproduces the recorded scene (interiors coc the cell; exterior entries use cow with the recorded worldspace + anchor grid cell — exterior editor ids are not unique and a raw exterior coc can wedge the engine); otherwise it teleports along the path in the current scene. Emits record.started / record.stopped and replay.started / replay.finished markers, plus scenario.step progress events. The recipe's coupling tier (meta.coupling) is the producer's signal for how tightly the start must be reproduced; a consumer can override it — 'coupling' forces a looser tier ('worldspace' skips the restore) and 'force' turns a scene mismatch from an abort into a reported warning, to run a recipe generally accepting it may not reproduce. replay is ASYNC BY DEFAULT — mirroring game{action:'load'} — and returns {queued:true, runId, steps, estMs} immediately; poll completion via record{action:'status', runId} (returns {done, ok, result} once finished, {done:false} while running) or watch replay.started / replay.finished on GET /api/events (both carry runId; the runId space is shared with scenario, so a replay's runId also resolves via scenario{action:'status'}). Pass async:false to block the request for the run's duration and get the result object directly. If the recording has meta.checkpoints, each expands into a `capture` step at the point in the trajectory its atMs was recorded, tagged with 'variant' for correlation (default 'default') — see the `capture` tool. Pass captureCheckpoints:false to replay the same recording as a plain trajectory-only run instead — checkpoints are skipped entirely (no capture provider required, nothing captured), so one recording can serve as both a general tour and a visual-review run depending on the call. Pass 'goldens' to also get an inline SSIM verdict per checkpoint: {\"<checkpointId>\": {golden, threshold?, regions?}}; a checkpoint with no matching entry is captured but not scored. The result's top-level 'checkpoints' array rolls up every capture step into {id, ok, path, inconclusive, inconclusiveReason?, ssim?, threshold?, passed?} — read this instead of filtering the (often much larger) 'results' step transcript yourself.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "description": "start | stop | status | replay | checkpoint",
+            "enum": ["start", "stop", "status", "replay", "checkpoint"],
+            "type": "string"
+          },
+          "async": {
+            "description": "replay: return {queued:true, runId} immediately and run in the background (default true); false blocks and returns the result directly",
+            "type": "boolean"
+          },
+          "captureCheckpoints": {
+            "description": "replay: expand meta.checkpoints into capture steps (default true) — pass false for a plain trajectory-only replay of a checkpoint-bearing recording (no provider required, nothing captured)",
+            "type": "boolean"
+          },
+          "closeMenus": {
+            "description": "replay: if a MODAL is open at start, cancel it and continue instead of erroring; non-modal gameplay menus still error (default false)",
+            "type": "boolean"
+          },
+          "coupling": {
+            "description": "replay: override the recipe's coupling tier — run looser than the producer signaled (worldspace skips the scene restore)",
+            "enum": ["anchored", "cell", "worldspace"],
+            "type": "string"
+          },
+          "excludeUi": {
+            "description": "checkpoint: request a pre-UI capture source at replay (default true) — see the `capture` tool",
+            "type": "boolean"
+          },
+          "force": {
+            "description": "replay: proceed even if the scene doesn't match the recording — report the mismatch as a warning instead of aborting (default false)",
+            "type": "boolean"
+          },
+          "goldens": {
+            "description": "replay: per-checkpoint SSIM comparison config, keyed by checkpoint id — {\"<id>\": {golden, threshold?, regions?}} — see the `capture` tool. Never stored in the recording itself; supply it fresh per replay so the same recording can check against different variants' goldens.",
+            "type": "object"
+          },
+          "id": {
+            "description": "checkpoint: unique id for this checkpoint (required)",
+            "type": "string"
+          },
+          "intervalMs": {
+            "description": "start: pose sample period in ms (default = config recordIntervalMs, min 10)",
+            "type": "integer"
+          },
+          "path": {
+            "description": "replay: recording file to play back (from stop's 'path')",
+            "type": "string"
+          },
+          "restoreScene": {
+            "description": "replay: re-establish the recorded entryPoint + wait for load before the trajectory (default false)",
+            "type": "boolean"
+          },
+          "runId": {
+            "description": "status: poll an async replay run started earlier (from replay's 'runId')",
+            "type": "integer"
+          },
+          "variant": {
+            "description": "replay: tag for any meta.checkpoints captures, for correlation (default 'default')",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "recordings",
+      "description": "Manage the on-disk recording library — the data layer an in-game menu (SMF / FUCK / built-in) sits on. action='list' returns every recording with its meta {file, name, format, cell, worldspace, interior, sampleCount, recordedMs, recordedAt, runtime, validated, entry}, newest-recorded first. 'describe' {file} returns one recording's full meta. 'validate' {file, value?} sets meta.validated (default true) and re-saves. 'delete' {file} removes a recording. 'file' is a bare name inside the recordings dir (path traversal rejected). Replay one via record{action:'replay', path}.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "description": "list | describe | validate | delete",
+            "enum": ["list", "describe", "validate", "delete"],
+            "type": "string"
+          },
+          "file": {
+            "description": "describe/validate/delete: bare recording file name (no path)",
+            "type": "string"
+          },
+          "value": {
+            "description": "validate: the validated flag to set (default true)",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "wait",
+      "description": "Advance time by waiting `hours`, synchronously and without touching the Wait menu's UI at all: starts the wait, then drives its completion (autosave, script events) to done before returning — no polling needed. Refuses with { completed:false, reason } on the same gate the menu itself enforces (combat, trespassing, midair, hostiles nearby, etc.).",
+      "inputSchema": {
+        "properties": {
+          "hours": {
+            "description": "hours to wait (> 0)",
+            "maximum": 100000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": ["hours"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "sleep",
+      "description": "Advance time by sleeping `hours` (the rest variant — drives the well-rested / lover's-comfort bonus). Same mechanics as `wait`: synchronous, no menu UI, refuses with { completed:false, reason } on the same gate the menu enforces.",
+      "inputSchema": {
+        "properties": {
+          "hours": {
+            "description": "hours to sleep (> 0)",
+            "maximum": 100000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": ["hours"],
+        "type": "object"
+      }
+    },
+    {
+      "name": "mcp_bridge_setup",
+      "description": "Read this to connect via devbench-bridge — a companion MCP proxy that survives this game process restarting (a direct connection to this tool's own /mcp endpoint does not). Returns { exePath, args, mcpJsonSnippet, installCommand }: paste mcpJsonSnippet into your MCP client's config, or run installCommand to print the same thing. Never edits your client config itself.",
+      "inputSchema": {
+        "type": "object"
+      },
+      "readOnly": true
+    },
+    {
+      "name": "ping",
+      "description": "devbench C-ABI self-test; echoes its args.",
+      "inputSchema": {
+        "type": "object"
+      },
+      "readOnly": true
+    }
+  ]
+}

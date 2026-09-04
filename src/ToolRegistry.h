@@ -42,7 +42,7 @@ namespace dvb
 	{
 		std::string name;
 		std::string description;
-		json        inputSchema = json::object();
+		json        inputSchema = json{ { "type", "object" } };
 		bool        readOnly = false;  ///< hint: side-effect-free (REST may also expose via GET)
 	};
 
