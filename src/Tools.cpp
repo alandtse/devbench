@@ -553,20 +553,14 @@ namespace dvb
 			throw ToolError(400, std::format("unknown action '{}' (list|open|close|describe|accept|invoke)", action));
 		}
 
-		// Generous ceiling on requested duration (~11 years) -- comfortably covers any real
-		// test scenario while keeping hours*3600 and the tick-count math well clear of
-		// overflow. kMaxTicks is the actual safety bound: AdvanceSleepWaitTick() runs
-		// synchronously on the main thread once per tick, so an unbounded tick count would
-		// hang the game, not just take a while.
 		constexpr long long kMaxWaitHours = 100000;
+		// AdvanceSleepWaitTick() runs synchronously on the main thread once per tick, so an
+		// unbounded tick count hangs the game rather than just delaying it.
 		constexpr long long kMaxWaitTicks = 20000;
 
-		// StartWaiting/StartSleeping trigger a synchronous autosave (bSaveOnWait/bSaveOnRest)
-		// before doing anything else. Live-tested on VR: that save deadlocks the main thread
-		// when triggered from here (a devbench task-queue callback) rather than the real
-		// input-driven Wait menu -- reproduced twice, confirmed fixed by disabling the pref for
-		// the call and restoring it after. SE was not observed to hang, but suppressing the
-		// pref for the scope of a one-off automated wait/sleep is harmless there too.
+		// StartWaiting/StartSleeping's synchronous autosave (bSaveOnWait/bSaveOnRest) deadlocks
+		// the VR main thread when triggered from here instead of the real Wait menu -- fixed by
+		// suppressing the pref for the call and restoring it after.
 		class ScopedAutoSaveSuppress
 		{
 		public:
@@ -610,10 +604,9 @@ namespace dvb
 				if (!pc->CanSleepWait(nullptr))
 					return json{ { "completed", false }, { "reason", "blocked (see the in-game HUD message just shown)" } };
 
-				// SleepWaitMenu's own Update loop also relies on reading back its AS3 slider's
-				// displayed value each tick, so it can't be driven to completion by a native-only
-				// caller; call the tick function it uses directly instead, bounded by how many
-				// ticks the requested duration needs at the current (possibly mod-changed) rate.
+				// SleepWaitMenu's own Update loop reads back its AS3 slider's displayed value each
+				// tick, so a native-only caller can't drive it to completion this way; call the
+				// tick function directly instead, bounded by how many ticks this duration needs.
 				using namespace RE::literals;
 				std::int32_t secondsPerTick = "iSecondsToSleepPerUpdate"_gs.value_or(900);
 				if (secondsPerTick <= 0)
