@@ -35,3 +35,13 @@ jobs:
         working-directory: bridge
 
       - uses: pre-commit/action@v3.0.1
+
+  tools-fallback-sync:
+    name: bridge tools-fallback sync
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: node bridge/scripts/check-tools-fallback-sync.mjs "origin/${{ github.base_ref }}"

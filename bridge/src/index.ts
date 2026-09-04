@@ -9,11 +9,30 @@ import {
 import { callTool, GameUnavailableError, listTools } from "./proxy.js";
 import { isSupportedGame, resolveTarget } from "./runtime.js";
 import { printSetupSnippet } from "./setup.js";
+import toolsFallback from "./tools-fallback.json" with { type: "json" };
+
+interface DevbenchTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  readOnly?: boolean;
+}
+
+// devbench's REST shape uses a bare `readOnly`; MCP's is `annotations.readOnlyHint`.
+// Shared by both tools/list paths so they can't drift out of sync with each other.
+function toMcpTool(t: DevbenchTool) {
+  return {
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+    ...(t.readOnly ? { annotations: { readOnlyHint: true } } : {}),
+  };
+}
 
 // A compiled standalone executable's embedded entry script lives under this
 // virtual path; a plain `node dist/index.js` invocation does not.
 function isCompiledExecutable(): boolean {
-  return process.argv[1]?.includes("$bunfs") ?? false;
+  return process.argv[1]?.includes("~BUN") ?? false;
 }
 
 function parseArgs(argv: string[]): {
@@ -64,18 +83,13 @@ async function main(): Promise<void> {
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
       const tools = await listTools(target);
-      return {
-        tools: tools.map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-        })),
-      };
+      return { tools: tools.map(toMcpTool) };
     } catch (e) {
       if (e instanceof GameUnavailableError) {
-        // No game running yet: report an empty tool set rather than failing the whole
-        // MCP session — the client stays connected and can retry once the game is up.
-        return { tools: [] };
+        // A not-yet-running game reports the static fallback, not an empty list --
+        // a client typically fetches tools/list only once per session. A call still
+        // fails live with GameUnavailableError's own message.
+        return { tools: toolsFallback.tools.map(toMcpTool) };
       }
       throw e;
     }

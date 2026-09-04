@@ -6,11 +6,23 @@ running devbench's REST API — so your MCP connection survives the game restart
 (the normal SKSE dev loop: rebuild → close game → relaunch), which a direct connection
 to devbench's own `/mcp` endpoint does not.
 
-It holds no state of its own: no port, no cache, no baked-in tool list. Every call reads
-the live port from that install's `Data/SKSE/Plugins/devbench/runtime.json` and proxies
-straight through, so it never drifts from whatever devbench build is actually running.
-When the game isn't up, tool calls return a clean `{ok:false, reason:"game not running"}`
-instead of killing your MCP session — restart the game and keep calling, no reconnect.
+It holds no port/cache state of its own — every call reads the live port from that
+install's `Data/SKSE/Plugins/devbench/runtime.json` and proxies straight through, so a
+live call never drifts from whatever devbench build is actually running. `tools/list`
+is the one exception: it returns `src/tools-fallback.json` (devbench's real core tool
+set, baked in at build time) when no game is up, since an MCP client typically caches
+`tools/list` for the whole session and can't be relied on to notice a
+`tools/list_changed` push once the game starts — the client sees the full tool set from
+its very first connection either way. When the game isn't up, `tools/call` returns a
+clean `{ok:false, reason:"game not running"}` instead of killing your MCP session —
+restart the game and keep calling, no reconnect.
+
+`src/tools-fallback.json` is regenerated from a live devbench with
+`node scripts/sync-tools-fallback.mjs [url]` (default `http://127.0.0.1:8920`) — run
+this and commit the result after changing devbench's core tool registry
+(`src/Tools.cpp`, `src/Capture.cpp`, `src/HostApi.cpp`, `src/ToolRegistry.h`); CI fails
+the build otherwise
+(`scripts/check-tools-fallback-sync.mjs`).
 
 ## Setup
 

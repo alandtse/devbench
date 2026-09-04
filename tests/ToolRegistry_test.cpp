@@ -24,6 +24,16 @@ namespace
 	}
 }
 
+TEST_CASE("a schema-less tool still gets a valid JSON Schema object")
+{
+	// {} fails MCP's required root "type":"object" -- ToolDescriptor's default and
+	// DefaultInputSchema() (also used by the C-ABI RegisterTool for an omitted
+	// inputSchema) must agree, or a schema-less tool from either path breaks a
+	// strict MCP client.
+	CHECK(ToolDescriptor{}.inputSchema == dvb::DefaultInputSchema());
+	CHECK(dvb::DefaultInputSchema().value("type", std::string{}) == "object");
+}
+
 TEST_CASE("register then invoke returns the handler payload")
 {
 	ToolRegistry reg;
