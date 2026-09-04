@@ -13,7 +13,7 @@ import { printSetupSnippet } from "./setup.js";
 // A compiled standalone executable's embedded entry script lives under this
 // virtual path; a plain `node dist/index.js` invocation does not.
 function isCompiledExecutable(): boolean {
-  return process.argv[1]?.includes("$bunfs") ?? false;
+  return process.argv[1]?.includes("~BUN") ?? false;
 }
 
 function parseArgs(argv: string[]): {
