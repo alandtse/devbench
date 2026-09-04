@@ -4,6 +4,9 @@
 ci:
   autoupdate_commit_msg: "ci: pre-commit autoupdate"
   autofix_commit_msg: "style: auto fixes from pre-commit.com hooks"
+  # pre-commit.ci can't run our npm ci setup step, so it can't find eslint; the real
+  # "Lint" workflow (.github/workflows/lint.yaml) runs this hook instead.
+  skip: [eslint-bridge]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -39,5 +42,16 @@ repos:
     rev: v4.0.0-alpha.8
     hooks:
       - id: prettier
-        types_or: [yaml, markdown, json]
-        exclude: ^default_recordings/
+        types_or: [yaml, markdown, json, ts, javascript]
+        exclude: ^(default_recordings/|bridge/dist/)
+
+  - repo: local
+    hooks:
+      # Type-aware linting needs the project's own node_modules/tsconfig, not an
+      # isolated pre-commit env.
+      - id: eslint-bridge
+        name: eslint (bridge/)
+        entry: npm --prefix bridge run lint
+        language: system
+        files: ^bridge/src/
+        pass_filenames: false

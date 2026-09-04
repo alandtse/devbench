@@ -2414,5 +2414,20 @@ namespace dvb
 			[](const json& a_args, const ToolContext&) {
 				return Recording::ManageRecordings(a_args);
 			});
+
+		// A registered tool, not just a REST field, so a client on this DLL's own /mcp
+		// endpoint (no REST envelope to carry a sibling field) sees it too.
+		ToolDescriptor bridgeSetup;
+		bridgeSetup.name = "mcp_bridge_setup";
+		bridgeSetup.description =
+			"Read this to connect via devbench-bridge — a companion MCP proxy that survives this "
+			"game process restarting (a direct connection to this tool's own /mcp endpoint does "
+			"not). Returns { exePath, args, mcpJsonSnippet, installCommand }: paste mcpJsonSnippet "
+			"into your MCP client's config, or run installCommand to print the same thing. Never "
+			"edits your client config itself.";
+		bridgeSetup.readOnly = true;
+		a_registry.Register(std::move(bridgeSetup), [](const json&, const ToolContext&) {
+			return BridgeDiscoveryInfo();
+		});
 	}
 }
