@@ -7,8 +7,38 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { callTool, GameUnavailableError, listTools } from "./proxy.js";
-import { isSupportedGame, resolveTarget } from "./runtime.js";
+import { isSupportedGame, resolveTarget, type Target } from "./runtime.js";
 import { printSetupSnippet } from "./setup.js";
+
+const AVAILABILITY_POLL_MS = 3_000;
+
+// A client typically caches tools/list, so a game that comes up (or goes down)
+// after connection needs an explicit nudge to be noticed. `report` is also called
+// from the tools/list handler itself, so the client's own first call establishes
+// the baseline immediately instead of racing the first poll tick.
+function createAvailabilityTracker(
+  server: Server,
+): (available: boolean) => void {
+  let lastAvailable: boolean | undefined;
+  return (available: boolean) => {
+    if (lastAvailable !== undefined && lastAvailable !== available) {
+      void server.notification({ method: "notifications/tools/list_changed" });
+    }
+    lastAvailable = available;
+  };
+}
+
+function watchAvailability(
+  target: Target,
+  report: (available: boolean) => void,
+): void {
+  setInterval(() => {
+    void listTools(target)
+      .then(() => true)
+      .catch((e) => !(e instanceof GameUnavailableError))
+      .then(report);
+  }, AVAILABILITY_POLL_MS).unref();
+}
 
 // A compiled standalone executable's embedded entry script lives under this
 // virtual path; a plain `node dist/index.js` invocation does not.
@@ -58,12 +88,15 @@ async function main(): Promise<void> {
 
   const server = new Server(
     { name: "devbench-bridge", version: "0.1.0" },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: { listChanged: true } } },
   );
+  const reportAvailability = createAvailabilityTracker(server);
+  watchAvailability(target, reportAvailability);
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
       const tools = await listTools(target);
+      reportAvailability(true);
       return {
         tools: tools.map((t) => ({
           name: t.name,
@@ -75,6 +108,7 @@ async function main(): Promise<void> {
       if (e instanceof GameUnavailableError) {
         // No game running yet: report an empty tool set rather than failing the whole
         // MCP session — the client stays connected and can retry once the game is up.
+        reportAvailability(false);
         return { tools: [] };
       }
       throw e;
