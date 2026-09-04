@@ -10,6 +10,7 @@
 #include "MainThread.h"
 #include "Papyrus.h"
 #include "Recording.h"
+#include "ScenarioPolicy.h"
 #include "Server.h"
 #include "ToolExtensions.h"
 #include "ToolRegistry.h"
@@ -1648,6 +1649,7 @@ namespace dvb
 			std::map<uint64_t, State> m_runs;
 		};
 
+		/// Execute a scenario step list and return its complete transcript.
 		json ScenarioHandler(const json& a_args, const ToolContext& a_ctx,
 			const ToolRegistry& a_registry, EventBus& a_events)
 		{
@@ -1841,9 +1843,17 @@ namespace dvb
 							ToolContext stepCtx = a_ctx;
 							stepCtx.internal = true;  // scenario-driven — don't log each step (replay logs a summary)
 							const ToolResult tr = a_registry.Invoke(tool, args, stepCtx);
-							r["ok"] = tr.ok;
-							if (tr.ok) {
+							const bool       embeddedFailure =
+								tr.ok && ScenarioPolicy::IsEmbeddedToolFailure(tr.value);
+							r["ok"] = tr.ok && !embeddedFailure;
+							if (tr.ok && !embeddedFailure) {
 								r["result"] = tr.value;
+							} else if (embeddedFailure) {
+								// Keep the complete domain receipt while making fail-fast honor it.
+								r["result"] = tr.value;
+								r["errorCode"] = ScenarioPolicy::EmbeddedToolErrorCode(tr.value);
+								r["error"] = ScenarioPolicy::EmbeddedToolErrorMessage(tr.value);
+								stepFailed = true;
 							} else {
 								r["errorCode"] = tr.errorCode;
 								r["error"] = tr.errorMessage;
