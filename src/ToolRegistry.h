@@ -36,13 +36,19 @@ namespace dvb
 	/// themselves (see MainThread::RunAndWait), which returns the value synchronously.
 	using ToolHandler = std::function<json(const json& a_args, const ToolContext& a_ctx)>;
 
+	/// A schema-less tool (no declared parameters) still needs a valid JSON Schema
+	/// object -- `{}` fails MCP's required root `"type": "object"`. Shared by
+	/// ToolDescriptor's default and any caller (e.g. the C-ABI RegisterTool) that
+	/// separately defaults an omitted inputSchema, so both stay in sync.
+	inline json DefaultInputSchema() { return json{ { "type", "object" } }; }
+
 	/// Static description of a tool. `inputSchema` is a JSON Schema object; it doubles
 	/// as the MCP tool inputSchema and the REST `GET /api/tools` documentation.
 	struct ToolDescriptor
 	{
 		std::string name;
 		std::string description;
-		json        inputSchema = json{ { "type", "object" } };
+		json        inputSchema = DefaultInputSchema();
 		bool        readOnly = false;  ///< hint: side-effect-free (REST may also expose via GET)
 	};
 

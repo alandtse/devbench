@@ -20,7 +20,8 @@ restart the game and keep calling, no reconnect.
 `src/tools-fallback.json` is regenerated from a live devbench with
 `node scripts/sync-tools-fallback.mjs [url]` (default `http://127.0.0.1:8920`) — run
 this and commit the result after changing devbench's core tool registry
-(`src/Tools.cpp`, `src/Capture.cpp`, `src/HostApi.cpp`); CI fails the build otherwise
+(`src/Tools.cpp`, `src/Capture.cpp`, `src/HostApi.cpp`, `src/ToolRegistry.h`); CI fails
+the build otherwise
 (`scripts/check-tools-fallback-sync.mjs`).
 
 ## Setup

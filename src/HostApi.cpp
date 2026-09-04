@@ -95,7 +95,7 @@ namespace dvb::HostApi
 				ToolDescriptor d;
 				d.name = a_name;
 				d.description = desc.value("description", std::string{});
-				d.inputSchema = desc.value("inputSchema", json::object());
+				d.inputSchema = desc.value("inputSchema", DefaultInputSchema());
 				d.readOnly = desc.value("readOnly", false);
 
 				const bool isNew = g_registry->Register(std::move(d), MakeHandler(a_handler, a_ctx));
