@@ -62,14 +62,6 @@ namespace dvb
 	/// share one identity source and a caller can tell which game instance replied (devbench#16).
 	json InstanceIdentity();
 
-	/// { exePath, args, mcpJsonSnippet, installCommand } for the devbench-bridge companion
-	/// (a separate MCP stdio proxy — see bridge/README.md — that survives this process
-	/// restarting, unlike a client connected directly to this DLL's own /mcp endpoint).
-	/// Surfaced at the top level of GET /api/tools (not inside any one tool's description,
-	/// and not behind a separate endpoint) because that's the one place a cold agent
-	/// doing REST discovery is guaranteed to already be looking.
-	json BridgeDiscoveryInfo();
-
 	/// Point RunTool at the process registry while a Server is up (set by Start, cleared by Stop),
 	/// so the in-game menu — a separate render-thread TU with no Server reference — can invoke tools.
 	void SetProcessRegistry(ToolRegistry* a_registry);

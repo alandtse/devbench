@@ -149,12 +149,7 @@ class Client:
     def tools(self) -> list[dict[str, Any]]:
         resp = self._session.get(f"{self.base_url}/api/tools", timeout=CALL_TIMEOUT)
         assert resp.status_code == 200, f"GET /api/tools -> {resp.status_code}"
-        return resp.json()["tools"]
-
-    def mcp_bridge_info(self) -> dict[str, Any]:
-        resp = self._session.get(f"{self.base_url}/api/tools", timeout=CALL_TIMEOUT)
-        assert resp.status_code == 200, f"GET /api/tools -> {resp.status_code}"
-        return resp.json()["mcp_bridge"]
+        return resp.json()
 
     def call(self, tool: str, args: dict[str, Any] | None = None,
              timeout: float = CALL_TIMEOUT) -> tuple[int, Any]:

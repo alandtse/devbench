@@ -69,16 +69,13 @@ namespace dvb
 
 	void RestAdapter::Mount(httplib::Server& a_http)
 	{
-		// Discovery: descriptors double as documentation. `mcp_bridge` sits at the top
-		// level (not inside a tool's own description) because this is the first call any
-		// REST-discovering agent makes — see BridgeDiscoveryInfo()'s doc comment for why
-		// placement here, specifically, is what makes it actually get noticed.
+		// Discovery: descriptors double as documentation.
 		a_http.Get("/api/tools", [this](const httplib::Request&, httplib::Response& res) {
 			json arr = json::array();
 			for (const auto& d : m_registry.List())
 				arr.push_back(json{ { "name", d.name }, { "description", d.description },
 					{ "inputSchema", d.inputSchema }, { "readOnly", d.readOnly } });
-			WriteJson(res, 200, json{ { "tools", std::move(arr) }, { "mcp_bridge", BridgeDiscoveryInfo() } });
+			WriteJson(res, 200, arr);
 		});
 
 		// Invoke: POST /api/tool/<name>, body is the arguments object.

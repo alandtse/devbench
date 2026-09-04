@@ -2530,22 +2530,5 @@ namespace dvb
 		a_registry.Register(std::move(sleep), [](const json& a_args, const ToolContext&) {
 			return WaitOrSleepHandler(a_args, true);
 		});
-
-		// A registered tool (not just a REST response field) so a client already connected to
-		// this DLL's own /mcp endpoint — which has no equivalent of REST's response envelope to
-		// carry a sibling field — sees it too, including via tools/list_changed if it connected
-		// before this tool existed.
-		ToolDescriptor bridgeSetup;
-		bridgeSetup.name = "mcp_bridge_setup";
-		bridgeSetup.description =
-			"Read this to connect via devbench-bridge — a companion MCP proxy that survives this "
-			"game process restarting (a direct connection to this tool's own /mcp endpoint does "
-			"not). Returns { exePath, args, mcpJsonSnippet, installCommand }: paste mcpJsonSnippet "
-			"into your MCP client's config, or run installCommand to print the same thing. Never "
-			"edits your client config itself.";
-		bridgeSetup.readOnly = true;
-		a_registry.Register(std::move(bridgeSetup), [](const json&, const ToolContext&) {
-			return BridgeDiscoveryInfo();
-		});
 	}
 }

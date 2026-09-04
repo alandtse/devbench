@@ -66,15 +66,6 @@ namespace
 		if (f)
 			f << "{\"port\":" << a_port << "}\n";
 	}
-
-	// Mirror of GET /api/tools's mcp_bridge block onto disk, for a caller who found devbench
-	// via its files rather than a live REST call (e.g. reading the install directory directly).
-	void WriteBridgeInfo()
-	{
-		std::ofstream f("Data/SKSE/Plugins/devbench/mcp-bridge.json", std::ios::trunc);
-		if (f)
-			f << dvb::BridgeDiscoveryInfo().dump(2) << "\n";
-	}
 }
 
 namespace dvb
@@ -144,7 +135,6 @@ namespace dvb
 		const bool ok = m_mcp->start(false);  // non-blocking; spawns the listener thread
 		if (ok) {
 			WriteRuntimeInfo(chosen);
-			WriteBridgeInfo();
 			if (chosen != m_port)
 				logs::info("devbench: configured port {} busy → bound {}", m_port, chosen);
 		} else {
@@ -258,24 +248,5 @@ namespace dvb
 		static const std::string exe = ExecutableName();
 		static const bool        vr = REL::Module::IsVR();
 		return json{ { "pid", pid }, { "port", BoundPort() }, { "exe", exe }, { "vr", vr } };
-	}
-
-	json BridgeDiscoveryInfo()
-	{
-		const bool        vr = REL::Module::IsVR();
-		const std::string game = vr ? "vr" : "se";
-		std::error_code   ec;
-		const std::string exePath = std::filesystem::absolute("Data/SKSE/Plugins/devbench/devbench-bridge.exe", ec).string();
-		const std::string name = "devbench-" + game;
-		return json{
-			{ "exePath", exePath },
-			{ "args", json::array({ "--game", game }) },
-			{ "mcpJsonSnippet",
-				json{ { "mcpServers", json{ { name, json{ { "command", exePath }, { "args", json::array({ "--game", game }) } } } } } } },
-			{ "installCommand", exePath + " setup --game " + game },
-			{ "note",
-				"Add mcpJsonSnippet to your MCP client's config (e.g. .mcp.json), or run installCommand "
-				"to print the same thing — devbench never edits your client config itself." },
-		};
 	}
 }
