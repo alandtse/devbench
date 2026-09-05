@@ -138,12 +138,12 @@
     },
     {
       "name": "game",
-      "description": "Save/load and list saves. action='list' returns { count, returned, truncated, saves: [{name, mtimeUnix}, ...] }, sorted newest-first (saves[0] is what 'loadLast' loads) — count is post-filter (how many matched), returned/saves are post-limit. 'filter' keeps only names containing a substring (case-insensitive; save names embed the location, e.g. 'Whiterun'), 'limit' caps how many are returned, 'detail'=true adds a 'meta' object per matched save (characterName, location, race, level, experience, playTime, saveNumber, saveType [inferred from the filename], screenshot, fileTimeUnix — read directly from the save's own .ess header, same bytes the vanilla Load menu shows, so it works even before anything has loaded) plus top-level metaAvailable/metaNote if none parsed; 'loadLast' loads the most recent save (a settled real-game state — avoids coc's heavy new-game init); 'load'/'save' take a 'name' ('load' skips the mod-mismatch confirmation modal). All but 'list' are fire-and-forget; watch lifecycle events / inspect playerLoaded for completion.",
+      "description": "Save/load and list saves. action='list' returns { count, returned, truncated, saves: [{name, mtimeUnix}, ...] }, sorted newest-first (saves[0] is what 'loadLast' loads) — count is post-filter (how many matched), returned/saves are post-limit. 'filter' keeps only names containing a substring (case-insensitive; save names embed the location, e.g. 'Whiterun'), 'limit' caps how many are returned, 'detail'=true adds a 'meta' object per matched save (characterName, location, race, level, experience, playTime, saveNumber, saveType [inferred from the filename], screenshot, fileTimeUnix — read directly from the save's own .ess header, same bytes the vanilla Load menu shows, so it works even before anything has loaded) plus top-level metaAvailable/metaNote if none parsed; 'loadLast' loads the most recent save (a settled real-game state — avoids coc's heavy new-game init); 'load'/'save' take a 'name' ('load' skips the mod-mismatch confirmation modal). All but 'list' are fire-and-forget; watch lifecycle events / inspect playerLoaded for completion. 'advanceTime' (param 'hours', non-zero, may be negative) jumps the calendar directly — no need to fall back to console 'set timescale to N' and waiting real time — and returns { gameHour, daysPassed, day, month, year } read back the same tick; runs synchronously on the main thread.",
       "inputSchema": {
         "properties": {
           "action": {
-            "description": "list | save | load | loadLast",
-            "enum": ["list", "save", "load", "loadLast"],
+            "description": "list | save | load | loadLast | advanceTime",
+            "enum": ["list", "save", "load", "loadLast", "advanceTime"],
             "type": "string"
           },
           "detail": {
@@ -157,6 +157,10 @@
           "filter": {
             "description": "list only: case-insensitive substring to match against save names",
             "type": "string"
+          },
+          "hours": {
+            "description": "advanceTime: hours to add to the calendar (non-zero; negative rewinds within the current session)",
+            "type": "number"
           },
           "limit": {
             "description": "list only: cap the number of saves returned (newest-first); must be > 0 if given",

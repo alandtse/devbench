@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -358,6 +359,77 @@ namespace dvb
 				return out;
 			}
 
+			if (action == "advanceTime") {
+				constexpr double kMaxAbsHours = 100000.0;  // matches the 'wait'/'sleep' tools' cap
+				const double     hours = a_args.value("hours", 0.0);
+				if (hours == 0.0)
+					throw ToolError(400, "game advanceTime: 'hours' must be non-zero");
+				if (std::fabs(hours) > kMaxAbsHours)
+					throw ToolError(400, std::format("game advanceTime: 'hours' must be within +/-{}", kMaxAbsHours));
+				return MainThread::RunAndWait([hours]() -> json {
+					auto* cal = RE::Calendar::GetSingleton();
+					if (!cal || !cal->gameHour || !cal->gameDaysPassed)
+						throw ToolError(503, "Calendar unavailable (no loaded world?)");
+
+					// gameHour and gameDaysPassed are independent engine-advanced accumulators,
+					// not derived from each other, so both are updated here to stay consistent.
+					const double     hoursPerDay = static_cast<double>(RE::Calendar::GetHoursPerDay());
+					const double     totalHours = static_cast<double>(cal->gameHour->value) + hours;
+					const auto       dayDelta = static_cast<std::int32_t>(std::floor(totalHours / hoursPerDay));
+					double           newHour = totalHours - static_cast<double>(dayDelta) * hoursPerDay;
+					constexpr double kHourEpsilon = 0.01;  // stays under the engine's own day-rollover check
+					if (newHour >= hoursPerDay - kHourEpsilon)
+						newHour = hoursPerDay - kHourEpsilon;
+					cal->gameHour->value = static_cast<float>(newHour);
+
+					if (dayDelta != 0) {
+						cal->gameDaysPassed->value += static_cast<float>(dayDelta);
+						// gameDay/gameMonth/gameYear are separate globals the engine advances on its
+						// own rollover as gameHour crosses hoursPerDay; since that crossing was
+						// absorbed above instead of left for the engine to see, walk them by hand so
+						// Calendar.GetMonth/GetYear don't go stale after a multi-day jump.
+						if (cal->gameDay && cal->gameMonth && cal->gameYear) {
+							auto day = static_cast<std::int32_t>(cal->gameDay->value);
+							auto month = static_cast<std::int32_t>(cal->gameMonth->value);  // 0-11
+							auto year = static_cast<std::int32_t>(cal->gameYear->value);
+							for (auto remaining = dayDelta; remaining > 0; --remaining) {
+								if (day < RE::Calendar::DAYS_IN_MONTH[month]) {
+									++day;
+								} else {
+									day = 1;
+									if (++month == 12) {
+										month = 0;
+										++year;
+									}
+								}
+							}
+							for (auto remaining = dayDelta; remaining < 0; ++remaining) {
+								if (day > 1) {
+									--day;
+								} else {
+									if (month-- == 0) {
+										month = 11;
+										--year;
+									}
+									day = RE::Calendar::DAYS_IN_MONTH[month];
+								}
+							}
+							cal->gameDay->value = static_cast<float>(day);
+							cal->gameMonth->value = static_cast<float>(month);
+							cal->gameYear->value = static_cast<float>(year);
+						}
+					}
+
+					return json{
+						{ "gameHour", cal->gameHour->value },
+						{ "daysPassed", cal->gameDaysPassed->value },
+						{ "day", cal->gameDay ? cal->gameDay->value : 0.0f },
+						{ "month", cal->gameMonth ? cal->gameMonth->value : 0.0f },
+						{ "year", cal->gameYear ? cal->gameYear->value : 0.0f },
+					};
+				});
+			}
+
 			auto* task = SKSE::GetTaskInterface();
 			if (!task)
 				throw ToolError(500, "SKSE TaskInterface unavailable");
@@ -410,7 +482,7 @@ namespace dvb
 					out["note"] = kLoadNote;
 				return out;
 			}
-			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast)", action));
+			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|advanceTime)", action));
 		}
 
 		bool ContainsCI(const std::string& a_hay, const std::string& a_needle);  // defined below (near CheckState)
@@ -2142,16 +2214,20 @@ namespace dvb
 			"'loadLast' loads the most recent save (a settled real-game state — avoids coc's "
 			"heavy new-game init); 'load'/'save' take a 'name' ('load' skips the mod-mismatch "
 			"confirmation modal). All but 'list' are fire-and-forget; watch lifecycle events / "
-			"inspect playerLoaded for completion.";
+			"inspect playerLoaded for completion. 'advanceTime' (param 'hours', non-zero, may be "
+			"negative) jumps the calendar directly — no need to fall back to console 'set timescale "
+			"to N' and waiting real time — and returns { gameHour, daysPassed, day, month, year } "
+			"read back the same tick; runs synchronously on the main thread.";
 		game.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast" }) }, { "description", "list | save | load | loadLast" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast", "advanceTime" }) }, { "description", "list | save | load | loadLast | advanceTime" } } },
 								{ "name", json{ { "type", "string" }, { "description", "save file name (required for save/load; from action='list')" } } },
 								{ "dir", json{ { "type", "string" }, { "description", "list/load/loadLast: override the saves directory (default resolves from sLocalSavePath)" } } },
 								{ "filter", json{ { "type", "string" }, { "description", "list only: case-insensitive substring to match against save names" } } },
 								{ "limit", json{ { "type", "integer" }, { "description", "list only: cap the number of saves returned (newest-first); must be > 0 if given" } } },
 								{ "detail", json{ { "type", "boolean" }, { "description", "list only: add per-save character/location/level metadata (default false)" } } },
+								{ "hours", json{ { "type", "number" }, { "description", "advanceTime: hours to add to the calendar (non-zero; negative rewinds within the current session)" } } },
 							} },
 		};
 		a_registry.Register(std::move(game), &GameHandler);
