@@ -1178,9 +1178,8 @@ namespace dvb
 			// is the same ToolExtensions::Keys() data the capture-provider gate reads, surfaced
 			// here so a person can see why a gate failed without reading source. Consumers and
 			// registrations are NOT joined by plugin name — the C-ABI interface has no per-call
-			// caller identity (see ROADMAP.md's "Event source tagging" item), so guessing which
-			// consumer owns which registration would be a confident lie; both lists are returned
-			// side by side instead.
+			// caller identity, so guessing which consumer owns which registration would be a
+			// confident lie; both lists are returned side by side instead.
 			if (kind == "registrants") {
 				json consumers = json::array();
 				for (const auto& c : HostApi::Consumers())

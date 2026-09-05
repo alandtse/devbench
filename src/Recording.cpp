@@ -578,10 +578,10 @@ namespace dvb::Recording
 		}
 
 		// Expand one checkpoint into existing scenario primitives — a MACRO, not a new step
-		// kind (the scenario step list stays a thin sequencer; see ROADMAP.md's "keep scenario
-		// thin" scope guard). No pose step is emitted: the trajectory's own immediately-preceding
-		// `pose` step already set position/angle, so re-issuing it would be a redundant no-op;
-		// only POV is re-asserted (Skyrim's idle-vanity timer can flip it). No HUD-suppression
+		// kind (the scenario step list stays a thin sequencer). No pose step is emitted: the
+		// trajectory's own immediately-preceding `pose` step already set position/angle, so
+		// re-issuing it would be a redundant no-op; only POV is re-asserted (Skyrim's
+		// idle-vanity timer can flip it). No HUD-suppression
 		// step either — UI exclusion is the capture provider's job (`excludeUi` in the capture
 		// args), not something the step list can do reliably (a console `tm` toggle leaks HUD-
 		// hidden state on any aborted step).

@@ -49,7 +49,7 @@ namespace dvb
 
 		// Every successful tool/extension registration seen so far, oldest first. Thread-safe.
 		// There is no reliable per-registration caller identity (the C-ABI interface is one
-		// shared singleton — see ROADMAP.md's "Event source tagging" item), so this cannot be
+		// shared singleton), so this cannot be
 		// joined against Consumers() by plugin name; both lists are exposed side by side instead.
 		std::vector<Registration> Registrations();
 	}

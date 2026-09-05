@@ -413,7 +413,7 @@ boundaries (and the `scenario` tool returns per-step timings synchronously) — 
 not collect or serve profiling data itself.
 Frametime and GPU metrics are left to dedicated clients: pair devbench with a Tracy-instrumented
 mod (using the `tracy` MCP) or any other profiler to annotate captures with what the bench was
-doing. See [ROADMAP](ROADMAP.md) for the planned `measure` primitive.
+doing.
 
 ## License
 
