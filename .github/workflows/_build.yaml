@@ -1,6 +1,7 @@
-# Reusable build: compiles devbench.dll with xmake (releasedbg) and uploads the
-# binaries as an artifact. Called by build.yaml (CI) and release.yaml (packaging),
-# so the toolchain is defined in exactly one place.
+# Reusable build: compiles devbench.dll with xmake (releasedbg) and the standalone
+# devbench-bridge.exe (bun compile), uploading each as its own artifact. Called by
+# build.yaml (CI) and release.yaml (packaging), so the toolchain is defined in
+# exactly one place.
 name: "_build"
 
 on:
@@ -18,6 +19,9 @@ on:
       artifact-name:
         description: "Artifact name the binaries were uploaded under."
         value: ${{ inputs.artifact-name }}
+      bridge-artifact-name:
+        description: "Artifact name the bridge exe was uploaded under."
+        value: ${{ inputs.artifact-name }}-bridge
 
 permissions:
   contents: read
@@ -81,4 +85,40 @@ jobs:
         with:
           name: ${{ inputs.artifact-name }}
           path: staging/*
+          if-no-files-found: error
+
+  bridge:
+    name: Build bridge (bun compile)
+    runs-on: windows-2025
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      # npm ci (not bun install) so the compiled exe bundles the exact dependency
+      # versions pinned in package-lock.json — the same lockfile lint.yaml installs
+      # from for eslint. bun is only the compiler here, not the package manager.
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install bridge dependencies
+        working-directory: bridge
+        run: npm ci
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Compile standalone exe
+        working-directory: bridge
+        run: bun run compile
+
+      - name: Upload bridge binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}-bridge
+          path: bridge/dist/devbench-bridge.exe
           if-no-files-found: error

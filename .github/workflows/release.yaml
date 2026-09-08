@@ -3,8 +3,8 @@
 # picks the next version, bumps `local version` in xmake.lua, commits it back to main
 # (with [skip ci] so it doesn't re-trigger), creates the vX.Y.Z tag, and publishes a
 # GitHub Release whose body is the curated changelog. Downstream jobs then build the
-# plugin, attach the .7z mod archive to that release, and — on the source repo —
-# upload to Nexus with the same changelog.
+# plugin and the bridge exe, attach the .7z mod archive to that release, and — on the
+# source repo — upload to Nexus with the same changelog.
 #
 # Debounce: a leading `debounce` job waits out a short quiet window; each new push cancels the
 # still-sleeping wait and restarts it, so a burst of merges collapses into ONE release instead of
@@ -128,17 +128,25 @@ jobs:
           name: ${{ needs.build.outputs.artifact-name }}
           path: bin
 
+      - name: Download bridge binary
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.bridge-artifact-name }}
+          path: bin-bridge
+
       - name: Assemble mod archive
         id: pkg
         run: |
           set -euo pipefail
           tag="${{ needs.semantic-release.outputs.new_release_git_tag }}"
           stage="devbench-${tag}"
-          # User archive ships only the plugin; docs/license live in the repo and the
-          # GitHub Release page, and the C-ABI dev API is consumed from source, not from
-          # the Nexus download.
-          mkdir -p "$stage/SKSE/Plugins"
+          # User archive ships the plugin plus the standalone MCP bridge exe (bridge/README.md
+          # promises it's already at this path — nothing to download separately); docs/license
+          # live in the repo and the GitHub Release page, and the C-ABI dev API is consumed
+          # from source, not from the Nexus download.
+          mkdir -p "$stage/SKSE/Plugins/devbench"
           cp bin/devbench.dll bin/devbench.pdb "$stage/SKSE/Plugins/"
+          cp bin-bridge/devbench-bridge.exe "$stage/SKSE/Plugins/devbench/"
           # Bundle the default recordings straight into the recordings dir so a fresh
           # install ships a ready-to-replay benchmark (e.g. Guardian Stones -> Whiterun).
           mkdir -p "$stage/SKSE/Plugins/devbench/recordings"
