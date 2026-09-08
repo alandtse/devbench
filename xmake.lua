@@ -59,6 +59,9 @@ add_deps("commonlibsse-ng")
 add_packages("skse-menu-framework-api", "nlohmann_json")
 add_defines("_SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING") -- SMF header uses std::wstring_convert
 add_defines("UNICODE", "_UNICODE", "_WINSOCKAPI_")
+-- MSVC's default execution charset is the system codepage, not UTF-8; without this,
+-- non-ASCII bytes in string literals (e.g. em dashes in UI tooltip text) get mangled.
+add_cxflags("/utf-8", { force = true })
 add_files("src/RecordingsMenu.cpp")
 add_includedirs("src")
 target_end()
@@ -71,6 +74,7 @@ set_warnings("all")
 add_deps("commonlibsse-ng")
 add_packages("fuck-api", "imgui", "simpleini", "nlohmann_json")
 add_defines("UNICODE", "_UNICODE", "_WINSOCKAPI_")
+add_cxflags("/utf-8", { force = true }) -- see devbench-UI's identical flag for why
 add_files("src/RecordingsMenuFuck.cpp")
 add_includedirs("src")
 target_end()
@@ -86,6 +90,10 @@ set_basename("devbench")
 -- ensure winsock2 (pulled in by cpp-mcp/httplib) wins over the legacy winsock
 -- that <Windows.h> would otherwise include via CommonLib.
 add_defines("_WINSOCKAPI_")
+
+-- see devbench-UI's identical flag for why (this target's own sources carry the same
+-- non-ASCII string literals, e.g. Server.cpp's log lines and mcp_bridge_setup's note).
+add_cxflags("/utf-8", { force = true })
 
 -- generate PDB (releasedbg handles /Zi; /DEBUG tells the linker to emit it)
 add_shflags("/DEBUG", { force = true })
