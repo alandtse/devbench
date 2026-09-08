@@ -7,7 +7,7 @@ import { join } from "node:path";
 export interface Target {
   /** Human-readable label for error messages ("SE", "VR", or the --install path). */
   label: string;
-  /** Directory containing runtime.json (…/Data/SKSE/Plugins/devbench). */
+  /** Directory containing runtime.json — the Data-relative path or its %LOCALAPPDATA% mirror. */
   runtimeDir: string;
 }
 
@@ -32,6 +32,13 @@ const DEFAULT_VR_INSTALLS = [
 
 function runtimeDirFor(installPath: string): string {
   return join(installPath, "Data", "SKSE", "Plugins", "devbench");
+}
+
+// Must match Server.cpp's ExternalStateDir() exactly: %LOCALAPPDATA%\devbench\<se|vr>,
+// reachable even under a VFS mod manager (MO2) where Data/SKSE/Plugins/devbench is virtual.
+function localAppDataDevbenchDir(game: "se" | "vr"): string | undefined {
+  const localAppData = process.env.LOCALAPPDATA;
+  return localAppData ? join(localAppData, "devbench", game) : undefined;
 }
 
 // runtime.json survives after the game exits, so picking the first readable
@@ -67,6 +74,8 @@ export function resolveTarget(args: {
     const candidates = (
       args.game === "se" ? DEFAULT_SE_INSTALLS : DEFAULT_VR_INSTALLS
     ).map(runtimeDirFor);
+    const localAppDataDir = localAppDataDevbenchDir(args.game);
+    if (localAppDataDir) candidates.push(localAppDataDir);
     const found = freshestExisting(candidates);
     if (!found) {
       throw new Error(

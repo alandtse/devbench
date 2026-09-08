@@ -157,7 +157,10 @@ Missing → auto-created with defaults. Invalid → defaults (logged). All keys 
 The port is **deterministic per runtime** — **SE/AE `8920`, VR `8921`** — so a fixed MCP client URL
 never moves; set `port` explicitly to override. If the chosen port is already taken (e.g. a second
 instance of the same runtime), devbench iterates to the next free port (logged) and writes the bound
-port to `Data/SKSE/Plugins/devbench/runtime.json` (`{ "port": N }`) for discovery.
+port to `Data/SKSE/Plugins/devbench/runtime.json` (`{ "port": N }`) for discovery. Under a VFS mod
+manager (MO2, …) that path is virtual and unreachable from outside the manager's own hook, so the
+same file is also mirrored to `%LOCALAPPDATA%\devbench\<se|vr>\runtime.json`, which isn't
+virtualized — devbench-bridge checks both and uses whichever is freshest.
 
 ## Connect an MCP client
 

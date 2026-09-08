@@ -8,7 +8,10 @@ to devbench's own `/mcp` endpoint does not.
 
 It holds no port/cache state of its own — every call reads the live port from that
 install's `Data/SKSE/Plugins/devbench/runtime.json` and proxies straight through, so a
-live call never drifts from whatever devbench build is actually running. `tools/list`
+live call never drifts from whatever devbench build is actually running. Under a VFS mod
+manager (MO2, …) that path is virtual and unreachable from outside the manager's own
+hook, so devbench also mirrors `runtime.json` to `%LOCALAPPDATA%\devbench\<se|vr>\`, which
+isn't virtualized — the bridge checks both and uses whichever is freshest. `tools/list`
 is the one exception: it returns `src/tools-fallback.json` (devbench's real core tool
 set, baked in at build time) when no game is up, since an MCP client typically caches
 `tools/list` for the whole session and can't be relied on to notice a
@@ -28,7 +31,13 @@ the build otherwise
 
 If devbench is installed, the bridge is already at
 `Data/SKSE/Plugins/devbench/devbench-bridge.exe` — nothing to download. Add one entry to
-your MCP client's config (Claude Code's `.mcp.json`, Claude Desktop's config, etc.):
+your MCP client's config (Claude Code's `.mcp.json`, Claude Desktop's config, etc.).
+
+**Under a VFS mod manager (MO2, …)** that path is only reachable by processes the manager
+itself launches — an MCP client spawning the bridge directly (the normal case) can't see
+it. Extract `devbench-bridge.exe` from the release archive to a real, on-disk folder and
+point `command` at that copy instead; `runtime.json`'s VFS-proof mirror (above) means the
+extracted exe still finds the live game either way.
 
 ```json
 {
