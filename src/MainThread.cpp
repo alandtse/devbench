@@ -72,20 +72,20 @@ namespace dvb::MainThread
 			if (future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
 				return future.get();
 			if (!abandoned)
-				throw ToolError(504, std::format("main-thread task did not finish within {}ms; it already started and may still complete", a_timeout.count()));
+				throw TaskTimeout(true, std::format("main-thread task did not finish within {}ms; it already started and may still complete", a_timeout.count()));
 			// The engine's frame counter discriminates the two 504 causes: still
 			// advancing = main thread busy; frozen = hung OR
 			// fully paused (the counter also freezes in pause menus).
 			const int frameNow = game::CurrentFrame();
 			if (frameAtStart < 0 || frameNow < 0)
-				throw ToolError(504, std::format("main-thread task did not start within {}ms; queued task abandoned", a_timeout.count()));
+				throw TaskTimeout(false, std::format("main-thread task did not start within {}ms; queued task abandoned", a_timeout.count()));
 			if (frameNow == frameAtStart)
-				throw ToolError(504, std::format(
-										 "main-thread task did not start within {}ms; queued task abandoned and the game frame counter has not advanced -- main thread hung or the game is fully paused; if no pause menu is open, only a process restart recovers",
-										 a_timeout.count()));
-			throw ToolError(504, std::format(
-									 "main-thread task did not start within {}ms; queued task abandoned ({} frames elapsed -- main thread busy)",
-									 a_timeout.count(), frameNow - frameAtStart));
+				throw TaskTimeout(false, std::format(
+											 "main-thread task did not start within {}ms; queued task abandoned and the game frame counter has not advanced -- main thread hung or the game is fully paused; if no pause menu is open, only a process restart recovers",
+											 a_timeout.count()));
+			throw TaskTimeout(false, std::format(
+										 "main-thread task did not start within {}ms; queued task abandoned ({} frames elapsed -- main thread busy)",
+										 a_timeout.count(), frameNow - frameAtStart));
 		}
 
 		return future.get();  // rethrows the handler's exception on the listener thread

@@ -5,16 +5,24 @@
 #include <functional>
 
 #include "Json.h"
+#include "ToolRegistry.h"
 
 namespace dvb::MainThread
 {
+	struct TaskTimeout : ToolError
+	{
+		bool started;
+		TaskTimeout(bool a_started, const std::string& a_message) :
+			ToolError(504, a_message), started(a_started) {}
+	};
+
 	/// Run `a_fn` on the main game thread (via SKSE's TaskInterface) and block the
 	/// calling (listener) thread until it returns, propagating its JSON result — or
 	/// rethrowing whatever it threw (e.g. a dvb::ToolError) on the caller's thread.
 	///
 	/// This is the value-returning primitive that lets tools read live game/render
 	/// state synchronously (the agentic-renderdoc "Eval returns a value" model)
-	/// rather than fire-and-forget + poll. Throws dvb::ToolError(504) if the task
+	/// rather than fire-and-forget + poll. Throws TaskTimeout (HTTP 504) if the task
 	/// does not finish within `a_timeout` (e.g. the main thread is stalled mid-load).
 	/// Tasks still queued at their deadline are abandoned and will not invoke a_fn.
 	/// Already-running tasks cannot be interrupted and may finish after a timeout.

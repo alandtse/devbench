@@ -14,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <limits>
 #include <mutex>
 #include <thread>
@@ -41,6 +42,48 @@ namespace dvb
 		std::int64_t NowMs()
 		{
 			return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+		}
+
+		struct RepeatingKey
+		{
+			std::uint16_t scancode;
+			std::int64_t  pressedAtMs;
+			std::int64_t  expiresAtMs;
+		};
+
+		// Only the game thread accesses these. Input requests hold the manager mutex
+		// while waiting on that thread, so the polling hook must not acquire it.
+		std::vector<RepeatingKey> g_repeatingKeys;
+		std::uint64_t             g_repeatCutoff = 0;
+
+		void PollKeyboard(CONTEXT&)
+		{
+			if (g_repeatingKeys.empty())
+				return;
+			auto* queue = RE::BSInputEventQueue::GetSingleton();
+			if (!queue)
+				return;
+			const auto now = NowMs();
+			for (const auto& key : g_repeatingKeys) {
+				if (now >= key.expiresAtMs)
+					continue;
+				if (queue->buttonEventCount >= RE::BSInputEventQueue::MAX_BUTTON_EVENTS)
+					break;
+				// Do not emit a held event in the same poll as the initial down.
+				bool queued = false;
+				for (auto* event = queue->GetQueueHead(); event; event = event->next) {
+					const auto* button = event->AsButtonEvent();
+					if (button && button->device == RE::INPUT_DEVICE::kKeyboard &&
+						button->GetIDCode() == key.scancode) {
+						queued = true;
+						break;
+					}
+				}
+				if (!queued) {
+					const float heldSecs = std::max(0.001F, static_cast<float>(now - key.pressedAtMs) / 1000.0F);
+					queue->AddButtonEvent(RE::INPUT_DEVICE::kKeyboard, 0, key.scancode, 1.0F, heldSecs);
+				}
+			}
 		}
 
 		int BoundedInteger(const json& a_object, const char* a_name, int a_default, int a_min, int a_max)
@@ -205,7 +248,7 @@ namespace dvb
 					}
 					m_latestGeneration.store(acquired.lease.generation, std::memory_order_release);
 					try {
-						queued = QueueButton(a_key, true, 0.0F);
+						queued = QueueButton(acquired.lease, true, 0.0F);
 					} catch (...) {
 						m_leases.RemoveExact(a_key.scancode, acquired.lease.generation);
 						throw;
@@ -233,7 +276,7 @@ namespace dvb
 					throw ToolError(409, std::format("key '{}' is held by owner '{}' (not '{}')", a_key.name, current->owner, a_owner));
 				const float       heldSecs = std::max(0.001F,
 					static_cast<float>(NowMs() - current->pressedAtMs) / 1000.0F);
-				const QueueResult queued = QueueButton(a_key, false, heldSecs);
+				const QueueResult queued = QueueButton(*current, false, heldSecs);
 				m_leases.RemoveExact(a_key.scancode, current->generation);
 				SignalWatchdog();
 				PublishLocked("up", *current, a_reason, queued.pending);
@@ -391,6 +434,8 @@ namespace dvb
 			void RequestLifecycleRelease() noexcept
 			{
 				const auto cutoff = m_latestGeneration.load(std::memory_order_acquire);
+				g_repeatCutoff = cutoff;
+				g_repeatingKeys.clear();
 				if (!cutoff)
 					return;
 				RaiseLifecycleCutoff(cutoff);
@@ -404,25 +449,29 @@ namespace dvb
 					throw ToolError(503, "keyboard input is advertised but not ready — SKSE kInputLoaded has not completed; inspect input capabilities/status and retry");
 			}
 
-			QueueResult QueueButton(const KeyboardKey& a_key, bool a_down, float a_heldSecs)
+			QueueResult QueueButton(const KeyboardLease& a_lease, bool a_down, float a_heldSecs)
 			{
 				try {
 					const json result = MainThread::RunAndWait([=]() -> json {
+						if (a_down && a_lease.generation <= g_repeatCutoff)
+							throw ToolError(503, "keyboard press cancelled by game load");
 						auto* queue = RE::BSInputEventQueue::GetSingleton();
 						if (!queue)
 							throw ToolError(503, "Skyrim BSInputEventQueue unavailable");
 						if (queue->buttonEventCount >= RE::BSInputEventQueue::MAX_BUTTON_EVENTS)
 							throw ToolError(503, "Skyrim keyboard input queue is full for this frame — retry after the next frame");
-						queue->AddButtonEvent(RE::INPUT_DEVICE::kKeyboard, 0, a_key.scancode,
+						if (a_down)
+							g_repeatingKeys.push_back({ a_lease.key.scancode, NowMs(), a_lease.expiresAtMs });
+						else
+							std::erase_if(g_repeatingKeys, [&](const auto& key) { return key.scancode == a_lease.key.scancode; });
+						queue->AddButtonEvent(RE::INPUT_DEVICE::kKeyboard, 0, a_lease.key.scancode,
 							a_down ? 1.0F : 0.0F, a_down ? 0.0F : a_heldSecs);
 						return json{ { "frame", game::CurrentFrame() } };
 					});
 					return { false, result.value("frame", -1) };
-				} catch (const ToolError& e) {
-					// RunAndWait's 504 means the task is already queued and will execute if the main
-					// thread resumes. Treat that as accepted/pending so a down retains its lease and
-					// watchdog, and an up can safely retire it without a retry racing the queued event.
-					if (e.code == 504)
+				} catch (const MainThread::TaskTimeout& e) {
+					// Only a running task can still deliver its event after a timeout.
+					if (e.started)
 						return { true, -1 };
 					throw;
 				}
@@ -578,7 +627,7 @@ namespace dvb
 					return false;
 				const float       heldSecs = std::max(0.001F,
 					static_cast<float>(NowMs() - current->pressedAtMs) / 1000.0F);
-				const QueueResult queued = QueueButton(current->key, false, heldSecs);
+				const QueueResult queued = QueueButton(*current, false, heldSecs);
 				m_leases.RemoveExact(a_scancode, a_generation);
 				PublishLocked("up", *current, a_reason, queued.pending);
 				return true;
@@ -699,6 +748,21 @@ namespace dvb
 
 	void MarkKeyboardInputReady()
 	{
+		if (g_inputReady.load(std::memory_order_relaxed))
+			return;
+		REL::Relocation<std::uintptr_t> poll{ RELOCATION_ID(67315, 68617) };
+		// PollInputDevices begins with two five-byte register saves on SE, AE and VR.
+		// Emit before control mapping and dispatch so every input sink sees the hold.
+		constexpr std::uint8_t prologue[]{ 0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18 };
+		if (std::memcmp(reinterpret_cast<const void*>(poll.address()), prologue, sizeof(prologue)) != 0) {
+			logs::error("devbench: unexpected input polling prologue (keyboard input unavailable)");
+			return;
+		}
+		g_repeatingKeys.reserve(kMaximumHeldKeys);
+		if (!SKSE::stl::install_context_hook(poll.address(), sizeof(prologue), &PollKeyboard, sizeof(prologue))) {
+			logs::error("devbench: failed to install keyboard input polling hook");
+			return;
+		}
 		g_inputReady.store(true, std::memory_order_relaxed);
 		logs::info("devbench: keyboard input API ready (contract v{}, Skyrim BSInputEventQueue)", kKeyboardContractVersion);
 	}
