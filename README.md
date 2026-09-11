@@ -292,12 +292,21 @@ HUD notifications confirm hotkey actions (record started, record stopped, replay
 
 ## Scripted tests
 
+On Skyrim VR, use `camera {"action":"freecam","on":true}` before `camera drive`,
+then `camera {"action":"freecam","on":false}` to restore the previous camera.
+VR requests complete on the main thread (`queued:false`); allow a rendered frame
+after driving before capturing. This path uses the native camera update pipeline
+and does not change freeze time; rendered stereo still needs in-game qualification.
+Unpatched engine console `tfc`/`ToggleFlyCam` activation still crashes in VR.
+Use DevBench for the whole enable/drive/disable sequence; externally activated
+free cameras are rejected. See [VR free-camera behavior and validation](docs/vr-free-camera.md).
+
 The **`scenario`** tool runs a timed step list server-side and returns a per-step transcript —
 one call replaces hand-chained requests with frame-accurate timing. Each step is a `tool`
 dispatch (any registered tool), a fixed `wait`, an event-driven **`waitFor`**, or a state-poll
 `waitUntil`. **Prefer `waitFor`** — it keys off the _actual_ Skyrim event (a load is done when
 `lifecycle:postLoadGame` fires) rather than a guessed sleep. This is a validated battery — load,
-wait for the load event, settle, rotate in place, then free the camera:
+wait for the load event, settle, rotate in place, then enable and restore the camera:
 
 ```jsonc
 POST /api/tool/scenario          // MCP: tools/call name=scenario — identical body
@@ -313,10 +322,11 @@ POST /api/tool/scenario          // MCP: tools/call name=scenario — identical 
     { "tool": "console", "args": { "command": "player.setangle z 180" } },
     { "wait": 3000 },
     { "tool": "console", "args": { "command": "player.setangle z 270" } },
-    { "tool": "console", "args": { "command": "tfc" } }  // free cam for a screenshot sweep
+    { "tool": "camera", "args": { "action": "freecam", "on": true } },
+    { "tool": "camera", "args": { "action": "freecam", "on": false } }
   ]
 }
-// -> { "ok": true, "stepsRun": 11, "elapsedMs": 14213,
+// -> { "ok": true, "stepsRun": 12, "elapsedMs": 14213,
 //      "results": [ { "index": 0, "kind": "tool", "ok": true, ... },
 //                   { "index": 1, "kind": "waitFor", "satisfied": true, "elapsedMs": 4870 }, ... ] }
 ```

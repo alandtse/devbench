@@ -72,6 +72,17 @@ jobs:
           xmake build --yes devbench-tests
           xmake run devbench-tests
 
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+
+      - name: Check camera test safety without a game
+        env:
+          DEVBENCH_TEST_FREECAM: "0"
+        run: |
+          python -m pip install "pytest>=7.0" "requests>=2.28"
+          python -m pytest tests/http/test_camera_freecam_safety.py tests/http/test_camera_freecam.py -q
+
       - name: Stage binaries
         shell: pwsh
         run: |
