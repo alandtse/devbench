@@ -16,10 +16,12 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <future>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace dvb
@@ -61,7 +63,7 @@ namespace dvb
 		std::mutex                                           g_inputTasksMutex;
 		std::vector<std::shared_ptr<MainThread::QueuedTask>> g_inputTasks;
 
-		json RunAtInputPoll(std::function<json()> a_fn)
+		std::future<json> RunAtInputPoll(std::function<json()> a_fn)
 		{
 			const auto deadline = steady_clock::now() + seconds(5);
 			auto       invocation = std::make_shared<MainThread::QueuedTask>(std::move(a_fn), deadline);
@@ -71,17 +73,17 @@ namespace dvb
 				g_inputTasks.push_back(invocation);
 			}
 			if (future.wait_until(deadline) == std::future_status::ready)
-				return future.get();
+				return future;
 			const bool abandoned = invocation->Abandon();
 			{
 				std::lock_guard lock(g_inputTasksMutex);
 				std::erase(g_inputTasks, invocation);
 			}
 			if (future.wait_for(milliseconds(0)) == std::future_status::ready)
-				return future.get();
-			throw MainThread::TaskTimeout(!abandoned, abandoned ?
-														  "keyboard input polling did not start within 5000ms. Queued input abandoned" :
-														  "keyboard input polling did not finish within 5000ms. Input already started and may still complete");
+				return future;
+			if (abandoned)
+				throw MainThread::TaskTimeout(false, "keyboard input polling did not start within 5000ms. Queued input abandoned");
+			return future;
 		}
 
 		void PollKeyboard(CONTEXT&)
@@ -190,8 +192,15 @@ namespace dvb
 
 		struct QueueResult
 		{
-			bool pending = false;
-			int  frame = -1;
+			bool              pending = false;
+			int               frame = -1;
+			std::future<json> completion;
+		};
+
+		struct PendingRelease
+		{
+			std::future<json> completion;
+			std::string       reason;
 		};
 
 		class KeyboardManager
@@ -273,6 +282,9 @@ namespace dvb
 					std::lock_guard lock(m_mutex);
 					if (m_leases.Size() >= kMaximumHeldKeys && !m_leases.Find(a_key.scancode))
 						throw ToolError(409, std::format("keyboard synthetic hold limit reached ({}) — release a key or call releaseAll", kMaximumHeldKeys));
+					if (const auto current = m_leases.Find(a_key.scancode);
+						current && m_pendingReleases.contains(current->generation))
+						throw ToolError(409, std::format("key '{}' has a pending release — retry after it completes", a_key.name));
 					acquired = m_leases.Acquire(a_key, a_owner, NowMs(), a_maxHoldMs);
 					if (acquired.status == KeyboardAcquireStatus::kConflict)
 						throw ToolError(409, std::format("key '{}' is held by owner '{}'", a_key.name, acquired.lease.owner));
@@ -311,13 +323,8 @@ namespace dvb
 				}
 				if (!a_force && current->owner != a_owner)
 					throw ToolError(409, std::format("key '{}' is held by owner '{}' (not '{}')", a_key.name, current->owner, a_owner));
-				const float       heldSecs = std::max(0.001F,
-					static_cast<float>(NowMs() - current->pressedAtMs) / 1000.0F);
-				const QueueResult queued = QueueButton(*current, false, heldSecs);
-				m_leases.RemoveExact(a_key.scancode, current->generation);
-				SignalWatchdog();
-				PublishLocked("up", *current, a_reason, queued.pending);
-				return EventResult("up", *current, queued.pending, true, queued.frame);
+				const auto queued = ReleaseLocked(*current, a_reason);
+				return EventResult("up", *current, queued.pending, !queued.pending, queued.frame);
 			}
 
 			json Tap(const KeyboardKey& a_key, const std::string& a_owner, int a_durationMs)
@@ -448,10 +455,16 @@ namespace dvb
 				}
 				json released = json::array();
 				json failed = json::array();
+				json pending = json::array();
 				for (const auto& lease : selected) {
 					try {
 						if (ReleaseGenerationWithRetry(lease.key.scancode, lease.generation, a_reason))
 							released.push_back(KeyJson(lease.key));
+						else {
+							std::lock_guard lock(m_mutex);
+							if (m_pendingReleases.contains(lease.generation))
+								pending.push_back(KeyJson(lease.key));
+						}
 					} catch (const std::exception& e) {
 						json item = KeyJson(lease.key);
 						item["error"] = e.what();
@@ -465,6 +478,7 @@ namespace dvb
 					{ "owner", a_all ? "*" : a_owner },
 					{ "released", std::move(released) },
 					{ "failed", std::move(failed) },
+					{ "pending", std::move(pending) },
 				};
 			}
 
@@ -487,30 +501,55 @@ namespace dvb
 
 			QueueResult QueueButton(const KeyboardLease& a_lease, bool a_down, float a_heldSecs)
 			{
-				try {
-					const json result = RunAtInputPoll([=]() -> json {
-						if (a_down && a_lease.generation <= g_repeatCutoff.load(std::memory_order_acquire))
-							throw ToolError(503, "keyboard press cancelled by game load");
-						auto* queue = RE::BSInputEventQueue::GetSingleton();
-						if (!queue)
-							throw ToolError(503, "Skyrim BSInputEventQueue unavailable");
-						if (queue->buttonEventCount >= RE::BSInputEventQueue::MAX_BUTTON_EVENTS)
-							throw ToolError(503, "Skyrim keyboard input queue is full for this frame — retry after the next frame");
-						if (a_down)
-							g_repeatingKeys.push_back({ a_lease.key.scancode, a_lease.generation, NowMs(), a_lease.expiresAtMs });
-						else
-							std::erase_if(g_repeatingKeys, [&](const auto& key) { return key.scancode == a_lease.key.scancode; });
-						queue->AddButtonEvent(RE::INPUT_DEVICE::kKeyboard, 0, a_lease.key.scancode,
-							a_down ? 1.0F : 0.0F, a_down ? 0.0F : a_heldSecs);
-						return json{ { "frame", game::CurrentFrame() } };
-					});
-					return { false, result.value("frame", -1) };
-				} catch (const MainThread::TaskTimeout& e) {
-					// Only a running task can still deliver its event after a timeout.
-					if (e.started)
-						return { true, -1 };
-					throw;
+				auto completion = RunAtInputPoll([=]() -> json {
+					if (a_down && a_lease.generation <= g_repeatCutoff.load(std::memory_order_acquire))
+						throw ToolError(503, "keyboard press cancelled by game load");
+					auto* queue = RE::BSInputEventQueue::GetSingleton();
+					if (!queue)
+						throw ToolError(503, "Skyrim BSInputEventQueue unavailable");
+					if (queue->buttonEventCount >= RE::BSInputEventQueue::MAX_BUTTON_EVENTS)
+						throw ToolError(503, "Skyrim keyboard input queue is full for this frame — retry after the next frame");
+					if (a_down)
+						g_repeatingKeys.push_back({ a_lease.key.scancode, a_lease.generation, NowMs(), a_lease.expiresAtMs });
+					else
+						std::erase_if(g_repeatingKeys, [&](const auto& key) { return key.scancode == a_lease.key.scancode; });
+					queue->AddButtonEvent(RE::INPUT_DEVICE::kKeyboard, 0, a_lease.key.scancode,
+						a_down ? 1.0F : 0.0F, a_down ? 0.0F : a_heldSecs);
+					return json{ { "frame", game::CurrentFrame() } };
+				});
+				if (completion.wait_for(milliseconds(0)) != std::future_status::ready)
+					return { true, -1, std::move(completion) };
+				return { false, completion.get().value("frame", -1), {} };
+			}
+
+			// Called under m_mutex. An empty future marks a failed release awaiting retry.
+			QueueResult ReleaseLocked(const KeyboardLease& a_lease, std::string_view a_reason)
+			{
+				const auto        pending = m_pendingReleases.find(a_lease.generation);
+				const std::string reason = pending != m_pendingReleases.end() ? pending->second.reason : std::string(a_reason);
+				if (pending != m_pendingReleases.end() && pending->second.completion.valid()) {
+					if (pending->second.completion.wait_for(milliseconds(0)) != std::future_status::ready)
+						return { true, -1, {} };
+					auto       completion = std::move(pending->second.completion);
+					const auto result = completion.get();
+					m_leases.RemoveExact(a_lease.key.scancode, a_lease.generation);
+					PublishLocked("up", a_lease, reason, false);
+					m_pendingReleases.erase(pending);
+					return { false, result.value("frame", -1), {} };
 				}
+
+				const float heldSecs = std::max(0.001F,
+					static_cast<float>(NowMs() - a_lease.pressedAtMs) / 1000.0F);
+				auto        queued = QueueButton(a_lease, false, heldSecs);
+				if (queued.pending) {
+					m_pendingReleases.insert_or_assign(a_lease.generation, PendingRelease{ std::move(queued.completion), reason });
+				} else {
+					m_leases.RemoveExact(a_lease.key.scancode, a_lease.generation);
+					m_pendingReleases.erase(a_lease.generation);
+				}
+				SignalWatchdog();
+				PublishLocked("up", a_lease, reason, queued.pending);
+				return queued;
 			}
 
 			json EventResult(std::string_view a_action, const KeyboardLease& a_lease,
@@ -582,12 +621,12 @@ namespace dvb
 						const auto now = NowMs();
 						if (lifecycle) {
 							for (const auto& lease : leases)
-								if (lease.generation <= lifecycleCutoff)
+								if (lease.generation <= lifecycleCutoff || m_pendingReleases.contains(lease.generation))
 									selected.push_back(lease);
 						} else {
 							const auto earliest = std::min_element(leases.begin(), leases.end(),
 								[](const auto& a, const auto& b) { return a.expiresAtMs < b.expiresAtMs; });
-							if (earliest != leases.end() && earliest->expiresAtMs > now) {
+							if (m_pendingReleases.empty() && earliest != leases.end() && earliest->expiresAtMs > now) {
 								const auto revision = m_watchdogRevision.load(std::memory_order_acquire);
 								m_watchdogCv.wait_for(lock, milliseconds(earliest->expiresAtMs - now), [&] {
 									return m_lifecycleCutoff.load(std::memory_order_acquire) != 0 ||
@@ -596,7 +635,7 @@ namespace dvb
 								continue;
 							}
 							for (const auto& lease : leases)
-								if (lease.expiresAtMs <= now)
+								if (lease.expiresAtMs <= now || m_pendingReleases.contains(lease.generation))
 									selected.push_back(lease);
 						}
 					}
@@ -616,10 +655,11 @@ namespace dvb
 								lease.key.name, lease.generation, e.what());
 						}
 					}
-					if (retryPending) {
-						std::unique_lock lock(m_mutex);
+					std::unique_lock lock(m_mutex);
+					if (retryPending)
 						m_watchdogCv.wait_for(lock, kWatchdogRetryDelay);
-					}
+					else if (!m_pendingReleases.empty())
+						m_watchdogCv.wait_for(lock, kReleaseRetryDelay);
 				}
 			}
 
@@ -661,22 +701,18 @@ namespace dvb
 				const auto      current = m_leases.Find(a_scancode);
 				if (!current || current->generation != a_generation)
 					return false;
-				const float       heldSecs = std::max(0.001F,
-					static_cast<float>(NowMs() - current->pressedAtMs) / 1000.0F);
-				const QueueResult queued = QueueButton(*current, false, heldSecs);
-				m_leases.RemoveExact(a_scancode, a_generation);
-				PublishLocked("up", *current, a_reason, queued.pending);
-				return true;
+				return !ReleaseLocked(*current, a_reason).pending;
 			}
 
-			std::mutex                 m_mutex;
-			std::condition_variable    m_watchdogCv;
-			KeyboardLeaseTable         m_leases;
-			EventBus*                  m_events = nullptr;
-			bool                       m_watchdogStarted = false;
-			std::atomic<std::uint64_t> m_latestGeneration{ 0 };
-			std::atomic<std::uint64_t> m_lifecycleCutoff{ 0 };
-			std::atomic<std::uint64_t> m_watchdogRevision{ 0 };
+			std::mutex                                        m_mutex;
+			std::condition_variable                           m_watchdogCv;
+			KeyboardLeaseTable                                m_leases;
+			std::unordered_map<std::uint64_t, PendingRelease> m_pendingReleases;
+			EventBus*                                         m_events = nullptr;
+			bool                                              m_watchdogStarted = false;
+			std::atomic<std::uint64_t>                        m_latestGeneration{ 0 };
+			std::atomic<std::uint64_t>                        m_lifecycleCutoff{ 0 };
+			std::atomic<std::uint64_t>                        m_watchdogRevision{ 0 };
 		};
 
 		json HandleInputImpl(const json& a_args, const ToolContext& a_ctx)
@@ -746,7 +782,9 @@ namespace dvb
 			"no-op. 'tap' emits down, waits durationMs (default 50), then up. 'sequence' executes a "
 			"prevalidated balanced array of tap/down/up/wait events (optional afterMs); it rejects an "
 			"unbalanced hold before injecting anything and releases keys acquired by the sequence on "
-			"failure. 'releaseAll' releases this owner only; all-owner cleanup is internal-only. Every "
+			"failure. 'releaseAll' releases this owner only; all-owner cleanup is internal-only. Pending "
+			"releases retain their leases until completion. 'up' returns pending=true and released=false, "
+			"and 'releaseAll' lists those keys in pending rather than released. Every "
 			"lease watchdog retries a failed automatic release until it succeeds or becomes obsolete. "
 			"owner defaults to the MCP session id or rest:anonymous; automation should "
 			"supply a stable task owner. DevBench also releases owned keys on load/new-game and emits "

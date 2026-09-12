@@ -23,7 +23,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.mark.parametrize("release", ["up", "expiry"])
+@pytest.mark.parametrize("release", ["up", "releaseAll", "expiry"])
 def test_keyboard_hold_moves_until_release(client, tool_schema, release):
     desc = require_tool(tool_schema, "input")
     for action in ("status", "down", "up", "releaseAll"):
@@ -58,7 +58,7 @@ def test_keyboard_hold_moves_until_release(client, tool_schema, release):
 
     try:
         start = position()
-        send("down", key=key, maxHoldMs=10000 if release == "up" else 1000)
+        send("down", key=key, maxHoldMs=1000 if release == "expiry" else 10000)
         time.sleep(0.25)
         first = position()
         time.sleep(0.25)
@@ -68,6 +68,11 @@ def test_keyboard_hold_moves_until_release(client, tool_schema, release):
         if release == "up":
             result = send("up", key=key)
             assert result["released"], result
+        elif release == "releaseAll":
+            result = send("releaseAll")
+            assert not result["failed"], result
+            assert not result.get("pending"), result
+            assert any(item["scancode"] == key for item in result["released"]), result
         else:
             time.sleep(0.7)
         time.sleep(0.25)
