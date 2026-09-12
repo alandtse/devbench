@@ -4,6 +4,7 @@
 #include "GameState.h"
 #include "KeyboardInputState.h"
 #include "MainThread.h"
+#include "MainThreadTask.h"
 #include "ToolRegistry.h"
 #include "VRInput.h"
 #include "VRInputState.h"
@@ -16,6 +17,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <unordered_set>
@@ -47,17 +49,52 @@ namespace dvb
 		struct RepeatingKey
 		{
 			std::uint16_t scancode;
+			std::uint64_t generation;
 			std::int64_t  pressedAtMs;
 			std::int64_t  expiresAtMs;
 		};
 
-		// Only the game thread accesses these. Input requests hold the manager mutex
-		// while waiting on that thread, so the polling hook must not acquire it.
-		std::vector<RepeatingKey> g_repeatingKeys;
-		std::uint64_t             g_repeatCutoff = 0;
+		// Only PollKeyboard accesses the held state and the engine input queue.
+		// SKSE tasks can run after input dispatch and lose events at the queue reset.
+		std::vector<RepeatingKey>                            g_repeatingKeys;
+		std::atomic<std::uint64_t>                           g_repeatCutoff{ 0 };
+		std::mutex                                           g_inputTasksMutex;
+		std::vector<std::shared_ptr<MainThread::QueuedTask>> g_inputTasks;
+
+		json RunAtInputPoll(std::function<json()> a_fn)
+		{
+			const auto deadline = steady_clock::now() + seconds(5);
+			auto       invocation = std::make_shared<MainThread::QueuedTask>(std::move(a_fn), deadline);
+			auto       future = invocation->GetFuture();
+			{
+				std::lock_guard lock(g_inputTasksMutex);
+				g_inputTasks.push_back(invocation);
+			}
+			if (future.wait_until(deadline) == std::future_status::ready)
+				return future.get();
+			const bool abandoned = invocation->Abandon();
+			{
+				std::lock_guard lock(g_inputTasksMutex);
+				std::erase(g_inputTasks, invocation);
+			}
+			if (future.wait_for(milliseconds(0)) == std::future_status::ready)
+				return future.get();
+			throw MainThread::TaskTimeout(!abandoned, abandoned ?
+														  "keyboard input polling did not start within 5000ms. Queued input abandoned" :
+														  "keyboard input polling did not finish within 5000ms. Input already started and may still complete");
+		}
 
 		void PollKeyboard(CONTEXT&)
 		{
+			std::vector<std::shared_ptr<MainThread::QueuedTask>> tasks;
+			{
+				std::lock_guard lock(g_inputTasksMutex);
+				tasks.swap(g_inputTasks);
+			}
+			for (const auto& task : tasks)
+				task->Run();
+			const auto cutoff = g_repeatCutoff.load(std::memory_order_acquire);
+			std::erase_if(g_repeatingKeys, [=](const auto& key) { return key.generation <= cutoff; });
 			if (g_repeatingKeys.empty())
 				return;
 			auto* queue = RE::BSInputEventQueue::GetSingleton();
@@ -434,8 +471,7 @@ namespace dvb
 			void RequestLifecycleRelease() noexcept
 			{
 				const auto cutoff = m_latestGeneration.load(std::memory_order_acquire);
-				g_repeatCutoff = cutoff;
-				g_repeatingKeys.clear();
+				g_repeatCutoff.store(cutoff, std::memory_order_release);
 				if (!cutoff)
 					return;
 				RaiseLifecycleCutoff(cutoff);
@@ -452,8 +488,8 @@ namespace dvb
 			QueueResult QueueButton(const KeyboardLease& a_lease, bool a_down, float a_heldSecs)
 			{
 				try {
-					const json result = MainThread::RunAndWait([=]() -> json {
-						if (a_down && a_lease.generation <= g_repeatCutoff)
+					const json result = RunAtInputPoll([=]() -> json {
+						if (a_down && a_lease.generation <= g_repeatCutoff.load(std::memory_order_acquire))
 							throw ToolError(503, "keyboard press cancelled by game load");
 						auto* queue = RE::BSInputEventQueue::GetSingleton();
 						if (!queue)
@@ -461,7 +497,7 @@ namespace dvb
 						if (queue->buttonEventCount >= RE::BSInputEventQueue::MAX_BUTTON_EVENTS)
 							throw ToolError(503, "Skyrim keyboard input queue is full for this frame — retry after the next frame");
 						if (a_down)
-							g_repeatingKeys.push_back({ a_lease.key.scancode, NowMs(), a_lease.expiresAtMs });
+							g_repeatingKeys.push_back({ a_lease.key.scancode, a_lease.generation, NowMs(), a_lease.expiresAtMs });
 						else
 							std::erase_if(g_repeatingKeys, [&](const auto& key) { return key.scancode == a_lease.key.scancode; });
 						queue->AddButtonEvent(RE::INPUT_DEVICE::kKeyboard, 0, a_lease.key.scancode,
