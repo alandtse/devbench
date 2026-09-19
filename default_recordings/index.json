@@ -28,7 +28,8 @@
       "sampleCount": 3829,
       "runtime": [
         "se",
-        "ae"
+        "ae",
+        "vr"
       ],
       "validated": true,
       "format": "devbench-recording-3"
