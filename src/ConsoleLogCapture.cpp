@@ -78,7 +78,7 @@ namespace dvb::ConsoleLogCapture
 		out.engineFrames = g_engineFrames;
 		out.timedOut = g_timedOut;
 		out.sameFrameRisk = g_timedOut || (g_ticks > 0 && g_engineFrames > 0 &&
-		                                   g_samples > 0 && g_engineFrames < g_samples);
+											  g_samples > 0 && g_engineFrames < g_samples);
 
 		auto* cl = RE::ConsoleLog::GetSingleton();
 		if (!cl) {

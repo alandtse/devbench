@@ -167,7 +167,7 @@ namespace dvb
 				MainThread::RunAndWait([]() -> json { ConsoleLogCapture::BeginCapture(); return true; });
 
 				const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-				auto pump = [&](const std::string& c, int a_ticks) {
+				auto       pump = [&](const std::string& c, int a_ticks) {
 					if (auto* t2 = SKSE::GetTaskInterface())
 						t2->AddTask([c]() { RE::Console::ExecuteCommand(c.c_str()); });
 					for (int i = 0; i < a_ticks; ++i) {

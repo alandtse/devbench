@@ -75,10 +75,10 @@ namespace dvb::ConsoleLogCapture
 		bool        lastMessageHasBegin = false;
 
 		// --- sampler health ---
-		std::size_t ringLines = 0;      ///< lines in devbench's scrollback
-		std::size_t samples = 0;        ///< distinct lines recorded this capture
-		std::size_t ticks = 0;          ///< times the sampler looked
-		std::size_t engineFrames = 0;   ///< distinct ENGINE frames those ticks covered
+		std::size_t ringLines = 0;     ///< lines in devbench's scrollback
+		std::size_t samples = 0;       ///< distinct lines recorded this capture
+		std::size_t ticks = 0;         ///< times the sampler looked
+		std::size_t engineFrames = 0;  ///< distinct ENGINE frames those ticks covered
 		bool        sameFrameRisk = false;
 		bool        timedOut = false;
 	};
