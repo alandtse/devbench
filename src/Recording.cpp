@@ -2,6 +2,7 @@
 
 #include "GameEvents.h"
 #include "GameState.h"
+#include "InputHotkeys.h"
 #include "MainThread.h"
 #include "RecordingActivity.h"
 #include "ToolExtensions.h"
@@ -69,6 +70,18 @@ namespace dvb::Recording
 		// hook — already carry the trajectory, so re-sampling would double it. Lets a user record
 		// a session that plays back an existing recipe and embed it cleanly (composition).
 		std::atomic<bool> g_replaying{ false };
+
+		std::vector<int> ReservedInputKeys()
+		{
+			int  recordKey = 0, replayKey = 0;
+			bool recordShift = false, replayShift = false;
+			GetHotkeys(recordKey, recordShift, replayKey, replayShift);
+			std::vector<int> keys;
+			for (const int key : { recordKey, replayKey })
+				if (key > 0)
+					keys.push_back(key);
+			return keys;
+		}
 
 		// Set when a coc/cow console command is captured mid-recording (the player COMMANDED a cell
 		// transition). The cell-load that follows consumes it so NoteCellChange doesn't ALSO emit a
@@ -931,6 +944,9 @@ namespace dvb::Recording
 			if (rec.worker.joinable())
 				rec.worker.join();  // sampler done → samples are stable, no lock needed below
 
+			const json collapsedActivity = CollapseConsoleTyping(json(rec.activityEvents));
+			rec.activityEvents.assign(collapsedActivity.begin(), collapsedActivity.end());
+
 			const long recordedMs = static_cast<long>(
 				duration_cast<milliseconds>(steady_clock::now() - rec.startTick).count());
 			json     scenario;
@@ -1081,8 +1097,12 @@ namespace dvb::Recording
 		if (!a_events || !generation ||
 			g_replaying.load(std::memory_order_relaxed))
 			return;
-		for (const auto* event = *a_events; event; event = event->next)
-			AppendActivity(SerializeInputEvent(*event), generation);
+		const std::vector<int> reservedKeys = ReservedInputKeys();
+		for (const auto* event = *a_events; event; event = event->next) {
+			json serialized = SerializeInputEvent(*event);
+			if (!IsKeyEventFor(serialized, reservedKeys))
+				AppendActivity(std::move(serialized), generation);
+		}
 	}
 
 	void NoteMenuState(const std::string& a_menuName, bool a_opening)
@@ -1474,7 +1494,8 @@ namespace dvb::Recording
 		json              vrPlan;
 		try {
 			activityPlan = InterleaveReplayableActivity(rec["steps"],
-				rec.value("activityEvents", json::array()), inputOwner, replayInputs);
+				rec.value("activityEvents", json::array()), inputOwner, replayInputs,
+				ReservedInputKeys());
 			vrPlan = BuildVRTrackedSetReplay(rec.value("trackingSamples", json::array()),
 				rec.value("activityEvents", json::array()), inputOwner, replayInputs);
 		} catch (const json::exception& e) {
