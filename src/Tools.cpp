@@ -1655,6 +1655,11 @@ namespace dvb
 			return v.get<uint64_t>();
 		}
 
+		// runId of the replay currently teleporting the player (0 = none). Two replays at once
+		// interleave setpos commands and fight over the player's position, so a second replay
+		// is refused while one is in flight rather than queued.
+		std::atomic<uint64_t> g_activeReplayRunId{ 0 };
+
 		// Tracks in-flight/completed async runs — record{action:"replay"} (async by default) and
 		// scenario{action:"run", async:true} share this registry and its runId space, so a runId
 		// from either polls correctly via either tool's action="status". Entries are pruned once
@@ -2558,7 +2563,12 @@ namespace dvb
 					for (const auto& s : steps)
 						if (s.contains("wait"))
 							estMs += s["wait"].get<long>();
-					const uint64_t    runId = RunRegistry::Get().NextId();
+					const uint64_t runId = RunRegistry::Get().NextId();
+					{
+						uint64_t idle = 0;
+						if (!g_activeReplayRunId.compare_exchange_strong(idle, runId))
+							throw ToolError(409, std::format("replay blocked: replay run {} is still in progress — wait for it to finish (poll record{{action:'status', runId:{}}}) before starting another", idle, idle));
+					}
 					const json        activity = plan.value("activity", json::object());
 					const std::string inputOwner = plan.value("inputOwner", std::string{});
 					Recording::Notify(std::format("devbench: replaying {} steps (~{:.1f}s)", steps.size(), estMs / 1000.0));
@@ -2574,6 +2584,11 @@ namespace dvb
 					const json coupling = plan.value("coupling", json::object());
 					auto       runReplay = [&a_registry, &a_events, a_ctx, steps, runId, coupling,
 											   activity, inputOwner]() -> json {
+						struct ActiveReplayGuard
+						{
+							uint64_t id;
+							~ActiveReplayGuard() { g_activeReplayRunId.compare_exchange_strong(id, 0); }
+						} activeReplayGuard{ runId };
 						const auto releaseRecordedInput = [&]() -> json {
 							if (inputOwner.empty())
 								return json{ { "needed", false } };
@@ -2651,6 +2666,8 @@ namespace dvb
 							}
 						}).detach();
 					} catch (const std::exception& e) {
+						uint64_t expected = runId;
+						g_activeReplayRunId.compare_exchange_strong(expected, 0);
 						RunRegistry::Get().Fail(runId, e.what());
 						a_events.Publish("replay.finished", json{ { "runId", runId }, { "ok", false },
 																{ "error", "could not start asynchronous replay worker" } });
