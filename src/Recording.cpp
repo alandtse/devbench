@@ -1178,7 +1178,7 @@ namespace dvb::Recording
 			// afterward. The reverse order made the wait pointless -- assert fired on whatever
 			// was open at this exact instant, before the wait ever got a chance to run.
 			a_steps.push_back(json{ { "waitUntil", "noBlockingMenu" }, { "timeoutMs", 5000 }, { "pollMs", 100 } });
-			a_steps.push_back(json{ { "assert", "noBlockingMenu" } });
+			a_steps.push_back(json{ { "assert", "noBlockingMenu" }, { "closeModals", a_args.value("closeMenus", false) } });
 			if (a_cp.contains("pov"))
 				a_steps.push_back(json{ { "tool", "camera" }, { "args", json{ { "action", "setPov" }, { "pov", a_cp["pov"] } } } });
 			if (const long settleMs = a_cp.value("settleMs", a_defaultSettleMs); settleMs > 0)
@@ -1450,7 +1450,7 @@ namespace dvb::Recording
 		// (without the in-game guard, such a replay silently no-ops).
 		const bool allowsInitialMenus = meta.value("startState", std::string{}) == "noPlayer";
 		if (!allowsInitialMenus)
-			steps.push_back(json{ { "assert", "noBlockingMenu" } });
+			steps.push_back(json{ { "assert", "noBlockingMenu" }, { "closeModals", a_args.value("closeMenus", false) } });
 
 		// Copy the trajectory, injecting a load-settle after any captured cell transition (coc/cow):
 		// the destination cell must finish loading before the following setpos teleports the player,

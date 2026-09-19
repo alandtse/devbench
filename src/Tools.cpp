@@ -1614,6 +1614,29 @@ namespace dvb
 			}
 		}
 
+		// Blocking menus left after optionally cancelling an open modal (cancel, never affirm). Only
+		// a modal-only set is cleared; any other blocking menu is reported untouched. The modal
+		// dismisses through the UI queue on a later frame, so poll (up to ~1s) rather than
+		// re-checking instantly, which would still see the closing modal.
+		std::vector<std::string> BlockingMenusAfterClosingModals(bool a_closeModals)
+		{
+			auto blocking = BlockingMenus();
+			if (blocking.empty() || !a_closeModals)
+				return blocking;
+			const bool allModal = std::all_of(blocking.begin(), blocking.end(),
+				[](const std::string& n) { return n == RE::MessageBoxMenu::MENU_NAME; });
+			if (!allModal)
+				return blocking;
+			CancelActiveModal();
+			for (int i = 0; i < 20; ++i) {
+				blocking = BlockingMenus();
+				if (blocking.empty())
+					break;
+				std::this_thread::sleep_for(milliseconds(50));
+			}
+			return blocking;
+		}
+
 		// Live-state conditions for waitUntil. playerLoaded marshals to the main thread;
 		// a mid-load stall (RunAndWait 504) just means "not yet" → keep polling. Menu
 		// conditions read the thread-safe tracked set (no marshal).
@@ -1957,7 +1980,7 @@ namespace dvb
 							r["assert"] = what;
 							if (what == "noBlockingMenu") {
 								// Fail (409) if a menu/modal would eat the trajectory; name the offenders.
-								const auto blocking = BlockingMenus();
+								const auto blocking = BlockingMenusAfterClosingModals(step.value("closeModals", false));
 								r["ok"] = blocking.empty();
 								if (!blocking.empty()) {
 									r["openMenus"] = blocking;
@@ -2516,7 +2539,7 @@ namespace dvb
 								{ "goldens", json{ { "type", "object" }, { "description", "replay: per-checkpoint SSIM comparison config, keyed by checkpoint id — {\"<id>\": {golden, threshold?, regions?}} — see the `capture` tool. Never stored in the recording itself; supply it fresh per replay so the same recording can check against different variants' goldens." } } },
 								{ "coupling", json{ { "type", "string" }, { "enum", json::array({ "anchored", "cell", "worldspace" }) }, { "description", "replay: override the recipe's coupling tier — run looser than the producer signaled (worldspace skips the scene restore)" } } },
 								{ "force", json{ { "type", "boolean" }, { "description", "replay: proceed even if the scene doesn't match the recording — report the mismatch as a warning instead of aborting (default false)" } } },
-								{ "closeMenus", json{ { "type", "boolean" }, { "description", "replay: if a MODAL is open at start, cancel it and continue instead of erroring; non-modal gameplay menus still error (default false)" } } },
+								{ "closeMenus", json{ { "type", "boolean" }, { "description", "replay: cancel an open MODAL (e.g. the Survival Mode prompt a scene transition can raise) instead of erroring, both at start and at the post-restore menu guard; non-modal gameplay menus still error (default false)" } } },
 								{ "async", json{ { "type", "boolean" }, { "description", "replay: return {queued:true, runId} immediately and run in the background (default true); false blocks and returns the result directly" } } },
 								{ "runId", json{ { "type", "integer" }, { "description", "status: poll an async replay run started earlier (from replay's 'runId')" } } },
 							} },
@@ -2533,25 +2556,9 @@ namespace dvb
 					// load/coc clears menus, so those defer to the in-trajectory guard step). closeMenus
 					// clears a blocking MODAL (cancel, never affirm); a non-modal menu still errors.
 					if (!plan.value("restored", false) && !plan.value("allowsInitialMenus", false)) {
-						auto blocking = BlockingMenus();
-						if (!blocking.empty()) {
-							const bool allModal = std::all_of(blocking.begin(), blocking.end(),
-								[](const std::string& n) { return n == RE::MessageBoxMenu::MENU_NAME; });
-							if (a_args.value("closeMenus", false) && allModal) {
-								CancelActiveModal();
-								// The modal dismisses through the UI queue on a later frame, so poll (up
-								// to ~1s) rather than re-checking instantly — an instant check still sees
-								// the closing modal and would 409 spuriously.
-								for (int i = 0; i < 20; ++i) {
-									blocking = BlockingMenus();
-									if (blocking.empty())
-										break;
-									std::this_thread::sleep_for(milliseconds(50));
-								}
-							}
-							if (!blocking.empty())
-								throw ToolError(409, std::format("replay blocked: menu(s) open: [{}] — close them (menu tool) then retry; a modal can be cleared with closeMenus:true", JoinNames(blocking)));
-						}
+						const auto blocking = BlockingMenusAfterClosingModals(a_args.value("closeMenus", false));
+						if (!blocking.empty())
+							throw ToolError(409, std::format("replay blocked: menu(s) open: [{}] — close them (menu tool) then retry; a modal can be cleared with closeMenus:true", JoinNames(blocking)));
 					}
 					const json steps = plan.value("steps", json::array());
 					long       estMs = 0;  // sum of wait steps ≈ replay duration

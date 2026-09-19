@@ -442,7 +442,7 @@
             "type": "boolean"
           },
           "closeMenus": {
-            "description": "replay: if a MODAL is open at start, cancel it and continue instead of erroring; non-modal gameplay menus still error (default false)",
+            "description": "replay: cancel an open MODAL (e.g. the Survival Mode prompt a scene transition can raise) instead of erroring, both at start and at the post-restore menu guard; non-modal gameplay menus still error (default false)",
             "type": "boolean"
           },
           "coupling": {
