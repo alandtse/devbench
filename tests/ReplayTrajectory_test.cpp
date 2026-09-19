@@ -175,3 +175,33 @@ TEST_CASE("unsorted keyframes are ordered and duplicates collapse")
 	CHECK(t.EndMs() == 100);
 	CHECK(Near(t.Sample(100).x, 20.0));
 }
+
+TEST_CASE("legacy waits scale to the recorded duration without drifting")
+{
+	json steps = json::array();
+	for (int i = 0; i < 1000; ++i)
+		steps.push_back(json{ { "pose", json::array({ i, 0, 0, 0, 0 }) }, { "wait", 10 } });
+	const json   scaled = dvb::Recording::ScaleWaitsToRecordedDuration(steps, 26500);
+	std::int64_t total = 0;
+	for (const auto& step : scaled)
+		total += step["wait"].get<std::int64_t>();
+	CHECK(total == 26500);
+	CHECK(scaled[0]["pose"] == steps[0]["pose"]);
+	const auto keys = ExtractKeyframes(scaled);
+	CHECK(keys.size() == 1000);
+	CHECK(keys.back().tMs >= 26000);
+}
+
+TEST_CASE("wait scaling leaves atMs recordings and unusable durations alone")
+{
+	const json withAt = json::array({
+		json{ { "atMs", 0 }, { "pose", json::array({ 0, 0, 0, 0, 0 }) }, { "wait", 10 } },
+		json{ { "atMs", 10 }, { "pose", json::array({ 1, 0, 0, 0, 0 }) }, { "wait", 10 } },
+	});
+	CHECK(dvb::Recording::ScaleWaitsToRecordedDuration(withAt, 5000) == withAt);
+
+	const json legacy = json::array({ json{ { "pose", json::array({ 0, 0, 0, 0, 0 }) }, { "wait", 10 } } });
+	CHECK(dvb::Recording::ScaleWaitsToRecordedDuration(legacy, 0) == legacy);
+	CHECK(dvb::Recording::ScaleWaitsToRecordedDuration(legacy, 10) == legacy);  // never shortens
+	CHECK(dvb::Recording::ScaleWaitsToRecordedDuration(json::object(), 5000) == json::object());
+}

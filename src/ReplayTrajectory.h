@@ -58,6 +58,11 @@ namespace dvb::Recording
 		Interpolation             m_mode;
 	};
 
+	// Recordings that predate `atMs` carry only a fixed per-sample wait, which undercounts real time
+	// (the old per-sample teleport latency made up the difference). Scales those waits so the
+	// clock spans a_recordedMs; recordings with `atMs`, or no recorded duration, are unchanged.
+	json ScaleWaitsToRecordedDuration(const json& a_steps, std::int64_t a_recordedMs);
+
 	// Signed shortest rotation from a_fromDeg to a_toDeg, in (-180, 180].
 	double ShortestArcDeltaDeg(double a_fromDeg, double a_toDeg);
 }

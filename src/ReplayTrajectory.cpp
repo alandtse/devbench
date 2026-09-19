@@ -66,6 +66,36 @@ namespace dvb::Recording
 		return keyframes;
 	}
 
+	json ScaleWaitsToRecordedDuration(const json& a_steps, std::int64_t a_recordedMs)
+	{
+		if (!a_steps.is_array() || a_recordedMs <= 0)
+			return a_steps;
+		std::int64_t totalWaitMs = 0;
+		for (const auto& step : a_steps) {
+			if (step.is_object() && step.contains("atMs"))
+				return a_steps;
+			if (step.is_object() && step.contains("wait") && step["wait"].is_number())
+				totalWaitMs += std::max<std::int64_t>(0, step["wait"].get<std::int64_t>());
+		}
+		if (totalWaitMs <= 0 || a_recordedMs <= totalWaitMs)
+			return a_steps;
+
+		const double factor = static_cast<double>(a_recordedMs) / static_cast<double>(totalWaitMs);
+		json         scaled = a_steps;
+		double       exact = 0.0;
+		std::int64_t emitted = 0;
+		for (auto& step : scaled) {
+			if (!step.is_object() || !step.contains("wait") || !step["wait"].is_number())
+				continue;
+			// Cumulative rounding keeps the scaled clock within half a millisecond of the target.
+			exact += static_cast<double>(std::max<std::int64_t>(0, step["wait"].get<std::int64_t>())) * factor;
+			const auto target = static_cast<std::int64_t>(std::llround(exact));
+			step["wait"] = target - emitted;
+			emitted = target;
+		}
+		return scaled;
+	}
+
 	Trajectory::Trajectory(std::vector<PoseKeyframe> a_keyframes, Interpolation a_mode) :
 		m_keyframes(std::move(a_keyframes)), m_mode(a_mode)
 	{

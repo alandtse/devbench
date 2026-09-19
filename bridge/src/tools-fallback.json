@@ -466,6 +466,10 @@
             "description": "checkpoint: unique id for this checkpoint (required)",
             "type": "string"
           },
+          "interpolate": {
+            "description": "replay: drive the player along the recorded path once per engine frame with interpolated position/yaw/pitch on an absolute clock, instead of one teleport per sample (SE/AE only; VR keeps per-sample teleports). Result carries poseDriver stats; false keeps per-sample teleports (default true)",
+            "type": "boolean"
+          },
           "intervalMs": {
             "description": "start: pose sample period in ms (default = config recordIntervalMs, min 10)",
             "type": "integer"
