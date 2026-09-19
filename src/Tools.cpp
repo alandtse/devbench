@@ -1655,10 +1655,19 @@ namespace dvb
 			return v.get<uint64_t>();
 		}
 
-		// runId of the replay currently teleporting the player (0 = none). Two replays at once
-		// interleave setpos commands and fight over the player's position, so a second replay
-		// is refused while one is in flight rather than queued.
 		std::atomic<uint64_t> g_activeReplayRunId{ 0 };
+
+		// Returns 0 on success, else the runId of the replay already in flight.
+		uint64_t ClaimActiveReplay(uint64_t a_runId)
+		{
+			uint64_t active = 0;
+			return g_activeReplayRunId.compare_exchange_strong(active, a_runId) ? 0 : active;
+		}
+
+		void ReleaseActiveReplay(uint64_t a_runId)
+		{
+			g_activeReplayRunId.compare_exchange_strong(a_runId, 0);
+		}
 
 		// Tracks in-flight/completed async runs — record{action:"replay"} (async by default) and
 		// scenario{action:"run", async:true} share this registry and its runId space, so a runId
@@ -2564,12 +2573,9 @@ namespace dvb
 						if (s.contains("wait"))
 							estMs += s["wait"].get<long>();
 					const uint64_t runId = RunRegistry::Get().NextId();
-					{
-						uint64_t idle = 0;
-						if (!g_activeReplayRunId.compare_exchange_strong(idle, runId)) {
-							Recording::Notify("devbench: can't replay — a replay is already playing");
-							throw ToolError(409, std::format("replay blocked: replay run {} is still in progress — wait for it to finish (poll record{{action:'status', runId:{}}}) before starting another", idle, idle));
-						}
+					if (const uint64_t active = ClaimActiveReplay(runId)) {
+						Recording::Notify("devbench: can't replay — a replay is already playing");
+						throw ToolError(409, std::format("replay blocked: replay run {} is still in progress — wait for it to finish (poll record{{action:'status', runId:{}}}) before starting another", active, active));
 					}
 					const json        activity = plan.value("activity", json::object());
 					const std::string inputOwner = plan.value("inputOwner", std::string{});
@@ -2589,7 +2595,7 @@ namespace dvb
 						struct ActiveReplayGuard
 						{
 							uint64_t id;
-							~ActiveReplayGuard() { g_activeReplayRunId.compare_exchange_strong(id, 0); }
+							~ActiveReplayGuard() { ReleaseActiveReplay(id); }
 						} activeReplayGuard{ runId };
 						const auto releaseRecordedInput = [&]() -> json {
 							if (inputOwner.empty())
@@ -2668,8 +2674,7 @@ namespace dvb
 							}
 						}).detach();
 					} catch (const std::exception& e) {
-						uint64_t expected = runId;
-						g_activeReplayRunId.compare_exchange_strong(expected, 0);
+						ReleaseActiveReplay(runId);
 						RunRegistry::Get().Fail(runId, e.what());
 						a_events.Publish("replay.finished", json{ { "runId", runId }, { "ok", false },
 																{ "error", "could not start asynchronous replay worker" } });
