@@ -2512,7 +2512,8 @@ namespace dvb
 			"regions?}}; a checkpoint with no matching entry is captured but not scored. The "
 			"result's top-level 'checkpoints' array rolls up every capture step into "
 			"{id, ok, path, inconclusive, inconclusiveReason?, ssim?, threshold?, passed?} — read "
-			"this instead of filtering the (often much larger) 'results' step transcript yourself.";
+			"this instead of filtering the (often much larger) 'results' step transcript yourself."
+			" Only one replay runs at a time: starting another while one is in flight is refused with 409 naming the active runId.";
 		record.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
