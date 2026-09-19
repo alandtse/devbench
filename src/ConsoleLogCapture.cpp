@@ -1,57 +1,124 @@
 #include "ConsoleLogCapture.h"
 
+#include "GameState.h"
+
 #include <cstring>
+#include <deque>
+#include <string>
 
 namespace dvb::ConsoleLogCapture
 {
+	namespace
+	{
+		// Main thread only - BeginCapture, SampleOnce and ReadFenced all run there.
+		std::deque<std::string> g_ring;
+		std::string             g_lastSeen;
+		std::size_t             g_samples = 0;
+		std::size_t             g_ticks = 0;
+		std::size_t             g_engineFrames = 0;
+		int                     g_lastFrame = -1;
+		bool                    g_sawEndMarker = false;
+		bool                    g_timedOut = false;
+
+		std::string CurrentLine()
+		{
+			auto* cl = RE::ConsoleLog::GetSingleton();
+			if (!cl)
+				return {};
+			return std::string(cl->lastMessage, ::strnlen(cl->lastMessage, sizeof(cl->lastMessage)));
+		}
+	}
+
+	void BeginCapture()
+	{
+		g_ring.clear();
+		// Seed with the line already showing, so the capture does not open by recording a
+		// stale message as if it were this command's output.
+		g_lastSeen = CurrentLine();
+		g_samples = 0;
+		g_ticks = 0;
+		g_engineFrames = 0;
+		g_lastFrame = -1;
+		g_sawEndMarker = false;
+		g_timedOut = false;
+	}
+
+	bool SampleOnce()
+	{
+		++g_ticks;
+		const int f = game::CurrentFrame();
+		if (f != g_lastFrame) {
+			++g_engineFrames;
+			g_lastFrame = f;
+		}
+		std::string now = CurrentLine();
+		if (!now.empty() && now != g_lastSeen) {
+			g_lastSeen = now;
+			++g_samples;
+			g_ring.push_back(now);
+			while (g_ring.size() > kRingMax)
+				g_ring.pop_front();
+			if (now.find(kMarkerEnd) != std::string::npos)
+				g_sawEndMarker = true;
+		}
+		return g_sawEndMarker;
+	}
+
+	void MarkTimedOut()
+	{
+		g_timedOut = true;
+	}
+
 	Result ReadFenced(size_t a_maxLines)
 	{
 		Result out;
-		auto*  cl = RE::ConsoleLog::GetSingleton();
-		if (!cl)
-			return out;
-		const char* raw = cl->buffer.c_str();  // ConsoleLog::buffer — the accumulated scrollback
-		if (!raw || !*raw)
-			return out;
-		const std::string buf(raw);
+		out.ringLines = g_ring.size();
+		out.samples = g_samples;
+		out.ticks = g_ticks;
+		out.engineFrames = g_engineFrames;
+		out.timedOut = g_timedOut;
+		out.sameFrameRisk = g_timedOut || (g_ticks > 0 && g_engineFrames > 0 &&
+		                                   g_samples > 0 && g_engineFrames < g_samples);
 
-		// Most recent window: the LAST begin marker, then the first end marker after it.
-		const size_t b = buf.rfind(kMarkerBegin);
-		if (b == std::string::npos)
+		auto* cl = RE::ConsoleLog::GetSingleton();
+		if (!cl) {
+			out.consoleLogNull = true;
+			return out;
+		}
+		out.lastMessage.assign(cl->lastMessage, ::strnlen(cl->lastMessage, sizeof(cl->lastMessage)));
+		out.lastMessageHasBegin = out.lastMessage.find(kMarkerBegin) != std::string::npos;
+		const char* raw = cl->buffer.c_str();
+		if (!raw || !*raw) {
+			out.bufferEmpty = true;
+		} else {
+			const std::string buf(raw);
+			out.bufferLen = buf.size();
+			out.bufferHasBegin = buf.find(kMarkerBegin) != std::string::npos;
+		}
+
+		std::size_t b = g_ring.size();
+		for (std::size_t i = g_ring.size(); i-- > 0;) {
+			if (g_ring[i].find(kMarkerBegin) != std::string::npos) {
+				b = i;
+				break;
+			}
+		}
+		if (b >= g_ring.size())
 			return out;
 		out.sawBegin = true;
-		const size_t e = buf.find(kMarkerEnd, b + std::strlen(kMarkerBegin));
 
-		// Output is between the end of the begin-marker line and the start of the end-marker
-		// line (both marker lines excluded).
-		size_t start = buf.find('\n', b);
-		start = (start == std::string::npos) ? buf.size() : start + 1;
-		size_t stop;
-		if (e == std::string::npos) {
-			stop = buf.size();  // end marker not in the buffer yet (still draining / evicted)
-		} else {
-			out.sawEnd = true;
-			const size_t ls = buf.rfind('\n', e);  // start of the end-marker line
-			stop = (ls == std::string::npos || ls < start) ? start : ls;
-		}
-
-		// Split [start, stop) into trimmed, non-empty lines.
-		const std::string region = buf.substr(start, stop - start);
-		std::string       line;
-		auto              flush = [&]() {
-			if (!line.empty()) {
-				out.lines.push_back(line);
-				line.clear();
+		std::size_t e = g_ring.size();
+		for (std::size_t i = b + 1; i < g_ring.size(); ++i) {
+			if (g_ring[i].find(kMarkerEnd) != std::string::npos) {
+				e = i;
+				out.sawEnd = true;
+				break;
 			}
-		};
-		for (const char c : region) {
-			if (c == '\n' || c == '\r')
-				flush();
-			else
-				line += c;
 		}
-		flush();
-
+		for (std::size_t i = b + 1; i < e; ++i) {
+			if (!g_ring[i].empty())
+				out.lines.push_back(g_ring[i]);
+		}
 		if (out.lines.size() > a_maxLines)
 			out.lines.erase(out.lines.begin(), out.lines.end() - static_cast<std::ptrdiff_t>(a_maxLines));
 		return out;
