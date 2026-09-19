@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <mutex>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -85,10 +86,8 @@ namespace dvb
 			const std::string action = a_args.value("action", std::string("exec"));
 
 			if (action == "read") {
-				// Slice devbench's own scrollback between the fence markers, on the main thread
-				// (that is where the sampler writes it). markersFound=true means `lines` is exactly
-				// the fenced command's output. ConsoleLog::buffer is NOT the scrollback and is
-				// always empty - see ConsoleLogCapture.h (issue #83).
+				// Slice devbench's own scrollback between the fence markers, on the main thread:
+				// that is where the sampler writes it. markersFound means `lines` is the fenced output.
 				return MainThread::RunAndWait([]() -> json {
 					const auto r = ConsoleLogCapture::ReadFenced(200);
 					json       arr = json::array();
@@ -100,8 +99,7 @@ namespace dvb
 						{ "sawEnd", r.sawEnd },
 						{ "count", arr.size() },
 						{ "lines", std::move(arr) },
-						// Issue #83: why a capture came back empty — which source, if either,
-						// actually held the text at read time.
+						// What each source held at read time, and the raw sampler counts.
 						{ "diag", json{
 									  { "consoleLogNull", r.consoleLogNull },
 									  { "bufferEmpty", r.bufferEmpty },
@@ -113,7 +111,6 @@ namespace dvb
 									  { "samples", r.samples },
 									  { "ticks", r.ticks },
 									  { "engineFrames", r.engineFrames },
-									  { "sameFrameRisk", r.sameFrameRisk },
 									  { "timedOut", r.timedOut },
 								  } },
 					};
@@ -150,53 +147,50 @@ namespace dvb
 
 			const bool capture = a_args.contains("capture") && Truthy(a_args["capture"]);
 
-			// ExecuteCommand is deferred (GFx console drains queued commands on a later
-			// tick). Fence the real command between two invalid marker commands so a later
-			// action='read' can slice devbench's scrollback between their echoed tokens.
-			// Capture `command` by value so it outlives this lambda.
+			// ExecuteCommand is deferred, so the begin marker, the command and the end marker are
+			// printed in that order and a later read can slice between the echoed tokens.
 			if (!capture) {
 				task->AddTask([command]() { RE::Console::ExecuteCommand(command.c_str()); });
 			} else {
-				// ⛔ THE THREE COMMANDS MUST BE QUEUED ON SEPARATE TICKS, AND THAT IS THE WHOLE
-				// TRICK. Queued together they are drained together: the console prints the begin
-				// marker, the output and the end marker inside ONE frame, so `lastMessage` only
-				// ever holds the last of them. Measured - a capture came back with ticks 2,
-				// samples 1, and that single sample was the END marker. Nothing sampling
-				// `lastMessage` can recover the other two after the fact, so they are spaced out
-				// instead: queue one, sample until it lands, then queue the next.
+				// The three commands go on SEPARATE ticks. Queued together they drain together and
+				// `lastMessage` keeps only the last of them, losing the command's own output.
+				// The mutex is held for the whole sequence so a second capture cannot clear the
+				// scrollback while this one is still filling it.
+				std::lock_guard<std::mutex> owned(ConsoleLogCapture::CaptureMutex());
 				MainThread::RunAndWait([]() -> json { ConsoleLogCapture::BeginCapture(); return true; });
 
 				const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-				auto       pump = [&](const std::string& c, int a_ticks) {
+				// a_awaitEnd: the last pump succeeds only if the end marker is actually sampled.
+				auto pump = [&](const std::string& c, int a_ticks, bool a_awaitEnd) {
 					if (auto* t2 = SKSE::GetTaskInterface())
 						t2->AddTask([c]() { RE::Console::ExecuteCommand(c.c_str()); });
 					for (int i = 0; i < a_ticks; ++i) {
 						if (std::chrono::steady_clock::now() >= deadline)
 							return false;
 						std::this_thread::sleep_for(std::chrono::milliseconds(8));
+						bool sawEnd = false;
 						try {
-							MainThread::RunAndWait([]() -> json { return ConsoleLogCapture::SampleOnce(); },
-								std::chrono::milliseconds(2000));
+							sawEnd = MainThread::RunAndWait(
+								[]() -> json { return ConsoleLogCapture::SampleOnce(); },
+								std::chrono::milliseconds(2000))
+									 .get<bool>();
 						} catch (...) {
 							return false;  // main thread stalled (a load screen); stop sampling
 						}
+						if (sawEnd)
+							return true;
 					}
-					return true;
+					return !a_awaitEnd;
 				};
-				// ~0.5 s for each marker to land, ~1.2 s of settle for the command's own output
-				// (a line that arrives a frame later is still caught).
-				bool ok = pump(ConsoleLogCapture::kMarkerBegin, 60);
-				ok = pump(command, 150) && ok;
-				ok = pump(ConsoleLogCapture::kMarkerEnd, 60) && ok;
+				// ~0.5 s for each marker to land, ~1.2 s of settle for the command's own output.
+				bool ok = pump(ConsoleLogCapture::kMarkerBegin, 60, false);
+				ok = pump(command, 150, false) && ok;
+				ok = pump(ConsoleLogCapture::kMarkerEnd, 60, true) && ok;
+				// Recorded without another main-thread wait: the usual reason to be here is that the
+				// main thread is not answering.
 				if (!ok)
-					MainThread::RunAndWait([]() -> json { ConsoleLogCapture::MarkTimedOut(); return true; });
+					ConsoleLogCapture::MarkTimedOut();
 			}
-
-			// A capture is complete only once the end marker has been printed AND sampled, so
-			// hold the listener here until the sampler closes the window (or gives up on its own
-			// frame deadline). Without this a caller's `read` can arrive between frames and slice
-			// a window that is still filling. The MAIN thread is never blocked - only this
-			// listener thread sleeps, and only while a capture is armed.
 
 			return json{ { "queued", true }, { "command", command }, { "capturing", capture } };
 		}
@@ -2257,16 +2251,15 @@ namespace dvb
 		console.name = "console";
 		console.description =
 			"Run a Skyrim console command. action='exec' (default) queues `command` onto the main "
-			"thread (runs next tick). With capture=true it is fenced between marker commands; a "
-			"later action='read' slices devbench's own console scrollback between the markers and "
-			"returns the command's output as { markersFound, lines:[…] }. exec returns once the "
-			"end marker has been sampled, so read can follow immediately. Useful for printing "
-			"commands (getav, getgs, getpos). ⚠ The scrollback is sampled once per frame, so a "
-			"command that prints SEVERAL lines in a single frame (e.g. `help`) comes back with "
-			"only the last of them; one line per frame (getav, getpos, getgs) is exact, and "
-			"diag.sameFrameRisk flags a window that closed on its deadline. "
+			"thread (runs next tick). With capture=true it is fenced between marker commands and "
+			"exec returns once the end marker has been sampled, so a following action='read' slices "
+			"devbench's console scrollback between the markers and returns the command's output as "
+			"{ markersFound, lines:[...] }. Useful for printing commands (getav, getgs, getpos). "
+			"The scrollback is sampled once per frame, so a command that prints SEVERAL lines in a "
+			"single frame (e.g. `help`) comes back with only the last of them; one line per frame is "
+			"exact. diag.timedOut means the end marker never arrived and `lines` may be incomplete. "
 			"`save <name>`/`load <name>` are rerouted to the `game` tool's BGSSaveLoadManager "
-			"path and return { redirected:'game' } — running them as raw console commands "
+			"path and return { redirected:'game' } - running them as raw console commands "
 			"deadlocks the engine (SkyrimVM::Freeze vs blocked main loop).";
 		console.inputSchema = json{
 			{ "type", "object" },

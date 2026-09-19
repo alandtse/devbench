@@ -2,15 +2,17 @@
 
 #include "GameState.h"
 
+#include <atomic>
 #include <cstring>
 #include <deque>
+#include <mutex>
 #include <string>
 
 namespace dvb::ConsoleLogCapture
 {
 	namespace
 	{
-		// Main thread only - BeginCapture, SampleOnce and ReadFenced all run there.
+		// Main thread only, except g_timedOut and g_captureMutex.
 		std::deque<std::string> g_ring;
 		std::string             g_lastSeen;
 		std::size_t             g_samples = 0;
@@ -18,7 +20,8 @@ namespace dvb::ConsoleLogCapture
 		std::size_t             g_engineFrames = 0;
 		int                     g_lastFrame = -1;
 		bool                    g_sawEndMarker = false;
-		bool                    g_timedOut = false;
+		std::atomic<bool>       g_timedOut{ false };
+		std::mutex              g_captureMutex;
 
 		std::string CurrentLine()
 		{
@@ -29,18 +32,23 @@ namespace dvb::ConsoleLogCapture
 		}
 	}
 
+	std::mutex& CaptureMutex()
+	{
+		return g_captureMutex;
+	}
+
 	void BeginCapture()
 	{
 		g_ring.clear();
-		// Seed with the line already showing, so the capture does not open by recording a
-		// stale message as if it were this command's output.
+		// Seed with the line already showing, so the capture does not open by recording a stale
+		// message as this command's output.
 		g_lastSeen = CurrentLine();
 		g_samples = 0;
 		g_ticks = 0;
 		g_engineFrames = 0;
 		g_lastFrame = -1;
 		g_sawEndMarker = false;
-		g_timedOut = false;
+		g_timedOut.store(false, std::memory_order_relaxed);
 	}
 
 	bool SampleOnce()
@@ -66,7 +74,7 @@ namespace dvb::ConsoleLogCapture
 
 	void MarkTimedOut()
 	{
-		g_timedOut = true;
+		g_timedOut.store(true, std::memory_order_relaxed);
 	}
 
 	Result ReadFenced(size_t a_maxLines)
@@ -76,9 +84,7 @@ namespace dvb::ConsoleLogCapture
 		out.samples = g_samples;
 		out.ticks = g_ticks;
 		out.engineFrames = g_engineFrames;
-		out.timedOut = g_timedOut;
-		out.sameFrameRisk = g_timedOut || (g_ticks > 0 && g_engineFrames > 0 &&
-											  g_samples > 0 && g_engineFrames < g_samples);
+		out.timedOut = g_timedOut.load(std::memory_order_relaxed);
 
 		auto* cl = RE::ConsoleLog::GetSingleton();
 		if (!cl) {
