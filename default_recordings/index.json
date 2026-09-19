@@ -10,9 +10,28 @@
       "interior": false,
       "durationMs": 90611,
       "sampleCount": 3397,
-      "runtime": ["se", "ae"],
+      "runtime": [
+        "se",
+        "ae"
+      ],
       "validated": true,
       "format": "devbench-recording-2"
+    },
+    {
+      "name": "Dragonsreach torch (third person)",
+      "file": "DragonsreachTorchThirdPerson.json",
+      "route": "Dragonsreach interior walk",
+      "entry": "coc WhiterunDragonsreach",
+      "cell": "WhiterunDragonsreach",
+      "interior": true,
+      "durationMs": 61549,
+      "sampleCount": 3829,
+      "runtime": [
+        "se",
+        "ae"
+      ],
+      "validated": true,
+      "format": "devbench-recording-3"
     }
   ]
 }
