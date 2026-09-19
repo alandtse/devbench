@@ -21,11 +21,11 @@
 
 #include <algorithm>
 #include <chrono>
-#include <mutex>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <thread>
 
@@ -173,7 +173,7 @@ namespace dvb
 							sawEnd = MainThread::RunAndWait(
 								[]() -> json { return ConsoleLogCapture::SampleOnce(); },
 								std::chrono::milliseconds(2000))
-									 .get<bool>();
+							             .get<bool>();
 						} catch (...) {
 							return false;  // main thread stalled (a load screen); stop sampling
 						}
