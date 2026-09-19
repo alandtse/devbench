@@ -2577,6 +2577,16 @@ namespace dvb
 						Recording::Notify("devbench: can't replay — a replay is already playing");
 						throw ToolError(409, std::format("replay blocked: replay run {} is still in progress — wait for it to finish (poll record{{action:'status', runId:{}}}) before starting another", active, active));
 					}
+					struct ClaimGuard
+					{
+						uint64_t id;
+						bool     armed = true;
+						~ClaimGuard()
+						{
+							if (armed)
+								ReleaseActiveReplay(id);
+						}
+					} claimGuard{ runId };
 					const json        activity = plan.value("activity", json::object());
 					const std::string inputOwner = plan.value("inputOwner", std::string{});
 					Recording::Notify(std::format("devbench: replaying {} steps (~{:.1f}s)", steps.size(), estMs / 1000.0));
@@ -2673,8 +2683,8 @@ namespace dvb
 								RunRegistry::Get().Fail(runId, e.what());
 							}
 						}).detach();
+						claimGuard.armed = false;
 					} catch (const std::exception& e) {
-						ReleaseActiveReplay(runId);
 						RunRegistry::Get().Fail(runId, e.what());
 						a_events.Publish("replay.finished", json{ { "runId", runId }, { "ok", false },
 																{ "error", "could not start asynchronous replay worker" } });
