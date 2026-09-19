@@ -2566,8 +2566,10 @@ namespace dvb
 					const uint64_t runId = RunRegistry::Get().NextId();
 					{
 						uint64_t idle = 0;
-						if (!g_activeReplayRunId.compare_exchange_strong(idle, runId))
+						if (!g_activeReplayRunId.compare_exchange_strong(idle, runId)) {
+							Recording::Notify("devbench: can't replay — a replay is already playing");
 							throw ToolError(409, std::format("replay blocked: replay run {} is still in progress — wait for it to finish (poll record{{action:'status', runId:{}}}) before starting another", idle, idle));
+						}
 					}
 					const json        activity = plan.value("activity", json::object());
 					const std::string inputOwner = plan.value("inputOwner", std::string{});
