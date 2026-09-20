@@ -1,6 +1,7 @@
 #include "ReplayDriver.h"
 
 #include "GameState.h"
+#include "ToolRegistry.h"
 
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
@@ -17,6 +18,8 @@ namespace dvb::Recording::ReplayDriver
 	namespace
 	{
 		constexpr double kDegToRad = 0.017453292519943295;
+		constexpr auto   kPacerRetryDelay = std::chrono::milliseconds(1);
+		constexpr auto   kFinalPoseWait = std::chrono::milliseconds(500);
 
 		using Clock = std::chrono::steady_clock;
 
@@ -43,7 +46,7 @@ namespace dvb::Recording::ReplayDriver
 								return;
 							m_pacerWake = false;
 						}
-						std::this_thread::sleep_for(std::chrono::milliseconds(1));
+						std::this_thread::sleep_for(kPacerRetryDelay);
 						if (!m_cancelled.load())
 							Schedule();
 					}
@@ -180,5 +183,51 @@ namespace dvb::Recording::ReplayDriver
 		state->StartPacer();
 		state->Schedule();
 		return std::make_unique<SessionImpl>(std::move(state));
+	}
+
+	Playback::Playback(const json& a_steps, bool a_enabled) :
+		m_steps(a_steps), m_enabled(a_enabled)
+	{
+		if (!m_enabled)
+			return;
+		for (const auto& step : m_steps)
+			if (step.contains("pose") && !IsValidPose(step["pose"]))
+				throw ToolError(400, "pose step needs [x, y, z, yawDeg, pitchDeg]");
+	}
+
+	bool Playback::Handle(const json& a_step)
+	{
+		if (!m_enabled || m_unavailable || !a_step.contains("pose"))
+			return false;
+		if (!m_session) {
+			m_session = Start(Trajectory(ExtractKeyframes(m_steps)));
+			if (!m_session) {
+				m_unavailable = true;
+				logs::warn("devbench: pose driver unavailable (engine frame counter unreadable); using per-sample teleports");
+				return false;
+			}
+			m_deadline = Clock::now();
+		}
+		return true;
+	}
+
+	void Playback::Sleep(long a_ms)
+	{
+		if (!m_deadline) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(a_ms));
+			return;
+		}
+		*m_deadline += std::chrono::milliseconds(a_ms);
+		std::this_thread::sleep_until(*m_deadline);
+	}
+
+	void Playback::Finish()
+	{
+		if (!m_session)
+			return;
+		m_session->WaitFinished(kFinalPoseWait);
+		m_stats = m_session->Stats();
+		m_session.reset();
+		m_deadline.reset();
 	}
 }

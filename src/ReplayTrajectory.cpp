@@ -7,10 +7,13 @@ namespace dvb::Recording
 {
 	namespace
 	{
+		constexpr double kFullTurnDeg = 360.0;
+		constexpr double kHalfTurnDeg = 180.0;
+
 		double NormalizeDeg(double a_deg)
 		{
-			double d = std::fmod(a_deg, 360.0);
-			return d < 0.0 ? d + 360.0 : d;
+			double d = std::fmod(a_deg, kFullTurnDeg);
+			return d < 0.0 ? d + kFullTurnDeg : d;
 		}
 
 		double Distance(const Pose& a_a, const Pose& a_b)
@@ -40,11 +43,11 @@ namespace dvb::Recording
 
 	double ShortestArcDeltaDeg(double a_fromDeg, double a_toDeg)
 	{
-		double delta = std::fmod(a_toDeg - a_fromDeg, 360.0);
-		if (delta > 180.0)
-			delta -= 360.0;
-		else if (delta <= -180.0)
-			delta += 360.0;
+		double delta = std::fmod(a_toDeg - a_fromDeg, kFullTurnDeg);
+		if (delta > kHalfTurnDeg)
+			delta -= kFullTurnDeg;
+		else if (delta <= -kHalfTurnDeg)
+			delta += kFullTurnDeg;
 		return delta;
 	}
 
@@ -107,7 +110,6 @@ namespace dvb::Recording
 	{
 		std::stable_sort(m_keyframes.begin(), m_keyframes.end(),
 			[](const PoseKeyframe& a, const PoseKeyframe& b) { return a.tMs < b.tMs; });
-		// A repeated timestamp keeps its last pose, matching a later step overwriting an earlier one.
 		std::vector<PoseKeyframe> unique;
 		for (const auto& key : m_keyframes) {
 			if (!unique.empty() && unique.back().tMs == key.tMs)

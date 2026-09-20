@@ -32,15 +32,14 @@ namespace dvb::Recording
 	// rather than movement, so the trajectory holds and snaps instead of sliding across it.
 	inline constexpr double kTeleportDistanceUnits = 2000.0;
 
-	// True for [x, y, z, yawDeg, pitchDeg] with numeric entries.
 	bool IsValidPose(const json& a_pose);
 
 	// Keyframes of a recorded scenario on its own clock: a pose step sits at its `atMs`, or at the
 	// sum of preceding waits for recordings that predate `atMs`. Strictly increasing in time.
 	std::vector<PoseKeyframe> ExtractKeyframes(const json& a_steps);
 
-	// The player's pose as a pure function of absolute elapsed time, so playback is identical at
-	// any frame rate. Times outside the recording clamp to its first/last keyframe.
+	// The player's pose as a pure function of absolute elapsed time. Times outside the recording clamp
+	// to its first or last keyframe.
 	class Trajectory
 	{
 	public:
@@ -61,11 +60,8 @@ namespace dvb::Recording
 		Interpolation             m_mode;
 	};
 
-	// Recordings that predate `atMs` carry only a fixed per-sample wait, which undercounts real time
-	// (the old per-sample teleport latency made up the difference). Scales those waits so the
-	// clock spans a_recordedMs; recordings with `atMs`, or no recorded duration, are unchanged.
+	// Scales the waits of recordings that predate `atMs` so their clock spans a_recordedMs.
 	json ScaleWaitsToRecordedDuration(const json& a_steps, std::int64_t a_recordedMs);
 
-	// Signed shortest rotation from a_fromDeg to a_toDeg, in (-180, 180].
 	double ShortestArcDeltaDeg(double a_fromDeg, double a_toDeg);
 }
