@@ -1614,10 +1614,11 @@ namespace dvb
 			}
 		}
 
-		// Blocking menus left after optionally cancelling an open modal (cancel, never affirm). Only
-		// a modal-only set is cleared; any other blocking menu is reported untouched. The modal
-		// dismisses through the UI queue on a later frame, so poll (up to ~1s) rather than
-		// re-checking instantly, which would still see the closing modal.
+		constexpr int  kModalCloseChecks = 20;
+		constexpr auto kModalCloseInterval = milliseconds(50);
+
+		// Cancels an open modal, never affirms it. The modal closes on a later frame, so this polls
+		// instead of re-checking once.
 		std::vector<std::string> BlockingMenusAfterClosingModals(bool a_closeModals)
 		{
 			auto blocking = BlockingMenus();
@@ -1628,11 +1629,11 @@ namespace dvb
 			if (!allModal)
 				return blocking;
 			CancelActiveModal();
-			for (int i = 0; i < 20; ++i) {
+			for (int i = 0; i < kModalCloseChecks; ++i) {
 				blocking = BlockingMenus();
 				if (blocking.empty())
 					break;
-				std::this_thread::sleep_for(milliseconds(50));
+				std::this_thread::sleep_for(kModalCloseInterval);
 			}
 			return blocking;
 		}
