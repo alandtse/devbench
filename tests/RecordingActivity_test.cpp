@@ -6,7 +6,9 @@
 using dvb::json;
 using dvb::Recording::ActivityCaptureContract;
 using dvb::Recording::BuildVRTrackedSetReplay;
+using dvb::Recording::CollapseConsoleTyping;
 using dvb::Recording::InterleaveReplayableActivity;
+using dvb::Recording::IsKeyEventFor;
 using dvb::Recording::SummarizeActivity;
 
 namespace
@@ -17,6 +19,42 @@ namespace
 		return json{ { "kind", "input" }, { "eventType", "button" },
 			{ "device", a_device }, { "state", a_state }, { "idCode", a_id },
 			{ "tMs", a_ms }, { "seq", a_seq } };
+	}
+
+	json UserButton(std::int64_t a_ms, std::uint64_t a_seq, const char* a_state, int a_id, const char* a_userEvent)
+	{
+		json event = Button(a_ms, a_seq, "keyboard", a_state, a_id);
+		event["userEvent"] = a_userEvent;
+		return event;
+	}
+
+	json Char(std::int64_t a_ms, std::uint64_t a_seq, int a_id)
+	{
+		return json{ { "kind", "input" }, { "eventType", "char" }, { "device", "keyboard" },
+			{ "idCode", a_id }, { "tMs", a_ms }, { "seq", a_seq } };
+	}
+
+	json ConsoleMenu(std::int64_t a_ms, std::uint64_t a_seq, bool a_opening)
+	{
+		return json{ { "kind", "menu" }, { "name", "Console" }, { "opening", a_opening },
+			{ "tMs", a_ms }, { "seq", a_seq } };
+	}
+
+	// Mirrors a real capture: toggle down precedes the menu open, typing follows, toggle down
+	// precedes the menu close.
+	json ConsoleSession(std::int64_t a_startMs)
+	{
+		return json::array({
+			UserButton(a_startMs, 10, "down", 41, "Console"),
+			UserButton(a_startMs + 5, 11, "up", 41, "Console"),
+			ConsoleMenu(a_startMs + 10, 12, true),
+			Button(a_startMs + 20, 13, "keyboard", "down", 20),
+			Char(a_startMs + 21, 14, 116),
+			Button(a_startMs + 30, 15, "keyboard", "up", 20),
+			json{ { "kind", "console" }, { "command", "tgm" }, { "tMs", a_startMs + 40 }, { "seq", 16 } },
+			UserButton(a_startMs + 50, 17, "down", 41, "Console"),
+			ConsoleMenu(a_startMs + 60, 18, false),
+		});
 	}
 }
 
@@ -256,4 +294,97 @@ TEST_CASE("input replay can be disabled without altering legacy steps")
 	CHECK(plan["report"]["enabled"] == false);
 	CHECK(plan["report"]["replayedKeyboardTransitions"] == 0);
 	CHECK(plan["inputOwner"] == "");
+}
+
+TEST_CASE("key event matching only applies to keyboard button and char events")
+{
+	CHECK(IsKeyEventFor(Button(1, 1, "keyboard", "down", 65), { 65, 66 }));
+	CHECK(IsKeyEventFor(Char(1, 1, 66), { 65, 66 }));
+	CHECK(!IsKeyEventFor(Button(1, 1, "keyboard", "down", 17), { 65, 66 }));
+	CHECK(!IsKeyEventFor(Button(1, 1, "oculusPrimary", "down", 65), { 65 }));
+	CHECK(!IsKeyEventFor(Button(1, 1, "keyboard", "down", 65), {}));
+	CHECK(!IsKeyEventFor(ConsoleMenu(1, 1, true), { 65 }));
+}
+
+TEST_CASE("console typing collapses to the captured console command")
+{
+	json events = json::array({ Button(1, 1, "keyboard", "down", 17) });
+	for (const auto& event : ConsoleSession(100))
+		events.push_back(event);
+	events.push_back(Button(300, 20, "keyboard", "up", 17));
+
+	const json               collapsed = CollapseConsoleTyping(events);
+	std::vector<std::string> kinds;
+	int                      keyboard = 0;
+	for (const auto& event : collapsed) {
+		kinds.push_back(event["kind"]);
+		keyboard += event["kind"] == "input" ? 1 : 0;
+	}
+	CHECK(keyboard == 2);  // only the surrounding movement key survives
+	CHECK(std::count(kinds.begin(), kinds.end(), "console") == 1);
+	CHECK(collapsed.front()["idCode"] == 17);
+	CHECK(collapsed.back()["idCode"] == 17);
+}
+
+TEST_CASE("unclosed console window drops typing through the end of the capture")
+{
+	const json events = json::array({
+		ConsoleMenu(10, 1, true),
+		Button(20, 2, "keyboard", "down", 34),
+		Button(30, 3, "oculusPrimary", "down", 33),
+	});
+	const json collapsed = CollapseConsoleTyping(events);
+	CHECK(collapsed.size() == 2);  // menu event + the non-keyboard input
+	CHECK(collapsed.back()["device"] == "oculusPrimary");
+}
+
+TEST_CASE("collapse leaves recordings without a console session untouched")
+{
+	const json events = json::array({
+		Button(10, 1, "keyboard", "down", 17),
+		Button(20, 2, "keyboard", "up", 17),
+	});
+	CHECK(CollapseConsoleTyping(events) == events);
+	CHECK(CollapseConsoleTyping(json::array()) == json::array());
+}
+
+TEST_CASE("replay never injects the record or replay hotkeys")
+{
+	const json steps = json::array({ json{ { "pose", json::array({ 1, 2, 3, 4, 5 }) }, { "wait", 100 } } });
+	const json events = json::array({
+		Button(10, 1, "keyboard", "up", 65),
+		Button(20, 2, "keyboard", "down", 17),
+		Button(30, 3, "keyboard", "up", 17),
+		Button(90, 4, "keyboard", "down", 66),
+		Button(99, 5, "keyboard", "down", 65),
+	});
+	const json plan = InterleaveReplayableActivity(steps, events, "recording:test", true, { 65, 66 });
+	CHECK(plan["report"]["suppressedHotkeyTransitions"] == 3);
+	CHECK(plan["report"]["replayedKeyboardTransitions"] == 2);
+	for (const auto& step : plan["steps"])
+		if (step.value("tool", std::string{}) == "input")
+			CHECK(step["args"]["key"] == 17);
+}
+
+TEST_CASE("replay without reserved keys still injects every keyboard transition")
+{
+	const json events = json::array({
+		Button(10, 1, "keyboard", "down", 65),
+		Button(20, 2, "keyboard", "up", 65),
+	});
+	const json plan = InterleaveReplayableActivity(json::array(), events, "recording:test", true);
+	CHECK(plan["report"]["suppressedHotkeyTransitions"] == 0);
+	CHECK(plan["report"]["replayedKeyboardTransitions"] == 2);
+}
+
+TEST_CASE("replaying an older capture skips its console typing")
+{
+	json events = ConsoleSession(100);
+	events.push_back(Button(300, 20, "keyboard", "down", 17));
+	events.push_back(Button(310, 21, "keyboard", "up", 17));
+	const json plan = InterleaveReplayableActivity(json::array(), events, "recording:test", true);
+	CHECK(plan["report"]["replayedKeyboardTransitions"] == 2);
+	for (const auto& step : plan["steps"])
+		if (step.value("tool", std::string{}) == "input")
+			CHECK(step["args"]["key"] == 17);
 }

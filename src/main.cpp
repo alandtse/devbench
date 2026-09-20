@@ -22,9 +22,10 @@
 
 namespace
 {
-	// Constructed at kDataLoaded with the configured port (null if disabled via config).
-	std::unique_ptr<dvb::Server> g_server;
-	dvb::Config                  g_config;  // captured at kPostLoad; used at kInputLoaded
+	// Process-lifetime: DLL detach runs after Windows terminates the server's workers,
+	// so destroying it there would wait for threads that can no longer finish.
+	dvb::Server* g_server = nullptr;
+	dvb::Config  g_config;  // captured at kPostLoad; used at kInputLoaded
 
 	void InitLogging()
 	{
@@ -84,7 +85,7 @@ namespace
 				// registers its self-test tool) BEFORE Start() so they appear on both
 				// transports from the first request; then attach game-event sources.
 				g_config = cfg;  // kept for kInputLoaded (input sink registers later)
-				g_server = std::make_unique<dvb::Server>("127.0.0.1", cfg.port);
+				g_server = new dvb::Server("127.0.0.1", cfg.port);
 				g_server->Events().SetFrameProvider(&dvb::game::CurrentFrame);
 				dvb::RegisterCoreTools(g_server->Tools(), g_server->Events());
 				dvb::Recording::SetLoadSettleMs(cfg.loadSettleMs);

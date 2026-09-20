@@ -161,6 +161,36 @@ namespace dvb::Recording
 		};
 	}
 
+	bool IsKeyEventFor(const json& a_event, const std::vector<int>& a_keys)
+	{
+		if (a_event.value("kind", std::string{}) != "input" ||
+			a_event.value("device", std::string{}) != "keyboard")
+			return false;
+		const std::string type = a_event.value("eventType", std::string{});
+		if (type != "button" && type != "char")
+			return false;
+		return std::find(a_keys.begin(), a_keys.end(), a_event.value("idCode", 0)) != a_keys.end();
+	}
+
+	json CollapseConsoleTyping(const json& a_events)
+	{
+		if (!a_events.is_array())
+			return a_events;
+		json out = json::array();
+		bool consoleOpen = false;
+		for (const auto& event : a_events) {
+			const std::string kind = event.value("kind", std::string{});
+			if (kind == "menu" && event.value("name", std::string{}) == "Console")
+				consoleOpen = event.value("opening", false);
+			const bool keyboardInput = kind == "input" && event.value("device", std::string{}) == "keyboard";
+			const bool consoleToggle = keyboardInput && event.value("userEvent", std::string{}) == "Console";
+			if (keyboardInput && (consoleOpen || consoleToggle))
+				continue;
+			out.push_back(event);
+		}
+		return out;
+	}
+
 	json SummarizeActivity(const json& a_events)
 	{
 		json counts{
@@ -356,9 +386,10 @@ namespace dvb::Recording
 	}
 
 	json InterleaveReplayableActivity(const json& a_steps, const json& a_events,
-		const std::string& a_inputOwner, bool a_replayInputs)
+		const std::string& a_inputOwner, bool a_replayInputs, const std::vector<int>& a_reservedKeys)
 	{
 		json report = SummarizeActivity(a_events);
+		report["suppressedHotkeyTransitions"] = 0;
 		report["enabled"] = a_replayInputs;
 		report["replayedKeyboardTransitions"] = 0;
 		report["skippedInput"] = report.value("input", 0);
@@ -367,9 +398,16 @@ namespace dvb::Recording
 			return json{ { "steps", a_steps }, { "report", std::move(report) }, { "inputOwner", "" } };
 
 		std::vector<json> replayable;
-		for (const auto& event : a_events)
-			if (IsKeyboardTransition(event))
-				replayable.push_back(event);
+		std::size_t       suppressedHotkeys = 0;
+		for (const auto& event : CollapseConsoleTyping(a_events)) {
+			if (!IsKeyboardTransition(event))
+				continue;
+			if (IsKeyEventFor(event, a_reservedKeys)) {
+				++suppressedHotkeys;
+				continue;
+			}
+			replayable.push_back(event);
+		}
 		std::stable_sort(replayable.begin(), replayable.end(), [](const json& a, const json& b) {
 			const auto at = a.value("tMs", static_cast<std::int64_t>(0));
 			const auto bt = b.value("tMs", static_cast<std::int64_t>(0));
@@ -467,6 +505,7 @@ namespace dvb::Recording
 			steps.push_back(InputStep(replayable[eventIndex++], a_inputOwner));
 		}
 
+		report["suppressedHotkeyTransitions"] = suppressedHotkeys;
 		report["replayedKeyboardTransitions"] = replayable.size();
 		report["skippedInput"] = report.value("input", 0) - static_cast<int>(replayable.size());
 		report["partial"] = report.value("skippedInput", 0) > 0;
