@@ -62,6 +62,12 @@ namespace dvb::Recording::ReplayDriver
 					m_pacer.join();
 			}
 
+			bool WaitFinished(std::chrono::milliseconds a_timeout)
+			{
+				std::unique_lock lock(m_statsMutex);
+				return m_finishedCv.wait_for(lock, a_timeout, [this]() { return m_finished; });
+			}
+
 			[[nodiscard]] json Stats() const
 			{
 				std::lock_guard lock(m_statsMutex);
@@ -102,16 +108,19 @@ namespace dvb::Recording::ReplayDriver
 					std::lock_guard lock(m_statsMutex);
 					if (applied) {
 						++m_applied;
-						if (m_lastFrame >= 0) {
-							const int gap = frame - m_lastFrame;
+						if (m_lastAppliedFrame >= 0) {
+							const int gap = frame - m_lastAppliedFrame;
 							m_framesSpanned += gap;
 							m_maxFrameGap = std::max(m_maxFrameGap, gap);
 						}
+						m_lastAppliedFrame = frame;
 					} else {
 						++m_skippedNoPlayer;
 					}
 					m_finished = finishing;
 				}
+				if (finishing)
+					m_finishedCv.notify_all();
 				m_lastFrame = frame;
 				if (!finishing)
 					Schedule();
@@ -138,7 +147,9 @@ namespace dvb::Recording::ReplayDriver
 			bool                    m_pacerWake = false;
 			std::thread             m_pacer;
 			int                     m_lastFrame = -1;
+			int                     m_lastAppliedFrame = -1;
 			mutable std::mutex      m_statsMutex;
+			std::condition_variable m_finishedCv;
 			std::uint64_t           m_applied = 0;
 			std::uint64_t           m_skippedNoPlayer = 0;
 			std::uint64_t           m_framesSpanned = 0;
@@ -154,6 +165,7 @@ namespace dvb::Recording::ReplayDriver
 				m_state(std::move(a_state)) {}
 			~SessionImpl() override { m_state->Stop(); }
 			[[nodiscard]] json Stats() const override { return m_state->Stats(); }
+			bool               WaitFinished(std::chrono::milliseconds a_timeout) override { return m_state->WaitFinished(a_timeout); }
 
 		private:
 			std::shared_ptr<State> m_state;
@@ -162,6 +174,8 @@ namespace dvb::Recording::ReplayDriver
 
 	std::unique_ptr<Session> Start(Trajectory a_trajectory)
 	{
+		if (game::CurrentFrame() < 0)
+			return nullptr;
 		auto state = std::make_shared<State>(std::move(a_trajectory));
 		state->StartPacer();
 		state->Schedule();

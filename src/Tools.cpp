@@ -1781,9 +1781,23 @@ namespace dvb
 			// smoothPose: the trajectory is driven per engine frame from absolute time instead of
 			// five console teleports per sample.
 			const bool                                        smoothPose = a_args.value("smoothPose", false);
+			bool                                              driverUnavailable = false;
 			std::unique_ptr<Recording::ReplayDriver::Session> poseDriver;
 			std::optional<steady_clock::time_point>           clockDeadline;
 			json                                              poseDriverStats;
+			if (smoothPose)
+				for (const auto& step : steps)
+					if (step.contains("pose") && !Recording::IsValidPose(step["pose"]))
+						throw ToolError(400, "pose step needs [x, y, z, yawDeg, pitchDeg]");
+			constexpr auto kFinalPoseWait = milliseconds(500);
+			const auto     endPoseDriver = [&]() {
+				if (!poseDriver)
+					return;
+				poseDriver->WaitFinished(kFinalPoseWait);
+				poseDriverStats = poseDriver->Stats();
+				poseDriver.reset();
+				clockDeadline.reset();
+			};
 			// With the driver active, waits count against one absolute deadline so step latency
 			// cannot accumulate into drift.
 			const auto sleepFor = [&](long a_ms) {
@@ -1796,10 +1810,7 @@ namespace dvb
 			};
 
 			for (int rep = 0; rep < repeat && !aborted; ++rep) {
-				if (poseDriver)
-					poseDriverStats = poseDriver->Stats();
-				poseDriver.reset();
-				clockDeadline.reset();
+				endPoseDriver();
 				// Per-repetition, not per-run: a scene mismatch on rep N must not poison rep N+1's
 				// captures if rep N+1's own scene assert succeeds.
 				bool runSceneMismatch = false;
@@ -1834,13 +1845,20 @@ namespace dvb
 					}
 
 					try {
-						if (smoothPose && step.contains("pose")) {
-							r["kind"] = "pose";
-							if (!poseDriver) {
-								poseDriver = Recording::ReplayDriver::Start(
-									Recording::Trajectory(Recording::ExtractKeyframes(steps)));
+						bool useDriver = smoothPose && !driverUnavailable && step.contains("pose");
+						if (useDriver && !poseDriver) {
+							poseDriver = Recording::ReplayDriver::Start(
+								Recording::Trajectory(Recording::ExtractKeyframes(steps)));
+							if (poseDriver) {
 								clockDeadline = steady_clock::now();
+							} else {
+								driverUnavailable = true;
+								useDriver = false;
+								logs::warn("devbench: pose driver unavailable (engine frame counter unreadable); using per-sample teleports");
 							}
+						}
+						if (useDriver) {
+							r["kind"] = "pose";
 							r["ok"] = true;
 							if (step.contains("wait"))
 								sleepFor(step["wait"].get<long>());
@@ -2105,8 +2123,7 @@ namespace dvb
 				}
 			}
 
-			if (poseDriver)
-				poseDriverStats = poseDriver->Stats();
+			endPoseDriver();
 			json summary{
 				{ "ok", !anyFailure },
 				{ "aborted", aborted },

@@ -32,6 +32,9 @@ namespace dvb::Recording
 	// rather than movement, so the trajectory holds and snaps instead of sliding across it.
 	inline constexpr double kTeleportDistanceUnits = 2000.0;
 
+	// True for [x, y, z, yawDeg, pitchDeg] with numeric entries.
+	bool IsValidPose(const json& a_pose);
+
 	// Keyframes of a recorded scenario on its own clock: a pose step sits at its `atMs`, or at the
 	// sum of preceding waits for recordings that predate `atMs`. Strictly increasing in time.
 	std::vector<PoseKeyframe> ExtractKeyframes(const json& a_steps);

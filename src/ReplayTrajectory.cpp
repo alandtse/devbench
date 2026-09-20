@@ -32,6 +32,12 @@ namespace dvb::Recording
 		}
 	}
 
+	bool IsValidPose(const json& a_pose)
+	{
+		Pose pose;
+		return ReadPose(a_pose, pose);
+	}
+
 	double ShortestArcDeltaDeg(double a_fromDeg, double a_toDeg)
 	{
 		double delta = std::fmod(a_toDeg - a_fromDeg, 360.0);
@@ -52,7 +58,7 @@ namespace dvb::Recording
 			if (!step.is_object())
 				continue;
 			if (step.contains("atMs") && step["atMs"].is_number())
-				clockMs = std::max(clockMs, step["atMs"].get<std::int64_t>());
+				clockMs = step["atMs"].get<std::int64_t>();
 			Pose pose;
 			if (step.contains("pose") && ReadPose(step["pose"], pose)) {
 				if (!keyframes.empty() && keyframes.back().tMs == clockMs)

@@ -205,3 +205,28 @@ TEST_CASE("wait scaling leaves atMs recordings and unusable durations alone")
 	CHECK(dvb::Recording::ScaleWaitsToRecordedDuration(legacy, 10) == legacy);  // never shortens
 	CHECK(dvb::Recording::ScaleWaitsToRecordedDuration(json::object(), 5000) == json::object());
 }
+
+TEST_CASE("atMs is authoritative even when the previous wait overshoots it")
+{
+	const json steps = json::array({
+		json{ { "atMs", 100 }, { "pose", json::array({ 0, 0, 0, 0, 0 }) }, { "wait", 20 } },
+		json{ { "atMs", 120 }, { "pose", json::array({ 1, 0, 0, 0, 0 }) }, { "wait", 20 } },
+		json{ { "atMs", 125 }, { "pose", json::array({ 2, 0, 0, 0, 0 }) }, { "wait", 5 } },
+	});
+	const auto keys = ExtractKeyframes(steps);
+	CHECK(keys.size() == 3);
+	CHECK(keys[0].tMs == 100);
+	CHECK(keys[1].tMs == 120);
+	CHECK(keys[2].tMs == 125);
+}
+
+TEST_CASE("pose validation accepts five numbers and rejects anything else")
+{
+	using dvb::Recording::IsValidPose;
+	CHECK(IsValidPose(json::array({ 1, 2, 3, 4, 5 })));
+	CHECK(IsValidPose(json::array({ 1.5, 2, 3, 4, 5, "extra" })));
+	CHECK(!IsValidPose(json::array({ 1, 2, 3, 4 })));
+	CHECK(!IsValidPose(json::array({ 1, 2, 3, 4, "five" })));
+	CHECK(!IsValidPose(json::object()));
+	CHECK(!IsValidPose(json(nullptr)));
+}
