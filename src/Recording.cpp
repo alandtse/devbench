@@ -433,7 +433,7 @@ namespace dvb::Recording
 			std::uint64_t            nextActivitySeq = 1;
 			bool                     limitReached = false;
 			std::string              limitReason;
-			json                     manifest;
+			json                     manifest = json::object();
 			long                     intervalMs = kDefaultIntervalMs;
 			steady_clock::time_point startTick;
 
