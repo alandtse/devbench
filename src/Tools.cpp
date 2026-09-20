@@ -1779,7 +1779,7 @@ namespace dvb
 			} replayGuard;
 
 			// smoothPose: the trajectory is driven per engine frame from absolute time instead of
-			// five console teleports per sample. Flat runtimes only; VR keeps the console path.
+			// five console teleports per sample.
 			const bool                                        smoothPose = a_args.value("smoothPose", false);
 			std::unique_ptr<Recording::ReplayDriver::Session> poseDriver;
 			std::optional<steady_clock::time_point>           clockDeadline;
@@ -2556,7 +2556,7 @@ namespace dvb
 								{ "force", json{ { "type", "boolean" }, { "description", "replay: proceed even if the scene doesn't match the recording — report the mismatch as a warning instead of aborting (default false)" } } },
 								{ "closeMenus", json{ { "type", "boolean" }, { "description", "replay: if a MODAL is open at start, cancel it and continue instead of erroring; non-modal gameplay menus still error (default false)" } } },
 								{ "async", json{ { "type", "boolean" }, { "description", "replay: return {queued:true, runId} immediately and run in the background (default true); false blocks and returns the result directly" } } },
-								{ "interpolate", json{ { "type", "boolean" }, { "description", "replay: drive the player along the recorded path once per engine frame with interpolated position/yaw/pitch on an absolute clock, instead of one teleport per sample (SE/AE only; VR keeps per-sample teleports). Result carries poseDriver stats; false keeps per-sample teleports (default true)" } } },
+								{ "interpolate", json{ { "type", "boolean" }, { "description", "replay: drive the player along the recorded path once per engine frame with interpolated position/yaw/pitch on an absolute clock, instead of one teleport per sample. Result carries poseDriver stats; false keeps per-sample teleports (default true)" } } },
 								{ "runId", json{ { "type", "integer" }, { "description", "status: poll an async replay run started earlier (from replay's 'runId')" } } },
 							} },
 		};

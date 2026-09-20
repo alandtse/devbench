@@ -96,7 +96,7 @@ namespace dvb::Recording
 	json BuildReplaySteps(const json& a_args);
 
 	/// Whether a replay drives the player through the per-frame pose driver (a_args.interpolate,
-	/// default true; flat runtimes only) instead of one teleport per recorded sample.
+	/// default true) instead of one teleport per recorded sample.
 	bool WantsPoseDriver(const json& a_args);
 
 	/// `recordings` tool: manage the on-disk recording library (the data layer an in-game menu —

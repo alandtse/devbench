@@ -1231,7 +1231,7 @@ namespace dvb::Recording
 
 	bool WantsPoseDriver(const json& a_args)
 	{
-		return a_args.value("interpolate", true) && !REL::Module::IsVR();
+		return a_args.value("interpolate", true);
 	}
 
 	json BuildReplaySteps(const json& a_args)
