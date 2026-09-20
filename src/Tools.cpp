@@ -1616,6 +1616,30 @@ namespace dvb
 			}
 		}
 
+		constexpr int  kModalCloseChecks = 20;
+		constexpr auto kModalCloseInterval = milliseconds(50);
+
+		// Cancels an open modal, never affirms it. The modal closes on a later frame, so this polls
+		// instead of re-checking once.
+		std::vector<std::string> BlockingMenusAfterClosingModals(bool a_closeModals)
+		{
+			auto blocking = BlockingMenus();
+			if (blocking.empty() || !a_closeModals)
+				return blocking;
+			const bool allModal = std::all_of(blocking.begin(), blocking.end(),
+				[](const std::string& n) { return n == RE::MessageBoxMenu::MENU_NAME; });
+			if (!allModal)
+				return blocking;
+			CancelActiveModal();
+			for (int i = 0; i < kModalCloseChecks; ++i) {
+				blocking = BlockingMenus();
+				if (blocking.empty())
+					break;
+				std::this_thread::sleep_for(kModalCloseInterval);
+			}
+			return blocking;
+		}
+
 		// Live-state conditions for waitUntil. playerLoaded marshals to the main thread;
 		// a mid-load stall (RunAndWait 504) just means "not yet" → keep polling. Menu
 		// conditions read the thread-safe tracked set (no marshal).
@@ -1656,6 +1680,31 @@ namespace dvb
 				throw ToolError(400, std::format("invalid runId '{}' (must be a non-negative integer)", v.dump()));
 			return v.get<uint64_t>();
 		}
+
+		std::atomic<uint64_t> g_activeReplayRunId{ 0 };
+
+		// Returns 0 on success, else the runId of the replay already in flight.
+		uint64_t ClaimActiveReplay(uint64_t a_runId)
+		{
+			uint64_t active = 0;
+			return g_activeReplayRunId.compare_exchange_strong(active, a_runId) ? 0 : active;
+		}
+
+		void ReleaseActiveReplay(uint64_t a_runId)
+		{
+			g_activeReplayRunId.compare_exchange_strong(a_runId, 0);
+		}
+
+		struct ActiveReplayClaim
+		{
+			uint64_t id;
+			bool     armed = true;
+			~ActiveReplayClaim()
+			{
+				if (armed)
+					ReleaseActiveReplay(id);
+			}
+		};
 
 		// Tracks in-flight/completed async runs — record{action:"replay"} (async by default) and
 		// scenario{action:"run", async:true} share this registry and its runId space, so a runId
@@ -1967,7 +2016,7 @@ namespace dvb
 							r["assert"] = what;
 							if (what == "noBlockingMenu") {
 								// Fail (409) if a menu/modal would eat the trajectory; name the offenders.
-								const auto blocking = BlockingMenus();
+								const auto blocking = BlockingMenusAfterClosingModals(step.value("closeModals", false));
 								r["ok"] = blocking.empty();
 								if (!blocking.empty()) {
 									r["openMenus"] = blocking;
@@ -2512,7 +2561,8 @@ namespace dvb
 			"regions?}}; a checkpoint with no matching entry is captured but not scored. The "
 			"result's top-level 'checkpoints' array rolls up every capture step into "
 			"{id, ok, path, inconclusive, inconclusiveReason?, ssim?, threshold?, passed?} — read "
-			"this instead of filtering the (often much larger) 'results' step transcript yourself.";
+			"this instead of filtering the (often much larger) 'results' step transcript yourself."
+			" Only one replay runs at a time: starting another while one is in flight is refused with 409 naming the active runId.";
 		record.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
@@ -2530,7 +2580,7 @@ namespace dvb
 								{ "goldens", json{ { "type", "object" }, { "description", "replay: per-checkpoint SSIM comparison config, keyed by checkpoint id — {\"<id>\": {golden, threshold?, regions?}} — see the `capture` tool. Never stored in the recording itself; supply it fresh per replay so the same recording can check against different variants' goldens." } } },
 								{ "coupling", json{ { "type", "string" }, { "enum", json::array({ "anchored", "cell", "worldspace" }) }, { "description", "replay: override the recipe's coupling tier — run looser than the producer signaled (worldspace skips the scene restore)" } } },
 								{ "force", json{ { "type", "boolean" }, { "description", "replay: proceed even if the scene doesn't match the recording — report the mismatch as a warning instead of aborting (default false)" } } },
-								{ "closeMenus", json{ { "type", "boolean" }, { "description", "replay: if a MODAL is open at start, cancel it and continue instead of erroring; non-modal gameplay menus still error (default false)" } } },
+								{ "closeMenus", json{ { "type", "boolean" }, { "description", "replay: cancel an open MODAL (e.g. the Survival Mode prompt a scene transition can raise) instead of erroring, both at start and at the post-restore menu guard; non-modal gameplay menus still error (default false)" } } },
 								{ "async", json{ { "type", "boolean" }, { "description", "replay: return {queued:true, runId} immediately and run in the background (default true); false blocks and returns the result directly" } } },
 								{ "interpolate", json{ { "type", "boolean" }, { "description", "replay: drive the player along the recorded path once per engine frame with interpolated position/yaw/pitch on an absolute clock, instead of one teleport per sample. Result carries poseDriver stats; false keeps per-sample teleports (default true)" } } },
 								{ "runId", json{ { "type", "integer" }, { "description", "status: poll an async replay run started earlier (from replay's 'runId')" } } },
@@ -2548,32 +2598,21 @@ namespace dvb
 					// load/coc clears menus, so those defer to the in-trajectory guard step). closeMenus
 					// clears a blocking MODAL (cancel, never affirm); a non-modal menu still errors.
 					if (!plan.value("restored", false) && !plan.value("allowsInitialMenus", false)) {
-						auto blocking = BlockingMenus();
-						if (!blocking.empty()) {
-							const bool allModal = std::all_of(blocking.begin(), blocking.end(),
-								[](const std::string& n) { return n == RE::MessageBoxMenu::MENU_NAME; });
-							if (a_args.value("closeMenus", false) && allModal) {
-								CancelActiveModal();
-								// The modal dismisses through the UI queue on a later frame, so poll (up
-								// to ~1s) rather than re-checking instantly — an instant check still sees
-								// the closing modal and would 409 spuriously.
-								for (int i = 0; i < 20; ++i) {
-									blocking = BlockingMenus();
-									if (blocking.empty())
-										break;
-									std::this_thread::sleep_for(milliseconds(50));
-								}
-							}
-							if (!blocking.empty())
-								throw ToolError(409, std::format("replay blocked: menu(s) open: [{}] — close them (menu tool) then retry; a modal can be cleared with closeMenus:true", JoinNames(blocking)));
-						}
+						const auto blocking = BlockingMenusAfterClosingModals(a_args.value("closeMenus", false));
+						if (!blocking.empty())
+							throw ToolError(409, std::format("replay blocked: menu(s) open: [{}] — close them (menu tool) then retry; a modal can be cleared with closeMenus:true", JoinNames(blocking)));
 					}
 					const json steps = plan.value("steps", json::array());
 					long       estMs = 0;  // sum of wait steps ≈ replay duration
 					for (const auto& s : steps)
 						if (s.contains("wait"))
 							estMs += s["wait"].get<long>();
-					const uint64_t    runId = RunRegistry::Get().NextId();
+					const uint64_t runId = RunRegistry::Get().NextId();
+					if (const uint64_t active = ClaimActiveReplay(runId)) {
+						Recording::Notify("devbench: can't replay — a replay is already playing");
+						throw ToolError(409, std::format("replay blocked: replay run {} is still in progress — wait for it to finish (poll record{{action:'status', runId:{}}}) before starting another", active, active));
+					}
+					ActiveReplayClaim claimGuard{ runId };
 					const json        activity = plan.value("activity", json::object());
 					const std::string inputOwner = plan.value("inputOwner", std::string{});
 					Recording::Notify(std::format("devbench: replaying {} steps (~{:.1f}s)", steps.size(), estMs / 1000.0));
@@ -2590,7 +2629,8 @@ namespace dvb
 					const bool interpolate = Recording::WantsPoseDriver(a_args);
 					auto       runReplay = [&a_registry, &a_events, a_ctx, steps, runId, coupling,
 											   activity, inputOwner, interpolate]() -> json {
-						const auto releaseRecordedInput = [&]() -> json {
+						ActiveReplayClaim activeReplayGuard{ runId };
+						const auto        releaseRecordedInput = [&]() -> json {
 							if (inputOwner.empty())
 								return json{ { "needed", false } };
 							ToolContext inputCtx = a_ctx;
@@ -2667,6 +2707,7 @@ namespace dvb
 								RunRegistry::Get().Fail(runId, e.what());
 							}
 						}).detach();
+						claimGuard.armed = false;
 					} catch (const std::exception& e) {
 						RunRegistry::Get().Fail(runId, e.what());
 						a_events.Publish("replay.finished", json{ { "runId", runId }, { "ok", false },

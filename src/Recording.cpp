@@ -2,6 +2,7 @@
 
 #include "GameEvents.h"
 #include "GameState.h"
+#include "InputHotkeys.h"
 #include "MainThread.h"
 #include "RecordingActivity.h"
 #include "ReplayTrajectory.h"
@@ -70,6 +71,18 @@ namespace dvb::Recording
 		// hook — already carry the trajectory, so re-sampling would double it. Lets a user record
 		// a session that plays back an existing recipe and embed it cleanly (composition).
 		std::atomic<bool> g_replaying{ false };
+
+		std::vector<int> ReservedInputKeys()
+		{
+			int  recordKey = 0, replayKey = 0;
+			bool recordShift = false, replayShift = false;
+			GetHotkeys(recordKey, recordShift, replayKey, replayShift);
+			std::vector<int> keys;
+			for (const int key : { recordKey, replayKey })
+				if (key > 0)
+					keys.push_back(key);
+			return keys;
+		}
 
 		// Set when a coc/cow console command is captured mid-recording (the player COMMANDED a cell
 		// transition). The cell-load that follows consumes it so NoteCellChange doesn't ALSO emit a
@@ -434,7 +447,7 @@ namespace dvb::Recording
 			std::uint64_t            nextActivitySeq = 1;
 			bool                     limitReached = false;
 			std::string              limitReason;
-			json                     manifest;
+			json                     manifest = json::object();
 			long                     intervalMs = kDefaultIntervalMs;
 			steady_clock::time_point startTick;
 
@@ -932,6 +945,9 @@ namespace dvb::Recording
 			if (rec.worker.joinable())
 				rec.worker.join();  // sampler done → samples are stable, no lock needed below
 
+			const json collapsedActivity = CollapseConsoleTyping(json(rec.activityEvents));
+			rec.activityEvents.assign(collapsedActivity.begin(), collapsedActivity.end());
+
 			const long recordedMs = static_cast<long>(
 				duration_cast<milliseconds>(steady_clock::now() - rec.startTick).count());
 			json     scenario;
@@ -1082,8 +1098,12 @@ namespace dvb::Recording
 		if (!a_events || !generation ||
 			g_replaying.load(std::memory_order_relaxed))
 			return;
-		for (const auto* event = *a_events; event; event = event->next)
-			AppendActivity(SerializeInputEvent(*event), generation);
+		const std::vector<int> reservedKeys = ReservedInputKeys();
+		for (const auto* event = *a_events; event; event = event->next) {
+			json serialized = SerializeInputEvent(*event);
+			if (!IsKeyEventFor(serialized, reservedKeys))
+				AppendActivity(std::move(serialized), generation);
+		}
 	}
 
 	void NoteMenuState(const std::string& a_menuName, bool a_opening)
@@ -1179,7 +1199,7 @@ namespace dvb::Recording
 			// afterward. The reverse order made the wait pointless -- assert fired on whatever
 			// was open at this exact instant, before the wait ever got a chance to run.
 			a_steps.push_back(json{ { "waitUntil", "noBlockingMenu" }, { "timeoutMs", 5000 }, { "pollMs", 100 } });
-			a_steps.push_back(json{ { "assert", "noBlockingMenu" } });
+			a_steps.push_back(json{ { "assert", "noBlockingMenu" }, { "closeModals", a_args.value("closeMenus", false) } });
 			if (a_cp.contains("pov"))
 				a_steps.push_back(json{ { "tool", "camera" }, { "args", json{ { "action", "setPov" }, { "pov", a_cp["pov"] } } } });
 			if (const long settleMs = a_cp.value("settleMs", a_defaultSettleMs); settleMs > 0)
@@ -1459,7 +1479,7 @@ namespace dvb::Recording
 		// (without the in-game guard, such a replay silently no-ops).
 		const bool allowsInitialMenus = meta.value("startState", std::string{}) == "noPlayer";
 		if (!allowsInitialMenus)
-			steps.push_back(json{ { "assert", "noBlockingMenu" } });
+			steps.push_back(json{ { "assert", "noBlockingMenu" }, { "closeModals", a_args.value("closeMenus", false) } });
 
 		// Copy the trajectory, injecting a load-settle after any captured cell transition (coc/cow):
 		// the destination cell must finish loading before the following setpos teleports the player,
@@ -1483,7 +1503,8 @@ namespace dvb::Recording
 		json              vrPlan;
 		try {
 			activityPlan = InterleaveReplayableActivity(rec["steps"],
-				rec.value("activityEvents", json::array()), inputOwner, replayInputs);
+				rec.value("activityEvents", json::array()), inputOwner, replayInputs,
+				ReservedInputKeys());
 			vrPlan = BuildVRTrackedSetReplay(rec.value("trackingSamples", json::array()),
 				rec.value("activityEvents", json::array()), inputOwner, replayInputs);
 		} catch (const json::exception& e) {
