@@ -1669,6 +1669,17 @@ namespace dvb
 			g_activeReplayRunId.compare_exchange_strong(a_runId, 0);
 		}
 
+		struct ActiveReplayClaim
+		{
+			uint64_t id;
+			bool     armed = true;
+			~ActiveReplayClaim()
+			{
+				if (armed)
+					ReleaseActiveReplay(id);
+			}
+		};
+
 		// Tracks in-flight/completed async runs — record{action:"replay"} (async by default) and
 		// scenario{action:"run", async:true} share this registry and its runId space, so a runId
 		// from either polls correctly via either tool's action="status". Entries are pruned once
@@ -2578,16 +2589,7 @@ namespace dvb
 						Recording::Notify("devbench: can't replay — a replay is already playing");
 						throw ToolError(409, std::format("replay blocked: replay run {} is still in progress — wait for it to finish (poll record{{action:'status', runId:{}}}) before starting another", active, active));
 					}
-					struct ClaimGuard
-					{
-						uint64_t id;
-						bool     armed = true;
-						~ClaimGuard()
-						{
-							if (armed)
-								ReleaseActiveReplay(id);
-						}
-					} claimGuard{ runId };
+					ActiveReplayClaim claimGuard{ runId };
 					const json        activity = plan.value("activity", json::object());
 					const std::string inputOwner = plan.value("inputOwner", std::string{});
 					Recording::Notify(std::format("devbench: replaying {} steps (~{:.1f}s)", steps.size(), estMs / 1000.0));
@@ -2603,12 +2605,8 @@ namespace dvb
 					const json coupling = plan.value("coupling", json::object());
 					auto       runReplay = [&a_registry, &a_events, a_ctx, steps, runId, coupling,
 											   activity, inputOwner]() -> json {
-						struct ActiveReplayGuard
-						{
-							uint64_t id;
-							~ActiveReplayGuard() { ReleaseActiveReplay(id); }
-						} activeReplayGuard{ runId };
-						const auto releaseRecordedInput = [&]() -> json {
+						ActiveReplayClaim activeReplayGuard{ runId };
+						const auto        releaseRecordedInput = [&]() -> json {
 							if (inputOwner.empty())
 								return json{ { "needed", false } };
 							ToolContext inputCtx = a_ctx;
