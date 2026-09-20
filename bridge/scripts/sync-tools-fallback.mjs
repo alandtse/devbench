@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Regenerates src/tools-fallback.json from a live devbench instance's real
 // GET /api/tools response. Run this after any change to devbench's core tool
-// registry (src/Tools.cpp, src/Capture.cpp, src/HostApi.cpp, src/ToolRegistry.h) --
+// registry (src/Tools.cpp, src/Capture.cpp, src/HostApi.cpp, src/KeyboardInput.cpp,
+// src/ToolRegistry.h) --
 // CI fails the build if those files change without this one, see
 // scripts/check-tools-fallback-sync.mjs.
 //
