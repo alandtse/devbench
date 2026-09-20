@@ -74,9 +74,8 @@ namespace dvb::ConsoleLogCapture
 		bool                    m_sawEnd = false;
 	};
 
-	/// Chooses where a capture's output will be read from, given what each source shows after the
-	/// begin marker was queued. The buffer is drained every frame once the Console menu exists, so
-	/// it is chosen only if the marker is still there kStableLooks looks in a row.
+	/// Picks the output source. The buffer is drained every frame once the Console menu exists, so it
+	/// is chosen only if the begin marker is still in it kStableLooks looks in a row.
 	class SourceChooser
 	{
 	public:

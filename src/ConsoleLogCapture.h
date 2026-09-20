@@ -5,9 +5,8 @@
 #include <string>
 #include <vector>
 
-// A fenced command's output is read from ConsoleLog::buffer while the game fills it, else from a
-// sampler of ConsoleLog::lastMessage, which keeps only the last of several lines printed in one
-// frame. The buffer stops being filled once the Console menu exists.
+// Output is read from ConsoleLog::buffer, which the game stops filling once the Console menu exists,
+// else from a sampler of lastMessage that keeps only the last line printed per frame.
 namespace dvb::ConsoleLogCapture
 {
 	struct Result
@@ -39,9 +38,8 @@ namespace dvb::ConsoleLogCapture
 		std::size_t engineFrames = 0;
 	};
 
-	/// Runs `a_command` fenced and returns once its output has landed. False if the end marker
-	/// never arrived. Listener thread only. Throws ToolError(409) if another capture is running and
-	/// ToolError(504) if the begin marker never appeared, in which case the command was not run.
+	/// Runs `a_command` fenced; false if the end marker never arrived. Throws 409 if a capture is
+	/// running and 504 if the begin marker never appeared (the command was not run). Listener thread only.
 	bool RunFencedCapture(const std::string& a_command);
 
 	/// Slices the last capture's output from the source it used. Main thread.
