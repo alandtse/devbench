@@ -246,3 +246,40 @@ TEST_CASE("new output restarts the quiet count")
 		CHECK(!detector.Look(false));
 	CHECK(detector.Look(false));
 }
+
+using dvb::ConsoleLogCapture::FindFence;
+
+TEST_CASE("a fence before the starting offset belongs to an earlier capture")
+{
+	const std::string previous = BeginLine() + "\nold output\n" + EndLine() + "\n";
+	const auto        state = FindFence(previous, previous.size());
+	CHECK(!state.hasBegin);
+	CHECK(!state.hasEnd);
+	CHECK(!SliceFencedText(previous, 200, previous.size()).sawBegin);
+}
+
+TEST_CASE("a stale end marker cannot complete a new capture")
+{
+	const std::string previous = BeginLine() + "\nold output\n" + EndLine() + "\n";
+	std::string       text = previous + BeginLine() + "\n";
+	const auto        started = FindFence(text, previous.size());
+	CHECK(started.hasBegin);
+	CHECK(!started.hasEnd);
+
+	text += "new output\n" + EndLine() + "\n";
+	const auto finished = FindFence(text, previous.size());
+	CHECK(finished.hasBegin);
+	CHECK(finished.hasEnd);
+	const auto slice = SliceFencedText(text, 200, previous.size());
+	CHECK(slice.lines.size() == 1);
+	CHECK(slice.lines[0] == "new output");
+}
+
+TEST_CASE("fence detection with no offset finds the latest fence")
+{
+	const std::string text = BeginLine() + "\na\n" + EndLine() + "\n" + BeginLine() + "\n";
+	const auto        state = FindFence(text);
+	CHECK(state.hasBegin);
+	CHECK(!state.hasEnd);
+	CHECK(!FindFence("no markers here").hasBegin);
+}

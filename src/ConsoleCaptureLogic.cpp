@@ -16,11 +16,22 @@ namespace dvb::ConsoleLogCapture
 		}
 	}
 
-	Slice SliceFencedText(std::string_view a_text, std::size_t a_maxLines)
+	FenceState FindFence(std::string_view a_text, std::size_t a_fromOffset)
+	{
+		FenceState        state;
+		const std::size_t begin = a_text.rfind(kMarkerBegin);
+		if (begin == std::string_view::npos || begin < a_fromOffset)
+			return state;
+		state.hasBegin = true;
+		state.hasEnd = a_text.find(kMarkerEnd, begin) != std::string_view::npos;
+		return state;
+	}
+
+	Slice SliceFencedText(std::string_view a_text, std::size_t a_maxLines, std::size_t a_fromOffset)
 	{
 		Slice             out;
 		const std::size_t begin = a_text.rfind(kMarkerBegin);
-		if (begin == std::string_view::npos)
+		if (begin == std::string_view::npos || begin < a_fromOffset)
 			return out;
 		out.sawBegin = true;
 		const std::size_t end = a_text.find(kMarkerEnd, begin);

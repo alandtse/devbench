@@ -32,8 +32,9 @@ namespace dvb::ConsoleLogCapture
 			kSampler,
 		};
 
-		// Sampler state is main thread only.
+		// Sampler state and the buffer baseline are main thread only.
 		LineSampler         g_sampler;
+		std::size_t         g_bufferBaseline = 0;
 		int                 g_lastFrame = -1;
 		std::size_t         g_engineFrames = 0;
 		std::atomic<Source> g_source{ Source::kNone };
@@ -62,6 +63,12 @@ namespace dvb::ConsoleLogCapture
 			return a_text.find(a_token) != std::string_view::npos;
 		}
 
+		// A buffer that shrank below the baseline was drained, so all of it is newer.
+		std::size_t BufferFromOffset(std::size_t a_bufferSize)
+		{
+			return a_bufferSize < g_bufferBaseline ? 0 : g_bufferBaseline;
+		}
+
 		struct LookView
 		{
 			LineSampler::Seen seen = LineSampler::Seen::kNothing;
@@ -83,8 +90,9 @@ namespace dvb::ConsoleLogCapture
 			view.samplerSawBegin = g_sampler.SawBegin();
 			view.samplerSawEnd = g_sampler.SawEnd();
 			const auto buffer = BufferText();
-			view.bufferHasBegin = Has(buffer, kMarkerBegin);
-			view.bufferHasEnd = Has(buffer, kMarkerEnd);
+			const auto fence = FindFence(buffer, BufferFromOffset(buffer.size()));
+			view.bufferHasBegin = fence.hasBegin;
+			view.bufferHasEnd = fence.hasEnd;
 			return view;
 		}
 
@@ -172,7 +180,7 @@ namespace dvb::ConsoleLogCapture
 		}
 	}
 
-	void RunFencedCapture(const std::string& a_command)
+	bool RunFencedCapture(const std::string& a_command)
 	{
 		std::unique_lock<std::mutex> owned(g_captureMutex, std::try_to_lock);
 		if (!owned.owns_lock())
@@ -182,6 +190,7 @@ namespace dvb::ConsoleLogCapture
 		g_timedOut.store(false);
 		MainThread::RunAndWait([]() -> json {
 			g_sampler.Reset(CurrentLine());
+			g_bufferBaseline = BufferText().size();
 			g_lastFrame = -1;
 			g_engineFrames = 0;
 			return true;
@@ -191,9 +200,8 @@ namespace dvb::ConsoleLogCapture
 		const auto deadline = Clock::now() + kCaptureDeadline;
 		const auto source = ChooseSource(deadline);
 		if (source == Source::kNone) {
-			logs::warn("devbench: console capture never saw its begin marker");
 			g_timedOut.store(true);
-			return;
+			throw ToolError(504, "console capture never saw its begin marker; the command was not run");
 		}
 		g_source.store(source);
 
@@ -203,6 +211,7 @@ namespace dvb::ConsoleLogCapture
 			logs::warn("devbench: console capture did not see its end marker");
 			g_timedOut.store(true);
 		}
+		return finished;
 	}
 
 	Result ReadFenced(std::size_t a_maxLines)
@@ -239,7 +248,7 @@ namespace dvb::ConsoleLogCapture
 			out.source = "sampler";
 			out.lossPossible = true;
 		} else if (source == Source::kBuffer || out.bufferHasBegin) {
-			slice = SliceFencedText(buffer, a_maxLines);
+			slice = SliceFencedText(buffer, a_maxLines, BufferFromOffset(buffer.size()));
 			out.source = "buffer";
 		}
 		out.sawBegin = slice.sawBegin;

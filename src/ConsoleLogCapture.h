@@ -39,9 +39,10 @@ namespace dvb::ConsoleLogCapture
 		std::size_t engineFrames = 0;
 	};
 
-	/// Runs `a_command` fenced and returns once its output has landed or the capture timed out.
-	/// Listener thread only. Throws ToolError(409) if another capture is running.
-	void RunFencedCapture(const std::string& a_command);
+	/// Runs `a_command` fenced and returns once its output has landed. False if the end marker
+	/// never arrived. Listener thread only. Throws ToolError(409) if another capture is running and
+	/// ToolError(504) if the begin marker never appeared, in which case the command was not run.
+	bool RunFencedCapture(const std::string& a_command);
 
 	/// Slices the last capture's output from the source it used. Main thread.
 	Result ReadFenced(std::size_t a_maxLines = 200);

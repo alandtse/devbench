@@ -26,9 +26,18 @@ namespace dvb::ConsoleLogCapture
 		std::vector<std::string> lines;
 	};
 
-	/// The lines between the LAST begin marker and the end marker after it, marker lines
-	/// excluded, blank lines dropped, at most a_maxLines (the most recent).
-	Slice SliceFencedText(std::string_view a_text, std::size_t a_maxLines);
+	/// Whether the text holds a begin marker at or after a_fromOffset, and an end marker after it.
+	/// Markers before a_fromOffset belong to an earlier capture.
+	struct FenceState
+	{
+		bool hasBegin = false;
+		bool hasEnd = false;
+	};
+	FenceState FindFence(std::string_view a_text, std::size_t a_fromOffset = 0);
+
+	/// The lines between the LAST begin marker (at or after a_fromOffset) and the end marker after
+	/// it, marker lines excluded, blank lines dropped, at most a_maxLines (the most recent).
+	Slice SliceFencedText(std::string_view a_text, std::size_t a_maxLines, std::size_t a_fromOffset = 0);
 	Slice SliceFencedLines(const std::deque<std::string>& a_lines, std::size_t a_maxLines);
 
 	/// Builds a scrollback from repeated looks at one "most recent line" slot. A line replaced
