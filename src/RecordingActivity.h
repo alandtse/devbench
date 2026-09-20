@@ -14,7 +14,7 @@ namespace dvb::Recording
 	json ActivityCaptureContract();
 	json SummarizeActivity(const json& a_events);
 
-	// True for a keyboard button/char event whose key is one of a_keys (DirectInput scancodes).
+	// a_keys are DirectInput scancodes.
 	bool IsKeyEventFor(const json& a_event, const std::vector<int>& a_keys);
 
 	// Drops the keystrokes that only exist to operate the console (its toggle key and everything
