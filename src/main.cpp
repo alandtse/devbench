@@ -2,6 +2,7 @@
 #include "Capture.h"
 #include "Config.h"
 #include "ConsoleHook.h"
+#include "FreeCamera.h"
 #include "GameEvents.h"
 #include "GameState.h"
 #include "HostApi.h"
@@ -12,7 +13,6 @@
 #include "Server.h"
 #include "StallWatchdog.h"
 #include "Tools.h"
-#include "VRFreeCamera.h"
 #include "VRInput.h"
 #include "Version.h"
 
@@ -67,9 +67,9 @@ namespace
 		if (!a_msg)
 			return;
 		if (a_msg->type == SKSE::MessagingInterface::kPreLoadGame)
-			dvb::VRFreeCamera::BeginLoad();
+			dvb::FreeCamera::BeginLoad();
 		else if (a_msg->type == SKSE::MessagingInterface::kNewGame || a_msg->type == SKSE::MessagingInterface::kPostLoadGame)
-			dvb::VRFreeCamera::EndLoad();
+			dvb::FreeCamera::EndLoad();
 		// Init at kPostLoad, not kDataLoaded: SKSE runs ALL plugins' kPostLoad before any
 		// kDataLoaded, so the cross-plugin interface is ready when consumer mods request it
 		// at their kDataLoaded (otherwise plugin order can make us answer too late — a

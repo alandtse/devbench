@@ -40,7 +40,7 @@ namespace camera_test_RE
 	enum class CameraState : std::uint32_t
 	{
 		kFirstPerson = 0,
-		kFree = 3,
+		kFree = 1,
 		kVR = 9,
 		kVRTotal = 14
 	};
@@ -68,26 +68,53 @@ namespace camera_test_RE
 		{
 			std::array<BSTSmartPointer<TESCameraState>, 14> values;
 			auto&                                           operator[](CameraState a_id) { return values[static_cast<unsigned>(a_id)]; }
+			const auto&                                     operator[](CameraState a_id) const { return values[static_cast<unsigned>(a_id)]; }
 			auto                                            begin() const { return values.begin(); }
 			auto                                            end() const { return values.end(); }
 		};
 		struct RuntimeData
 		{
 			States cameraStates;
-		} data;
+		};
+		RuntimeData                     vrData;
+		RuntimeData                     flatData;
 		inline static PlayerCamera*     singleton{};
 		static PlayerCamera*            GetSingleton() { return singleton; }
-		RuntimeData*                    GetVRRuntimeData() { return &data; }
+		RuntimeData*                    GetVRRuntimeData() { return &vrData; }
+		RuntimeData&                    GetRuntimeData() { return flatData; }
 		BSTSmartPointer<TESCameraState> currentState;
 		bool                            cameraRoot{ true };
 		bool                            rejectTransition{};
 		int                             transitions{};
-		void                            SetState(TESCameraState* a_state)
+		// Flat model of PlayerCamera::ToggleFlyCam: pushes the current state as "parent",
+		// seeds the free state from it, and switches; toggling off pops the parent back.
+		BSTSmartPointer<TESCameraState> flatParent;
+		void                            ToggleFreeCameraMode(bool)
+		{
+			auto& free = flatData.cameraStates[CameraState::kFree];
+			if (currentState == free) {
+				SetState(flatParent.get());
+				flatParent.reset();
+				return;
+			}
+			free->sourceRotation = currentState->sourceRotation;
+			free->sourcePosition = currentState->sourcePosition;
+			flatParent = currentState;
+			SetState(free.get());
+		}
+		bool IsInFreeCameraMode() const { return currentState == flatData.cameraStates[CameraState::kFree]; }
+		void SetState(TESCameraState* a_state)
 		{
 			++transitions;
 			if (rejectTransition)
 				return;
-			for (const auto& state : data.cameraStates) {
+			for (const auto& state : vrData.cameraStates) {
+				if (state.get() == a_state) {
+					currentState = state;
+					return;
+				}
+			}
+			for (const auto& state : flatData.cameraStates) {
 				if (state.get() == a_state) {
 					currentState = state;
 					return;
@@ -118,7 +145,8 @@ namespace camera_test_REL
 {
 	struct Module
 	{
-		static bool IsVR() { return true; }
+		inline static bool vr = true;
+		static bool        IsVR() { return vr; }
 	};
 	struct VariantID
 	{
@@ -149,13 +177,13 @@ namespace camera_test_REL
 
 #define RE camera_test_RE
 #define REL camera_test_REL
-#include "../src/VRFreeCamera.cpp"
+#include "../src/FreeCamera.cpp"
 #undef REL
 #undef RE
 
 namespace
 {
-	namespace Camera = dvb::VRFreeCamera;
+	namespace Camera = dvb::FreeCamera;
 	namespace Model = camera_test_RE;
 
 	struct Scene
@@ -173,9 +201,9 @@ namespace
 			prior->id = Model::CameraState::kVR;
 			other->id = Model::CameraState::kFirstPerson;
 			free->id = Model::CameraState::kFree;
-			camera.data.cameraStates[prior->id] = prior;
-			camera.data.cameraStates[other->id] = other;
-			camera.data.cameraStates[free->id] = free;
+			camera.vrData.cameraStates[prior->id] = prior;
+			camera.vrData.cameraStates[other->id] = other;
+			camera.vrData.cameraStates[free->id] = free;
 			camera.currentState = prior;
 			Camera::EndLoad();
 		}
@@ -264,7 +292,7 @@ TEST_CASE("VR camera refuses replaced free and return states")
 {
 	Scene scene;
 	scene.Enable();
-	scene.camera.data.cameraStates[scene.prior->id] = scene.other;
+	scene.camera.vrData.cameraStates[scene.prior->id] = scene.other;
 	ExpectError(409, [&] { scene.Enable(false); });
 	CHECK(scene.camera.currentState == scene.free);
 	CHECK(!Camera::IsOwned());
@@ -273,7 +301,7 @@ TEST_CASE("VR camera refuses replaced free and return states")
 	auto replacement = std::make_shared<Model::FreeCameraState>();
 	replacement->camera = &scene.camera;
 	replacement->id = Model::CameraState::kFree;
-	scene.camera.data.cameraStates[Model::CameraState::kFree] = replacement;
+	scene.camera.vrData.cameraStates[Model::CameraState::kFree] = replacement;
 	ExpectError(409, [&] { scene.Drive(); });
 	CHECK(!Camera::IsOwned());
 	CHECK(replacement->translation.x == 0);
@@ -332,7 +360,7 @@ TEST_CASE("VR camera requires a loaded player and a registered source state")
 	scene.player.loaded = false;
 	ExpectError(422, [&] { scene.Enable(); });
 	scene.player.loaded = true;
-	scene.camera.data.cameraStates[scene.prior->id].reset();
+	scene.camera.vrData.cameraStates[scene.prior->id].reset();
 	ExpectError(422, [&] { scene.Enable(); });
 	CHECK(scene.camera.transitions == 0);
 	CHECK(!Camera::IsOwned());
@@ -354,8 +382,8 @@ TEST_CASE("VR camera load recovery reacquires replacement scene states")
 	scene.prior->camera = scene.free->camera = &scene.camera;
 	scene.prior->id = Model::CameraState::kVR;
 	scene.free->id = Model::CameraState::kFree;
-	scene.camera.data.cameraStates[Model::CameraState::kVR] = scene.prior;
-	scene.camera.data.cameraStates[Model::CameraState::kFree] = scene.free;
+	scene.camera.vrData.cameraStates[Model::CameraState::kVR] = scene.prior;
+	scene.camera.vrData.cameraStates[Model::CameraState::kFree] = scene.free;
 	scene.camera.currentState = scene.free;
 	CHECK(oldPrior.expired() && oldFree.expired());
 	scene.camera.rejectTransition = false;
@@ -389,13 +417,13 @@ TEST_CASE("VR camera load recovery validates the current return-state registrati
 	scene.camera.rejectTransition = true;
 	Camera::BeginLoad();
 	scene.camera.rejectTransition = false;
-	scene.camera.data.cameraStates[Model::CameraState::kVR].reset();
+	scene.camera.vrData.cameraStates[Model::CameraState::kVR].reset();
 	const auto transitions = scene.camera.transitions;
 	Camera::EndLoad();
 	ExpectError(500, [&] { scene.Enable(false); });
-	scene.camera.data.cameraStates[Model::CameraState::kVR] = scene.other;
+	scene.camera.vrData.cameraStates[Model::CameraState::kVR] = scene.other;
 	ExpectError(500, [&] { scene.Enable(false); });
-	scene.camera.data.cameraStates[Model::CameraState::kVR] = scene.prior;
+	scene.camera.vrData.cameraStates[Model::CameraState::kVR] = scene.prior;
 	scene.prior->camera = nullptr;
 	ExpectError(500, [&] { scene.Enable(false); });
 	CHECK(scene.camera.transitions == transitions);
@@ -511,4 +539,102 @@ TEST_CASE("a replay camera hold that failed to activate does not restore on dest
 	}
 	// Destruction must not have tried to restore a state this hold never captured.
 	CHECK(scene.camera.currentState == scene.free);
+}
+
+namespace
+{
+	// Flat (SE/AE) path: the engine's own ToggleFreeCameraMode pushes/pops the prior state
+	// itself, so these cases drive that toggle rather than the hand-rolled VR state juggling
+	// above. Module::vr is a process-global fake, so the fixture restores it on destruction.
+	struct FlatScene
+	{
+		Model::PlayerCamera                     camera;
+		Model::PlayerCharacter                  player;
+		std::shared_ptr<Model::TESCameraState>  other = std::make_shared<Model::TESCameraState>();
+		std::shared_ptr<Model::FreeCameraState> free = std::make_shared<Model::FreeCameraState>();
+		FlatScene()
+		{
+			Model::PlayerCamera::singleton = &camera;
+			Model::PlayerCharacter::singleton = &player;
+			other->camera = free->camera = &camera;
+			other->id = Model::CameraState::kFirstPerson;
+			free->id = Model::CameraState::kFree;
+			camera.flatData.cameraStates[other->id] = other;
+			camera.flatData.cameraStates[free->id] = free;
+			camera.currentState = other;
+			camera_test_REL::Module::vr = false;
+			Camera::EndLoad();
+		}
+		~FlatScene()
+		{
+			camera_test_REL::Module::vr = true;
+			Model::PlayerCamera::singleton = nullptr;
+			Model::PlayerCharacter::singleton = nullptr;
+		}
+		void Enable(bool a_on = true) { Camera::SetEnabled(a_on, Camera::CurrentSession()); }
+		void Drive() { Camera::Drive(10, 20, 30, 0.3f, 0.5f, Camera::CurrentSession()); }
+	};
+}
+
+TEST_CASE("flat camera enable/drive/disable round trip restores the exact prior state")
+{
+	FlatScene scene;
+	scene.Enable();
+	CHECK(Camera::IsOwned());
+	CHECK(scene.camera.IsInFreeCameraMode());
+	scene.Drive();
+	CHECK(scene.free->translation.x == 10 && scene.free->translation.y == 20 && scene.free->translation.z == 30);
+	CHECK(scene.free->rotation.x == 0.3f && scene.free->rotation.y == 0.5f);
+	scene.Enable(false);
+	CHECK(scene.camera.currentState == scene.other);
+	CHECK(!Camera::IsOwned());
+}
+
+TEST_CASE("flat camera rejects every mutation of an externally activated free camera")
+{
+	FlatScene scene;
+	scene.camera.currentState = scene.free;
+	scene.free->translation = { 90, 80, 70 };
+	ExpectError(409, [&] { scene.Enable(); });
+	ExpectError(409, [&] { scene.Enable(false); });
+	ExpectError(409, [&] { scene.Drive(); });
+	CHECK(scene.camera.transitions == 0);
+	CHECK(scene.free->translation.x == 90);
+	CHECK(!Camera::IsOwned());
+}
+
+TEST_CASE("flat camera observation releases ownership after an external state change")
+{
+	FlatScene scene;
+	scene.Enable();
+	scene.camera.currentState = scene.other;
+	CHECK(!Camera::IsOwned());
+	ExpectError(409, [&] { scene.Drive(); });
+	scene.Enable();
+	scene.Enable(false);
+	CHECK(scene.camera.currentState == scene.other);
+}
+
+TEST_CASE("flat camera requires a loaded player")
+{
+	FlatScene scene;
+	scene.player.loaded = false;
+	ExpectError(422, [&] { scene.Enable(); });
+	CHECK(scene.camera.transitions == 0);
+	CHECK(!Camera::IsOwned());
+}
+
+TEST_CASE("flat camera BeginLoad/EndLoad invalidate an in-flight session without touching engine state")
+{
+	FlatScene scene;
+	scene.Enable();
+	const auto session = Camera::CurrentSession();
+	CHECK(scene.camera.IsInFreeCameraMode());
+	const auto transitions = scene.camera.transitions;
+	Camera::BeginLoad();
+	Camera::EndLoad();
+	CHECK(scene.camera.transitions == transitions);
+	CHECK(scene.camera.IsInFreeCameraMode());
+	CHECK(!Camera::IsOwned());
+	ExpectError(409, [&] { Camera::SetEnabled(true, session); });
 }
