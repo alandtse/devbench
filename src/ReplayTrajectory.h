@@ -3,6 +3,7 @@
 #include "Json.h"
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace dvb::Recording
@@ -14,6 +15,16 @@ namespace dvb::Recording
 		double z = 0.0;
 		double yawDeg = 0.0;
 		double pitchDeg = 0.0;
+
+		// The recording's own captured camera world transform, when present. Radians, world-space
+		// (independent of yawDeg/pitchDeg's degrees/player convention).
+		std::optional<double> camX;
+		std::optional<double> camY;
+		std::optional<double> camZ;
+		std::optional<double> camPitch;
+		std::optional<double> camYaw;
+
+		[[nodiscard]] bool HasCam() const { return camX.has_value() && camPitch.has_value(); }
 	};
 
 	struct PoseKeyframe

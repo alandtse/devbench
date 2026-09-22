@@ -2651,16 +2651,12 @@ namespace dvb
 					// it would otherwise hang when a step throws.
 					const json coupling = plan.value("coupling", json::object());
 					const bool interpolate = Recording::WantsPoseDriver(a_args);
-					// A VR recording captured with an exact camera transform (BuildScenario's
-					// cameraDriveStep) drives the free camera along it instead of following setPov
-					// + player position, closing the head-look gap flat replay doesn't have. Held
-					// from the trajectory boundary (not scene setup) to any exit; see ReplayHold.
-					const bool        cameraDriveEligible = plan.value("cameraDriveEligible", false);
+					// Held from the trajectory boundary (not scene setup) to any exit; see ReplayHold.
 					const std::size_t trajectoryStepCount = plan.value("trajectoryStepCount", static_cast<std::size_t>(0));
 					const auto        cameraHold = std::make_shared<VRFreeCamera::ReplayHold>();
 					auto              runReplay = [&a_registry, &a_events, a_ctx, steps, runId, coupling,
 													  activity, inputOwner, interpolate, cameraHold,
-													  cameraDriveEligible, trajectoryStepCount]() -> json {
+													  trajectoryStepCount]() -> json {
 						ActiveReplayClaim activeReplayGuard{ runId };
 						const auto        releaseRecordedInput = [&]() -> json {
 							if (inputOwner.empty())
@@ -2707,13 +2703,11 @@ namespace dvb
 							bool cameraActivated = false;
 							result = ScenarioHandler(json{ { "steps", steps }, { "runId", runId }, { "smoothPose", interpolate } },
 								a_ctx, a_registry, a_events,
-								[&cameraActivated, cameraHold, cameraDriveEligible, trajectoryStepCount](std::size_t a_index) {
-									if (cameraActivated || !cameraDriveEligible || a_index != trajectoryStepCount)
+								[&cameraActivated, cameraHold, trajectoryStepCount](std::size_t a_index) {
+									if (cameraActivated || a_index != trajectoryStepCount)
 										return;
 									cameraActivated = true;
-									// No setPov/follow-camera fallback exists for a camera-drive
-									// recording: every remaining step is itself a drive step, so a
-									// failure here must abort now rather than let the next step 409.
+									// No-op off VR; on VR, a failure here must abort the replay.
 									cameraHold->Activate();
 								});
 						} catch (const std::exception& e) {

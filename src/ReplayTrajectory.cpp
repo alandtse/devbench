@@ -9,6 +9,8 @@ namespace dvb::Recording
 	{
 		constexpr double kFullTurnDeg = 360.0;
 		constexpr double kHalfTurnDeg = 180.0;
+		constexpr double kPi = 3.14159265358979323846;
+		constexpr double kTwoPi = 2.0 * kPi;
 
 		double NormalizeDeg(double a_deg)
 		{
@@ -32,6 +34,22 @@ namespace dvb::Recording
 			a_out = { a_pose[0].get<double>(), a_pose[1].get<double>(), a_pose[2].get<double>(),
 				a_pose[3].get<double>(), a_pose[4].get<double>() };
 			return true;
+		}
+
+		// [camX, camY, camZ, camPitchRad, camYawRad] -- the recording's own captured camera
+		// transform for this sample, when present (see BuildScenario).
+		void ReadCamPose(const json& a_camPose, Pose& a_out)
+		{
+			if (!a_camPose.is_array() || a_camPose.size() < 5)
+				return;
+			for (std::size_t i = 0; i < 5; ++i)
+				if (!a_camPose[i].is_number())
+					return;
+			a_out.camX = a_camPose[0].get<double>();
+			a_out.camY = a_camPose[1].get<double>();
+			a_out.camZ = a_camPose[2].get<double>();
+			a_out.camPitch = a_camPose[3].get<double>();
+			a_out.camYaw = a_camPose[4].get<double>();
 		}
 	}
 
@@ -64,6 +82,8 @@ namespace dvb::Recording
 				clockMs = step["atMs"].get<std::int64_t>();
 			Pose pose;
 			if (step.contains("pose") && ReadPose(step["pose"], pose)) {
+				if (step.contains("camPose"))
+					ReadCamPose(step["camPose"], pose);
 				if (!keyframes.empty() && keyframes.back().tMs == clockMs)
 					keyframes.back().pose = pose;
 				else
@@ -180,6 +200,20 @@ namespace dvb::Recording
 		out.z = blend(&Pose::z);
 		out.yawDeg = NormalizeDeg(a.yawDeg + ShortestArcDeltaDeg(a.yawDeg, b.yawDeg) * u);
 		out.pitchDeg = a.pitchDeg + (b.pitchDeg - a.pitchDeg) * u;
+
+		// Only when BOTH neighbours have camera data; a lone gap falls back at replay time.
+		if (a.HasCam() && b.HasCam()) {
+			out.camX = *a.camX + (*b.camX - *a.camX) * u;
+			out.camY = *a.camY + (*b.camY - *a.camY) * u;
+			out.camZ = *a.camZ + (*b.camZ - *a.camZ) * u;
+			out.camPitch = *a.camPitch + (*b.camPitch - *a.camPitch) * u;
+			double yawDelta = std::fmod(*b.camYaw - *a.camYaw, kTwoPi);
+			if (yawDelta > kPi)
+				yawDelta -= kTwoPi;
+			else if (yawDelta < -kPi)
+				yawDelta += kTwoPi;
+			out.camYaw = *a.camYaw + yawDelta * u;
+		}
 		return out;
 	}
 }

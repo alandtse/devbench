@@ -2,6 +2,7 @@
 
 #include "GameState.h"
 #include "ToolRegistry.h"
+#include "VRFreeCamera.h"
 
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
@@ -11,6 +12,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 namespace dvb::Recording::ReplayDriver
@@ -18,8 +20,11 @@ namespace dvb::Recording::ReplayDriver
 	namespace
 	{
 		constexpr double kDegToRad = 0.017453292519943295;
-		constexpr auto   kPacerRetryDelay = std::chrono::milliseconds(1);
-		constexpr auto   kFinalPoseWait = std::chrono::milliseconds(500);
+		// Average human eye height as a fraction of standing height (eyes sit just under the
+		// crown, not at the very top of the skull).
+		constexpr float kEyeHeightRatio = 0.93F;
+		constexpr auto  kPacerRetryDelay = std::chrono::milliseconds(1);
+		constexpr auto  kFinalPoseWait = std::chrono::milliseconds(500);
 
 		using Clock = std::chrono::steady_clock;
 
@@ -105,7 +110,10 @@ namespace dvb::Recording::ReplayDriver
 					std::chrono::duration<double, std::milli>(Clock::now() - m_start).count();
 				const double tMs = static_cast<double>(m_trajectory.StartMs()) + elapsedMs;
 				const bool   finishing = tMs >= static_cast<double>(m_trajectory.EndMs());
-				const bool   applied = Apply(m_trajectory.Sample(tMs));
+				const Pose   pose = m_trajectory.Sample(tMs);
+				const bool   applied = Apply(pose);
+				if (applied && REL::Module::IsVR())
+					DriveCamera(pose);
 
 				{
 					std::lock_guard lock(m_statsMutex);
@@ -142,6 +150,40 @@ namespace dvb::Recording::ReplayDriver
 				return true;
 			}
 
+			// GetHeight() is the actor's bounding-box height, in the same units as position;
+			// cached per replay since it doesn't change while standing/moving upright.
+			float HeadHeightOffset()
+			{
+				if (m_headHeightOffset)
+					return *m_headHeightOffset;
+				auto* player = RE::PlayerCharacter::GetSingleton();
+				m_headHeightOffset = player ? player->GetHeight() * kEyeHeightRatio : 0.0F;
+				return *m_headHeightOffset;
+			}
+
+			// Drives the VR free camera every frame from the same interpolated pose, using the
+			// recording's own captured camera transform when present, else one derived from the
+			// player's pose.
+			void DriveCamera(const Pose& a_pose)
+			{
+				try {
+					if (a_pose.HasCam()) {
+						VRFreeCamera::Drive(static_cast<float>(*a_pose.camX), static_cast<float>(*a_pose.camY),
+							static_cast<float>(*a_pose.camZ), static_cast<float>(*a_pose.camPitch),
+							static_cast<float>(*a_pose.camYaw), VRFreeCamera::CurrentSession());
+						return;
+					}
+					VRFreeCamera::Drive(static_cast<float>(a_pose.x), static_cast<float>(a_pose.y),
+						static_cast<float>(a_pose.z) + HeadHeightOffset(),
+						static_cast<float>(a_pose.pitchDeg * kDegToRad), static_cast<float>(a_pose.yawDeg * kDegToRad),
+						VRFreeCamera::CurrentSession());
+				} catch (const std::exception& e) {
+					// The hold may not have activated yet for this exact frame, or the free camera
+					// was taken by another owner; either way the next frame retries on its own.
+					logs::warn("devbench: replay camera drive skipped this frame: {}", e.what());
+				}
+			}
+
 			Trajectory              m_trajectory;
 			Clock::time_point       m_start;
 			std::atomic<bool>       m_cancelled{ false };
@@ -159,6 +201,7 @@ namespace dvb::Recording::ReplayDriver
 			int                     m_maxFrameGap = 0;
 			std::uint64_t           m_sameFrameRequeues = 0;
 			bool                    m_finished = false;
+			std::optional<float>    m_headHeightOffset;
 		};
 
 		class SessionImpl final : public Session
