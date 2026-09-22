@@ -1,9 +1,23 @@
 #include "test_framework.h"
 
+#include "MainThread.h"
+
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
+
+// ReplayHold marshals to the main thread via MainThread::RunAndWait, whose real
+// implementation needs SKSE's TaskInterface and isn't linked into this pure-logic
+// binary. This test has no real main/listener thread split, so faking it as a
+// direct synchronous call is exact, not an approximation.
+namespace dvb::MainThread
+{
+	json RunAndWait(std::function<json()> a_fn, std::chrono::milliseconds, const std::atomic<bool>*)
+	{
+		return a_fn();
+	}
+}
 
 // Compile the production controller against a small camera model. This checks
 // ownership, lifecycle and mutations; it does not claim to qualify Skyrim's ABI
@@ -455,4 +469,48 @@ TEST_CASE("VR camera observation cancels pending recovery before a foreign free-
 	ExpectError(409, [&] { scene.Enable(false); });
 	CHECK(scene.camera.currentState == scene.free);
 	CHECK(scene.camera.transitions == transitions);
+}
+
+TEST_CASE("a replay camera hold activates the free camera and restores on destruction")
+{
+	Scene scene;
+	{
+		Camera::ReplayHold hold;
+		hold.Activate();
+		CHECK(scene.camera.currentState == scene.free);
+	}
+	CHECK(scene.camera.currentState == scene.prior);
+}
+
+TEST_CASE("a replay camera hold that never activated restores nothing")
+{
+	Scene scene;
+	{
+		Camera::ReplayHold hold;
+	}
+	CHECK(scene.camera.currentState == scene.prior);
+	CHECK(scene.camera.transitions == 0);
+}
+
+TEST_CASE("activating a replay camera hold twice is a no-op")
+{
+	Scene              scene;
+	Camera::ReplayHold hold;
+	hold.Activate();
+	const auto transitions = scene.camera.transitions;
+	hold.Activate();
+	CHECK(scene.camera.transitions == transitions);
+}
+
+TEST_CASE("a replay camera hold that failed to activate does not restore on destruction")
+{
+	Scene scene;
+	scene.camera.currentState = scene.free;  // owned elsewhere before the hold ever runs
+	{
+		Camera::ReplayHold hold;
+		ExpectError(409, [&] { hold.Activate(); });
+		CHECK(scene.camera.currentState == scene.free);
+	}
+	// Destruction must not have tried to restore a state this hold never captured.
+	CHECK(scene.camera.currentState == scene.free);
 }

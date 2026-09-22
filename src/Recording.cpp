@@ -597,8 +597,8 @@ namespace dvb::Recording
 
 		// Build a replayable scenario: teleport the player to each sample (per-axis setpos +
 		// setangle in degrees) with a wait of intervalMs between, so the captured path doubles
-		// as the measure window. Player-teleport replay needs no new engine hooks; smooth
-		// interpolation and a free-camera path are later enhancements.
+		// as the measure window. On VR, the camera is driven separately (see cameraDriveStep)
+		// since HMD look is an extra degree of freedom setpos+setPov can't reproduce.
 		json BuildScenario(const Recorder& a_rec, long a_recordedMs)
 		{
 			const auto consoleStep = [](const std::string& a_cmd, long a_atMs) {
@@ -613,11 +613,26 @@ namespace dvb::Recording
 					step["atMs"] = a_atMs;
 				return step;
 			};
+			const auto cameraDriveStep = [](const std::array<double, 5>& a_pose, long a_atMs) {
+				json step{ { "tool", "camera" },
+					{ "args", json{ { "action", "drive" }, { "x", a_pose[0] }, { "y", a_pose[1] },
+								  { "z", a_pose[2] }, { "pitch", a_pose[3] }, { "yaw", a_pose[4] } } } };
+				if (a_atMs >= 0)
+					step["atMs"] = a_atMs;
+				return step;
+			};
 
+			// VR has an independent head/free-look degree of freedom setpos+setPov can't capture
+			// or reproduce; drive the exact recorded camera transform instead (see VRFreeCamera) so
+			// a VR replay is as deterministic as flat's setpos-driven one. Flat has no such gap.
+			const bool            useCameraDrive = REL::Module::IsVR();
+			bool                  emittedCameraDrive = false;
 			json                  steps = json::array();
-			std::string           lastPov;     // emit a camera step only when the POV changes
-			std::array<double, 5> lastPose{};  // previous emitted pose (round-2); a repeat → bare wait
+			std::string           lastPov;        // emit a camera step only when the POV changes
+			std::array<double, 5> lastPose{};     // previous emitted pose (round-2); a repeat → bare wait
+			std::array<double, 5> lastCamPose{};  // previous emitted camera drive pose (round-4)
 			bool                  havePose = false;
+			bool                  haveCamPose = false;
 			size_t                cmdIdx = 0;    // drain console commands captured up to each sample's frame
 			long                  prevTMs = -1;  // previous sample's wall-clock offset for delta waits
 			for (const auto& s : a_rec.samples) {
@@ -629,7 +644,24 @@ namespace dvb::Recording
 					steps.push_back(consoleStep(a_rec.commands[cmdIdx].value("command", std::string{}),
 						a_rec.commands[cmdIdx].value("tMs", static_cast<long>(-1))));
 
-				if (const auto pov = s.value("pov", std::string{}); !pov.empty() && pov != lastPov) {
+				if (useCameraDrive && s.contains("camX") && s.contains("camPitch")) {
+					// camera drive's pitch/yaw are native free-camera radians (unlike the pose
+					// step below, which feeds a degrees-based console command) -- no kRadToDeg here.
+					const auto                  r2 = [](double v) { return std::round(v * 10000.0) / 10000.0; };
+					const std::array<double, 5> camPose{
+						r2(s.value("camX", 0.0)),
+						r2(s.value("camY", 0.0)),
+						r2(s.value("camZ", 0.0)),
+						r2(s.value("camPitch", 0.0)),
+						r2(s.value("camYaw", 0.0)),
+					};
+					if (!haveCamPose || camPose != lastCamPose) {
+						steps.push_back(cameraDriveStep(camPose, tMs));
+						lastCamPose = camPose;
+						haveCamPose = true;
+						emittedCameraDrive = true;
+					}
+				} else if (const auto pov = s.value("pov", std::string{}); !pov.empty() && pov != lastPov) {
 					steps.push_back(cameraStep(pov, tMs));
 					lastPov = pov;
 				}
@@ -689,7 +721,7 @@ namespace dvb::Recording
 				{ "camera", json::array({ "worldPosition", "worldPitch", "worldYaw", "pov" }) },
 				{ "vrTrackedNodes", json::array({ "hmd", "leftWand", "rightWand" }) },
 				{ "transformEncoding", "[tx,ty,tz,r00,r01,r02,r10,r11,r12,r20,r21,r22,scale]" },
-				{ "vrTransformReplay", false },
+				{ "vrTransformReplay", emittedCameraDrive },
 			};
 			meta["activityCounts"] = SummarizeActivity(a_rec.activityEvents);
 			meta["trackingSampleCount"] = a_rec.trackingSamples.size();
@@ -1515,6 +1547,10 @@ namespace dvb::Recording
 		const json& trajectory = activityPlan["steps"];
 		long        cumMs = 0;
 		size_t      cpIdx = 0;
+		// Everything above is restore/settle, not the recorded trajectory itself -- the replay
+		// camera hold (see cameraDriveEligible below) only activates from here on, so a
+		// content-mismatch modal or the scene assert still run against the normal camera.
+		const std::size_t trajectoryStepCount = steps.size();
 		if (!vrPlan.value("step", json(nullptr)).is_null())
 			steps.push_back(vrPlan["step"]);
 		for (const auto& s : trajectory) {
@@ -1557,6 +1593,10 @@ namespace dvb::Recording
 								std::string{} },
 			{ "restored", restored },  // handler's sync menu pre-check skips restore plans (the load clears menus)
 			{ "allowsInitialMenus", allowsInitialMenus },
+			{ "trajectoryStepCount", trajectoryStepCount },  // the replay camera hold activates from here on
+			// This recording's own camera-drive steps are radians/world-space -- only meaningful
+			// (and only present) if it was captured on VR; a flat or pre-existing recording has none.
+			{ "cameraDriveEligible", meta.value("poseCapture", json::object()).value("vrTransformReplay", false) },
 			{ "coupling", json{
 							  { "tier", tier },
 							  { "producer", producerTier },

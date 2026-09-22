@@ -1,8 +1,10 @@
 #include "VRFreeCamera.h"
 
+#include "MainThread.h"
 #include "ToolRegistry.h"
 
 #include <atomic>
+#include <chrono>
 
 namespace dvb::VRFreeCamera
 {
@@ -196,5 +198,31 @@ namespace dvb::VRFreeCamera
 		if (!RecoverAfterLoad())
 			logs::warn("devbench: VR camera post-load recovery is pending; retry freecam off after the scene is ready");
 		g_loading.store(false);
+	}
+
+	void ReplayHold::Activate()
+	{
+		if (m_active || !REL::Module::IsVR())
+			return;
+		m_session = CurrentSession();
+		MainThread::RunAndWait([this]() -> json {
+			SetEnabled(true, m_session);
+			return json{};
+		});
+		m_active = true;
+	}
+
+	ReplayHold::~ReplayHold()
+	{
+		if (!m_active)
+			return;
+		try {
+			MainThread::RunAndWait([this]() -> json {
+				SetEnabled(false, m_session);
+				return json{};
+			});
+		} catch (const std::exception& e) {
+			logs::warn("devbench: replay free-camera restore failed: {}", e.what());
+		}
 	}
 }

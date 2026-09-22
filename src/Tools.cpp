@@ -26,6 +26,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <optional>
 #include <thread>
@@ -1801,8 +1802,12 @@ namespace dvb
 		};
 
 		/// Execute a scenario step list and return its complete transcript.
+		// a_beforeStep, when set, is called with each step's index right before it runs -- record
+		// replay's own hook for activating the replay camera hold once the recorded trajectory
+		// begins (see BuildReplaySteps' trajectoryStepCount). The plain scenario tool has none.
 		json ScenarioHandler(const json& a_args, const ToolContext& a_ctx,
-			const ToolRegistry& a_registry, EventBus& a_events)
+			const ToolRegistry& a_registry, EventBus& a_events,
+			const std::function<void(std::size_t)>& a_beforeStep = {})
 		{
 			if (!a_args.contains("steps") || !a_args["steps"].is_array())
 				throw ToolError(400, "scenario requires a 'steps' array");
@@ -1843,6 +1848,8 @@ namespace dvb
 				// captures if rep N+1's own scene assert succeeds.
 				bool runSceneMismatch = false;
 				for (size_t i = 0; i < steps.size() && !aborted; ++i) {
+					if (a_beforeStep)
+						a_beforeStep(i);
 					const json& step = steps[i];
 					json        r{ { "index", i } };
 					if (repeat > 1)
@@ -2354,7 +2361,11 @@ namespace dvb
 			"unavailable or rejected recovery returns HTTP 500. "
 			"VR drive completes its field writes before return; allow a rendered frame before capture. "
 			"Recordings capture the POV per sample and replay restores it via this tool, since "
-			"what is rendered (and benchmarked) differs by POV.";
+			"what is rendered (and benchmarked) differs by POV. On VR, a recording also captures the "
+			"camera's own world transform per sample; record{action:'replay'} drives it exactly via "
+			"this tool's freecam+drive instead of setPov, since VR head-look is a degree of freedom "
+			"setpos+setPov can't reproduce. Devbench's own replay always owns and releases the free "
+			"camera itself for that duration.";
 		camera.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
@@ -2640,8 +2651,16 @@ namespace dvb
 					// it would otherwise hang when a step throws.
 					const json coupling = plan.value("coupling", json::object());
 					const bool interpolate = Recording::WantsPoseDriver(a_args);
-					auto       runReplay = [&a_registry, &a_events, a_ctx, steps, runId, coupling,
-											   activity, inputOwner, interpolate]() -> json {
+					// A VR recording captured with an exact camera transform (BuildScenario's
+					// cameraDriveStep) drives the free camera along it instead of following setPov
+					// + player position, closing the head-look gap flat replay doesn't have. Held
+					// from the trajectory boundary (not scene setup) to any exit; see ReplayHold.
+					const bool        cameraDriveEligible = plan.value("cameraDriveEligible", false);
+					const std::size_t trajectoryStepCount = plan.value("trajectoryStepCount", static_cast<std::size_t>(0));
+					const auto        cameraHold = std::make_shared<VRFreeCamera::ReplayHold>();
+					auto              runReplay = [&a_registry, &a_events, a_ctx, steps, runId, coupling,
+													  activity, inputOwner, interpolate, cameraHold,
+													  cameraDriveEligible, trajectoryStepCount]() -> json {
 						ActiveReplayClaim activeReplayGuard{ runId };
 						const auto        releaseRecordedInput = [&]() -> json {
 							if (inputOwner.empty())
@@ -2685,8 +2704,21 @@ namespace dvb
 							const json initialCleanup = releaseRecordedInput();
 							if (!initialCleanup.value("ok", true))
 								throw ToolError(409, "recorded input cleanup is still pending; retry after controller/key restoration succeeds");
+							bool cameraActivated = false;
 							result = ScenarioHandler(json{ { "steps", steps }, { "runId", runId }, { "smoothPose", interpolate } },
-								a_ctx, a_registry, a_events);
+								a_ctx, a_registry, a_events,
+								[&cameraActivated, cameraHold, cameraDriveEligible, trajectoryStepCount](std::size_t a_index) {
+									if (cameraActivated || !cameraDriveEligible || a_index != trajectoryStepCount)
+										return;
+									cameraActivated = true;
+									try {
+										cameraHold->Activate();
+									} catch (const std::exception& e) {
+										// Best-effort: fall back to setPov + follow-camera rather
+										// than aborting a replay over a camera-only failure.
+										logs::warn("devbench: replay camera hold activation failed, continuing without it: {}", e.what());
+									}
+								});
 						} catch (const std::exception& e) {
 							const json cleanup = releaseRecordedInput();
 							a_events.Publish("replay.finished", json{ { "runId", runId }, { "ok", false }, { "error", e.what() } });

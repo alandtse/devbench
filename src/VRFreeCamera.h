@@ -20,4 +20,26 @@ namespace dvb::VRFreeCamera
 	/// Failed pre-load restoration recovers through the loaded scene's registered normal VR state.
 	void BeginLoad();
 	void EndLoad();
+
+	/// A replay's hold on the free camera: activated once its recorded trajectory begins (not
+	/// during scene setup/restore, so a content-mismatch modal or the scene assert still run
+	/// against the normal camera) and released on any exit path. No-op outside VR. Both
+	/// Activate() and the destructor marshal to the main thread themselves.
+	class ReplayHold
+	{
+	public:
+		ReplayHold() = default;
+		~ReplayHold();
+		ReplayHold(const ReplayHold&) = delete;
+		ReplayHold& operator=(const ReplayHold&) = delete;
+
+		/// Throws ToolError if activation fails (e.g. the free camera is owned elsewhere); the
+		/// caller decides whether that aborts the replay or is logged and continued without
+		/// camera-drive. No-op if already active or outside VR.
+		void Activate();
+
+	private:
+		bool         m_active = false;
+		SessionToken m_session = 0;
+	};
 }
