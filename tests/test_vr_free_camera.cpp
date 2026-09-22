@@ -7,10 +7,8 @@
 #include <cstdint>
 #include <memory>
 
-// ReplayHold marshals to the main thread via MainThread::RunAndWait, whose real
-// implementation needs SKSE's TaskInterface and isn't linked into this pure-logic
-// binary. This test has no real main/listener thread split, so faking it as a
-// direct synchronous call is exact, not an approximation.
+// Fakes MainThread::RunAndWait (the real one needs SKSE's TaskInterface) as a
+// direct synchronous call.
 namespace dvb::MainThread
 {
 	json RunAndWait(std::function<json()> a_fn, std::chrono::milliseconds, const std::atomic<bool>*)

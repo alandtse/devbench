@@ -2711,13 +2711,10 @@ namespace dvb
 									if (cameraActivated || !cameraDriveEligible || a_index != trajectoryStepCount)
 										return;
 									cameraActivated = true;
-									try {
-										cameraHold->Activate();
-									} catch (const std::exception& e) {
-										// Best-effort: fall back to setPov + follow-camera rather
-										// than aborting a replay over a camera-only failure.
-										logs::warn("devbench: replay camera hold activation failed, continuing without it: {}", e.what());
-									}
+									// No setPov/follow-camera fallback exists for a camera-drive
+									// recording: every remaining step is itself a drive step, so a
+									// failure here must abort now rather than let the next step 409.
+									cameraHold->Activate();
 								});
 						} catch (const std::exception& e) {
 							const json cleanup = releaseRecordedInput();

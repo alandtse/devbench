@@ -647,13 +647,13 @@ namespace dvb::Recording
 				if (useCameraDrive && s.contains("camX") && s.contains("camPitch")) {
 					// camera drive's pitch/yaw are native free-camera radians (unlike the pose
 					// step below, which feeds a degrees-based console command) -- no kRadToDeg here.
-					const auto                  r2 = [](double v) { return std::round(v * 10000.0) / 10000.0; };
+					const auto                  roundToFourDecimals = [](double v) { return std::round(v * 10000.0) / 10000.0; };
 					const std::array<double, 5> camPose{
-						r2(s.value("camX", 0.0)),
-						r2(s.value("camY", 0.0)),
-						r2(s.value("camZ", 0.0)),
-						r2(s.value("camPitch", 0.0)),
-						r2(s.value("camYaw", 0.0)),
+						roundToFourDecimals(s.value("camX", 0.0)),
+						roundToFourDecimals(s.value("camY", 0.0)),
+						roundToFourDecimals(s.value("camZ", 0.0)),
+						roundToFourDecimals(s.value("camPitch", 0.0)),
+						roundToFourDecimals(s.value("camYaw", 0.0)),
 					};
 					if (!haveCamPose || camPose != lastCamPose) {
 						steps.push_back(cameraDriveStep(camPose, tMs));
