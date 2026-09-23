@@ -105,6 +105,16 @@ namespace dvb::TimeScaleControl
 			m_requested = m_restoreValue;
 		}
 
+		// Makes the next Reconcile() actually write to the engine when a_live has drifted from
+		// what we last told it, even though our own m_applied bookkeeping still matches
+		// m_requested — otherwise an external change (console sgtm, another mod) that happens
+		// to match our default is invisible to Reconcile's "nothing changed" shortcut.
+		void Resync(float a_live)
+		{
+			if (a_live != m_requested)
+				m_applied = a_live;
+		}
+
 		// The value the engine must be given now, or nullopt when nothing has to change.
 		std::optional<float> Reconcile(std::int64_t a_nowWallMs)
 		{

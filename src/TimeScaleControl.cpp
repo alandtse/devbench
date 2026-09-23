@@ -2,6 +2,7 @@
 
 #include "Capture.h"
 #include "GameClock.h"
+#include "MainThread.h"
 #include "Recording.h"
 #include "ToolRegistry.h"
 
@@ -78,6 +79,21 @@ namespace dvb::TimeScaleControl
 	{
 		const std::int64_t holdMs = a_holdMs > 0 ? std::min<std::int64_t>(a_holdMs, kMaximumLeaseMs) : kDefaultLeaseMs;
 
+		// The cached Effective() can be stale until the pump has run at least once (e.g. an
+		// external console change before any devbench lease ever engaged the clock), which would
+		// make Resync below compare the cache against itself and see no drift. Sample the engine
+		// directly on the main thread first; on timeout (main thread stalled) fall back to the
+		// cached value rather than fail Set() outright.
+		float liveNow = Effective();
+		try {
+			const json sampled = MainThread::RunAndWait([]() -> json {
+				return json{ { "live", static_cast<double>(RE::BSTimer::QGlobalTimeMultiplier()) } };
+			},
+				std::chrono::milliseconds(2000));
+			liveNow = static_cast<float>(sampled.value("live", static_cast<double>(liveNow)));
+		} catch (const std::exception&) {
+		}
+
 		std::optional<bool> engagement;
 		{
 			// The admission check and the reservation it gates must be atomic with respect to
@@ -91,10 +107,18 @@ namespace dvb::TimeScaleControl
 					return { false, "a capture is in flight — retry once it finishes, or pass allowTimeScale:true to change the game's speed anyway" };
 			}
 			const std::int64_t now = NowWallMs();
+			g_liveMultiplier.store(liveNow, std::memory_order_release);
 			if (a_scale == static_cast<float>(kNormalScale))
-				g_reconciler.Release();
+				// Request kNormalScale directly rather than Release()'s lease-restore baseline:
+				// an explicit "set scale to 1" means exactly that, not "whatever it was before
+				// devbench's current hold started".
+				g_reconciler.Request(static_cast<float>(kNormalScale), {}, 0, liveNow);
 			else
-				g_reconciler.Request(a_scale, a_owner, now + holdMs, Effective());
+				g_reconciler.Request(a_scale, a_owner, now + holdMs, liveNow);
+			// Catches a scale that drifted externally (console sgtm, another mod) while our own
+			// bookkeeping still matches the new request, which would otherwise make Reconcile
+			// think there's nothing to write.
+			g_reconciler.Resync(liveNow);
 			engagement = LatchEngagement(NeedsPump(now));
 		}
 		ApplyEngagement(engagement);
