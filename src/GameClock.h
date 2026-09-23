@@ -59,5 +59,7 @@ namespace dvb::GameClock
 
 	// Blocks the calling thread for a_gameMs of GAME time (engaging the clock for the duration),
 	// so a caller's own wait shrinks/grows with the run the same way replay pose/wait steps do.
-	void SleepMs(long a_gameMs);
+	// Returns false if the wall-clock backstop expired first (the main thread stalled) rather
+	// than the game-time deadline being reached — the caller must not treat that as completion.
+	bool SleepMs(long a_gameMs);
 }

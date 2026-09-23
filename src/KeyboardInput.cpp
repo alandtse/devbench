@@ -356,8 +356,10 @@ namespace dvb
 			json Tap(const KeyboardKey& a_key, const std::string& a_owner, int a_durationMs)
 			{
 				json down = Down(a_key, a_owner, std::min(kMaximumMaxHoldMs, a_durationMs + 2000), true);
-				GameClock::SleepMs(a_durationMs);
-				json up;
+				// Always release below regardless of the wait's own outcome — a stalled wait must
+				// not leave the key held, it only means durationMs itself wasn't honored.
+				const bool stalled = !GameClock::SleepMs(a_durationMs);
+				json       up;
 				try {
 					up = Up(a_key, a_owner);
 				} catch (...) {
@@ -372,6 +374,8 @@ namespace dvb
 					{ "down", std::move(down) },
 					{ "up", std::move(up) },
 				};
+				if (stalled)
+					result["stalled"] = true;
 				result.update(KeyJson(a_key));
 				return result;
 			}
@@ -427,7 +431,8 @@ namespace dvb
 						json              result;
 						if (action == "wait") {
 							const int durationMs = BoundedInteger(event, "durationMs", 0, 0, 10000);
-							GameClock::SleepMs(durationMs);
+							if (!GameClock::SleepMs(durationMs))
+								throw ToolError(504, "sequence wait stalled — the main thread did not advance game time within the wall-clock backstop");
 							result = json{ { "action", "wait" }, { "durationMs", durationMs } };
 						} else {
 							const auto key = ParseKey(event);
@@ -443,8 +448,8 @@ namespace dvb
 						}
 						results.push_back(std::move(result));
 						const int afterMs = BoundedInteger(event, "afterMs", 0, 0, 10000);
-						if (afterMs)
-							GameClock::SleepMs(afterMs);
+						if (afterMs && !GameClock::SleepMs(afterMs))
+							throw ToolError(504, "sequence afterMs stalled — the main thread did not advance game time within the wall-clock backstop");
 					}
 				} catch (...) {
 					for (const auto& lease : opened) {

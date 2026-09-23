@@ -1925,8 +1925,8 @@ namespace dvb
 						if (playback.Handle(step)) {
 							r["kind"] = "pose";
 							r["ok"] = true;
-							if (step.contains("wait"))
-								playback.Sleep(step["wait"].get<long>());
+							if (step.contains("wait") && !playback.Sleep(step["wait"].get<long>()))
+								throw ToolError(504, "replay wait stalled — the main thread did not advance game time within the wall-clock backstop");
 						} else if (step.contains("pose")) {
 							// Compact trajectory sample [x, y, z, yawDeg, pitchDeg] → the same
 							// player.setpos/setangle commands v1 stored as five steps (Recording::BuildScenario).
@@ -1969,14 +1969,16 @@ namespace dvb
 							}
 							if (poseOk) {
 								r["ok"] = true;
-								if (step.contains("wait"))
-									playback.Sleep(step["wait"].get<long>());
+								if (step.contains("wait") && !playback.Sleep(step["wait"].get<long>()))
+									throw ToolError(504, "replay wait stalled — the main thread did not advance game time within the wall-clock backstop");
 							}
 						} else if (step.contains("wait")) {
 							const long ms = step["wait"].get<long>();
 							r["kind"] = "wait";
 							r["ms"] = ms;
-							playback.Sleep(ms);
+							if (!playback.Sleep(ms))
+								throw ToolError(504, "replay wait stalled — the main thread did not advance game time within the wall-clock backstop");
+							r["ok"] = true;
 						} else if (step.contains("waitFor")) {
 							const WaitForSpec spec = ParseWaitFor(step);
 							const long        timeoutMs = step.value("timeoutMs", static_cast<long>(60000));

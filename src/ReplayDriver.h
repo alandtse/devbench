@@ -38,8 +38,9 @@ namespace dvb::Recording::ReplayDriver
 		bool Handle(const json& a_step);
 
 		// Sleeps a_ms of GAME time, so a scenario's waits scale with the run just as the driven
-		// trajectory does.
-		void Sleep(long a_ms);
+		// trajectory does. Returns false if the wall-clock backstop expired first (the main
+		// thread stalled) rather than the game-time deadline being reached.
+		bool Sleep(long a_ms);
 
 		// Waits for the final pose, records the stats and stops the driver. Safe to call repeatedly.
 		void Finish();

@@ -266,10 +266,10 @@ namespace dvb::Recording::ReplayDriver
 		return true;
 	}
 
-	void Playback::Sleep(long a_ms)
+	bool Playback::Sleep(long a_ms)
 	{
 		if (a_ms <= 0)
-			return;
+			return true;
 		// Only accumulate without drift while the pose session is actively running (back-to-back
 		// waits driving smooth playback); a setup/settle wait before it starts should anchor to
 		// now, not a deadline left stale by whatever untracked work happened before this call.
@@ -284,6 +284,7 @@ namespace dvb::Recording::ReplayDriver
 		                          std::chrono::milliseconds(static_cast<long long>(a_ms / TimeScaleControl::kMinScale) + 5000);
 		while (GameClock::Now() < *m_deadlineGameMs && std::chrono::steady_clock::now() < wallDeadline)
 			std::this_thread::sleep_for(kSleepSlice);
+		return GameClock::Now() >= *m_deadlineGameMs;
 	}
 
 	void Playback::Finish()
