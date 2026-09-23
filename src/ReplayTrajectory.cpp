@@ -75,6 +75,11 @@ namespace dvb::Recording
 		if (!a_steps.is_array())
 			return keyframes;
 		std::int64_t clockMs = 0;
+		// BuildScenario only emits camPose on a row whose camera value actually changed; an
+		// unchanged sample carries none. Reuse the last-seen camera fields here so that
+		// compaction doesn't look like a gap in the recorded transform.
+		Pose lastCamPose;
+		bool haveCamPose = false;
 		for (const auto& step : a_steps) {
 			if (!step.is_object())
 				continue;
@@ -82,8 +87,17 @@ namespace dvb::Recording
 				clockMs = step["atMs"].get<std::int64_t>();
 			Pose pose;
 			if (step.contains("pose") && ReadPose(step["pose"], pose)) {
-				if (step.contains("camPose"))
+				if (step.contains("camPose")) {
 					ReadCamPose(step["camPose"], pose);
+					lastCamPose = pose;
+					haveCamPose = true;
+				} else if (haveCamPose) {
+					pose.camX = lastCamPose.camX;
+					pose.camY = lastCamPose.camY;
+					pose.camZ = lastCamPose.camZ;
+					pose.camPitch = lastCamPose.camPitch;
+					pose.camYaw = lastCamPose.camYaw;
+				}
 				if (!keyframes.empty() && keyframes.back().tMs == clockMs)
 					keyframes.back().pose = pose;
 				else

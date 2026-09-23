@@ -20,8 +20,7 @@ namespace dvb::Recording::ReplayDriver
 	namespace
 	{
 		constexpr double kDegToRad = 0.017453292519943295;
-		// Average human eye height as a fraction of standing height (eyes sit just under the
-		// crown, not at the very top of the skull).
+		// Eye height as a fraction of standing height.
 		constexpr float kEyeHeightRatio = 0.93F;
 		constexpr auto  kPacerRetryDelay = std::chrono::milliseconds(1);
 		constexpr auto  kFinalPoseWait = std::chrono::milliseconds(500);

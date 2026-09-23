@@ -612,8 +612,8 @@ namespace dvb::Recording
 					step["atMs"] = a_atMs;
 				return step;
 			};
-			// The VR camera is driven live at replay time (see ReplayDriver::State::Apply), not
-			// from a discrete per-sample step here.
+			// The VR camera is driven live at replay time (see ReplayDriver::State::DriveCamera),
+			// not from a discrete per-sample step here.
 			json                  steps = json::array();
 			std::string           lastPov;     // emit a camera step only when the POV changes
 			std::array<double, 5> lastPose{};  // previous emitted pose (round-2); a repeat → bare wait

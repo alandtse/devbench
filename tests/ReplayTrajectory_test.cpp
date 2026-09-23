@@ -73,6 +73,40 @@ TEST_CASE("a repeated timestamp keeps the later pose")
 	CHECK(Near(keys[0].pose.x, 9.0));
 }
 
+TEST_CASE("a pose row without its own camPose carries forward the last recorded camera transform")
+{
+	// BuildScenario only emits camPose when the camera value actually changed; a row that
+	// repeats the prior camera value carries none at all.
+	const json steps = json::array({
+		json{ { "atMs", 0 }, { "pose", json::array({ 0, 0, 0, 0, 0 }) },
+			{ "camPose", json::array({ 10, 20, 30, 0.1, 0.2 }) } },
+		json{ { "atMs", 100 }, { "pose", json::array({ 1, 0, 0, 0, 0 }) } },
+		json{ { "atMs", 200 }, { "pose", json::array({ 2, 0, 0, 0, 0 }) },
+			{ "camPose", json::array({ 40, 50, 60, 0.3, 0.4 }) } },
+	});
+	const auto keys = ExtractKeyframes(steps);
+	CHECK(keys.size() == 3);
+	CHECK(keys[0].pose.HasCam());
+	CHECK(keys[1].pose.HasCam());
+	CHECK(Near(*keys[1].pose.camX, 10.0));
+	CHECK(Near(*keys[1].pose.camPitch, 0.1));
+	CHECK(keys[2].pose.HasCam());
+	CHECK(Near(*keys[2].pose.camX, 40.0));
+}
+
+TEST_CASE("a pose row before any camPose has ever been seen has no camera data")
+{
+	const json steps = json::array({
+		json{ { "atMs", 0 }, { "pose", json::array({ 0, 0, 0, 0, 0 }) } },
+		json{ { "atMs", 100 }, { "pose", json::array({ 1, 0, 0, 0, 0 }) },
+			{ "camPose", json::array({ 10, 20, 30, 0.1, 0.2 }) } },
+	});
+	const auto keys = ExtractKeyframes(steps);
+	CHECK(keys.size() == 2);
+	CHECK(!keys[0].pose.HasCam());
+	CHECK(keys[1].pose.HasCam());
+}
+
 TEST_CASE("sampling hits keyframes exactly and blends linearly between them")
 {
 	const Trajectory t({ Key(0, 0.0, 0.0, 0.0), Key(100, 10.0, 90.0, 20.0) });
