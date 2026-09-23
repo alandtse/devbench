@@ -158,7 +158,14 @@ namespace dvb::TimeScaleControl
 
 	float Effective()
 	{
-		return g_liveMultiplier.load(std::memory_order_acquire);
+		// Sampled directly rather than only trusting the Reconcile-refreshed cache: Reconcile only
+		// runs while the pump is engaged, so an external change (console sgtm, another mod) is
+		// otherwise invisible to every caller here — Capture::Handle, Recording::Handle, Status,
+		// Set — until some devbench-side lease happens to engage the clock. Also refreshes the
+		// cache so NeedsPump/Reconcile's own diffing stays in sync with what callers just saw.
+		const float live = RE::BSTimer::QGlobalTimeMultiplier();
+		g_liveMultiplier.store(live, std::memory_order_release);
+		return live;
 	}
 
 	json Status()
