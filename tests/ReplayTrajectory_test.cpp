@@ -86,11 +86,17 @@ TEST_CASE("a pose row without its own camPose carries forward the last recorded 
 	});
 	const auto keys = ExtractKeyframes(steps);
 	CHECK(keys.size() == 3);
+	if (keys.size() < 3)
+		return;
 	CHECK(keys[0].pose.HasCam());
 	CHECK(keys[1].pose.HasCam());
+	if (!keys[1].pose.HasCam())
+		return;
 	CHECK(Near(*keys[1].pose.camX, 10.0));
 	CHECK(Near(*keys[1].pose.camPitch, 0.1));
 	CHECK(keys[2].pose.HasCam());
+	if (!keys[2].pose.HasCam())
+		return;
 	CHECK(Near(*keys[2].pose.camX, 40.0));
 }
 
@@ -103,6 +109,8 @@ TEST_CASE("a pose row before any camPose has ever been seen has no camera data")
 	});
 	const auto keys = ExtractKeyframes(steps);
 	CHECK(keys.size() == 2);
+	if (keys.size() < 2)
+		return;
 	CHECK(!keys[0].pose.HasCam());
 	CHECK(keys[1].pose.HasCam());
 }

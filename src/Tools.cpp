@@ -1802,9 +1802,7 @@ namespace dvb
 		};
 
 		/// Execute a scenario step list and return its complete transcript.
-		// a_beforeStep, when set, is called with each step's index right before it runs -- record
-		// replay's own hook for activating the replay camera hold once the recorded trajectory
-		// begins (see BuildReplaySteps' trajectoryStepCount). The plain scenario tool has none.
+		// a_beforeStep, when set, is called with each step's index right before it runs.
 		json ScenarioHandler(const json& a_args, const ToolContext& a_ctx,
 			const ToolRegistry& a_registry, EventBus& a_events,
 			const std::function<void(std::size_t)>& a_beforeStep = {})
