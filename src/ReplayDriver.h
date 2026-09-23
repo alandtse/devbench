@@ -37,6 +37,8 @@ namespace dvb::Recording::ReplayDriver
 		// True if the driver moved the player for this step, so the caller must not teleport.
 		bool Handle(const json& a_step);
 
+		// Sleeps a_ms of GAME time, so a scenario's waits scale with the run just as the driven
+		// trajectory does.
 		void Sleep(long a_ms);
 
 		// Waits for the final pose, records the stats and stops the driver. Safe to call repeatedly.
@@ -46,13 +48,11 @@ namespace dvb::Recording::ReplayDriver
 		[[nodiscard]] const json& Stats() const { return m_stats; }
 
 	private:
-		using Clock = std::chrono::steady_clock;
-
-		const json&                      m_steps;
-		bool                             m_enabled;
-		bool                             m_unavailable = false;
-		std::unique_ptr<Session>         m_session;
-		std::optional<Clock::time_point> m_deadline;
-		json                             m_stats;
+		const json&              m_steps;
+		bool                     m_enabled;
+		bool                     m_unavailable = false;
+		std::unique_ptr<Session> m_session;
+		std::optional<double>    m_deadlineGameMs;
+		json                     m_stats;
 	};
 }

@@ -27,6 +27,10 @@ namespace dvb::Capture
 {
 	json Handle(const json& a_args, const ToolContext& a_ctx);
 
+	/// True while a capture (native fallback or a registered provider) is actually running, so a
+	/// caller can refuse to change the game's speed under it.
+	bool InFlight();
+
 	/// `inspect kind=screenshots` — list image files sitting in the vanilla screenshot
 	/// directories (game root + `Screenshots/`), independent of the `capture` tool. Shares the
 	/// directory-snapshot logic the native fallback needs, and lets a human/agent discover where

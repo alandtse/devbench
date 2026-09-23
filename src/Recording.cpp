@@ -6,6 +6,7 @@
 #include "MainThread.h"
 #include "RecordingActivity.h"
 #include "ReplayTrajectory.h"
+#include "TimeScaleControl.h"
 #include "ToolExtensions.h"
 #include "ToolRegistry.h"
 #include "VRInputState.h"
@@ -807,10 +808,21 @@ namespace dvb::Recording
 
 		if (action == "start") {
 			{
+				// Admission check + the idle->starting commit happen atomically with respect to
+				// TimeScaleControl::Set's own check (same mutex), so a concurrent setTimeScale can't
+				// slip a non-normal scale past this check, or vice versa.
+				std::lock_guard admissionLock(TimeScaleControl::AdmissionMutex());
 				std::lock_guard lock(rec.mtx);
 				if (rec.state != RecorderState::idle)
 					return json{ { "error", "recorder is not idle — stop or wait for the current operation" },
 						{ "state", RecorderStateName(rec.state) } };
+				// A capture taken at a non-normal game speed is not comparable to one taken at 1x, so
+				// refuse to start rather than record a run that cannot be benchmarked against.
+				const float scale = TimeScaleControl::Effective();
+				if (!a_args.value("allowTimeScale", false) &&
+					std::fabs(scale - static_cast<float>(TimeScaleControl::kNormalScale)) > TimeScaleControl::kEffectiveTolerance)
+					return json{ { "error", std::format("the game is running at time scale {} — restore scale 1 (game setTimeScale) before recording, or pass allowTimeScale:true", scale) },
+						{ "errorCode", 409 } };
 				rec.state = RecorderState::starting;
 			}
 			const auto cancelStart = [&rec]() {
@@ -1036,6 +1048,16 @@ namespace dvb::Recording
 		return json{ { "error", "unknown action (start|stop|status|checkpoint)" }, { "action", action } };
 	}
 
+	bool IsActive()
+	{
+		// Includes the "starting"/"stopping" transitional states, not just "running" — a
+		// concurrent setTimeScale must see a recording as active from the moment it reserves
+		// idle, not just once its worker thread is up (see TimeScaleControl::Set).
+		auto&           rec = Get();
+		std::lock_guard lock(rec.mtx);
+		return rec.state != RecorderState::idle;
+	}
+
 	void Notify(const std::string& a_msg)
 	{
 		// Corner HUD message; marshal to the main thread (touches UI). The hotkey path runs on
@@ -1244,6 +1266,12 @@ namespace dvb::Recording
 				{ "atMs", a_cp.value("atMs", 0LL) },
 				{ "resolvedAtMs", a_cumMs },
 				{ "resolvedIndex", static_cast<long>(a_steps.size()) },
+				// Inherits the replay's own consent: a scaled replay already reports
+				// goldensEligible:false, so a checkpoint capture during it must not 409 too —
+				// requesting timeScale at all is the consent, not just an explicit allowTimeScale.
+				{ "allowTimeScale", a_args.value("allowTimeScale", false) ||
+										(a_args.contains("timeScale") && a_args["timeScale"].is_number() &&
+											a_args["timeScale"].get<double>() != TimeScaleControl::kNormalScale) },
 			};
 			if (a_cp.contains("subrect"))
 				capArgs["subrect"] = a_cp["subrect"];

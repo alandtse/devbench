@@ -1,6 +1,7 @@
 #include "ReplayDriver.h"
 
 #include "FreeCamera.h"
+#include "GameClock.h"
 #include "GameState.h"
 #include "ToolRegistry.h"
 
@@ -24,14 +25,18 @@ namespace dvb::Recording::ReplayDriver
 		constexpr float kEyeHeightRatio = 0.93F;
 		constexpr auto  kPacerRetryDelay = std::chrono::milliseconds(1);
 		constexpr auto  kFinalPoseWait = std::chrono::milliseconds(500);
-
-		using Clock = std::chrono::steady_clock;
+		// A wait re-checks the game clock this often, so a mid-wait scale change is felt promptly
+		// without spinning.
+		constexpr auto kSleepSlice = std::chrono::milliseconds(5);
 
 		class State : public std::enable_shared_from_this<State>
 		{
 		public:
 			explicit State(Trajectory a_trajectory) :
-				m_trajectory(std::move(a_trajectory)), m_start(Clock::now()) {}
+				m_trajectory(std::move(a_trajectory)), m_startGameMs(GameClock::Now())
+			{
+				GameClock::Engage();
+			}
 
 			void Schedule()
 			{
@@ -60,6 +65,8 @@ namespace dvb::Recording::ReplayDriver
 			// Must run before the last shared_ptr is released: the pacer thread borrows `this`.
 			void Stop()
 			{
+				if (m_stopped.exchange(true))
+					return;
 				{
 					std::lock_guard lock(m_pacerMutex);
 					m_cancelled.store(true);
@@ -67,6 +74,7 @@ namespace dvb::Recording::ReplayDriver
 				m_pacerCv.notify_all();
 				if (m_pacer.joinable())
 					m_pacer.join();
+				GameClock::Disengage();
 			}
 
 			bool WaitFinished(std::chrono::milliseconds a_timeout)
@@ -89,6 +97,10 @@ namespace dvb::Recording::ReplayDriver
 				if (m_cancelled.load(std::memory_order_relaxed))
 					return;
 
+				// The driver's own once-per-frame hook is the clock's frame tick, so no extra
+				// engine hook is needed while a trajectory runs.
+				GameClock::Tick();
+
 				const int frame = game::CurrentFrame();
 				if (frame == m_lastFrame) {
 					// The queue ran us again inside the frame we already served; retry shortly
@@ -105,8 +117,7 @@ namespace dvb::Recording::ReplayDriver
 					return;
 				}
 
-				const double elapsedMs =
-					std::chrono::duration<double, std::milli>(Clock::now() - m_start).count();
+				const double elapsedMs = GameClock::Now() - m_startGameMs;
 				const double tMs = static_cast<double>(m_trajectory.StartMs()) + elapsedMs;
 				const bool   finishing = tMs >= static_cast<double>(m_trajectory.EndMs());
 				const Pose   pose = m_trajectory.Sample(tMs);
@@ -184,8 +195,9 @@ namespace dvb::Recording::ReplayDriver
 			}
 
 			Trajectory              m_trajectory;
-			Clock::time_point       m_start;
+			double                  m_startGameMs;
 			std::atomic<bool>       m_cancelled{ false };
+			std::atomic<bool>       m_stopped{ false };
 			std::mutex              m_pacerMutex;
 			std::condition_variable m_pacerCv;
 			bool                    m_pacerWake = false;
@@ -248,19 +260,24 @@ namespace dvb::Recording::ReplayDriver
 				logs::warn("devbench: pose driver unavailable (engine frame counter unreadable); using per-sample teleports");
 				return false;
 			}
-			m_deadline = Clock::now();
+			m_deadlineGameMs = GameClock::Now();
 		}
 		return true;
 	}
 
 	void Playback::Sleep(long a_ms)
 	{
-		if (!m_deadline) {
-			std::this_thread::sleep_for(std::chrono::milliseconds(a_ms));
+		if (a_ms <= 0)
 			return;
-		}
-		*m_deadline += std::chrono::milliseconds(a_ms);
-		std::this_thread::sleep_until(*m_deadline);
+		// Only accumulate without drift while the pose session is actively running (back-to-back
+		// waits driving smooth playback); a setup/settle wait before it starts should anchor to
+		// now, not a deadline left stale by whatever untracked work happened before this call.
+		if (!m_session || !m_deadlineGameMs)
+			m_deadlineGameMs = GameClock::Now();
+		*m_deadlineGameMs += static_cast<double>(a_ms);
+		GameClock::Engaged engaged;
+		while (GameClock::Now() < *m_deadlineGameMs)
+			std::this_thread::sleep_for(kSleepSlice);
 	}
 
 	void Playback::Finish()
@@ -270,6 +287,6 @@ namespace dvb::Recording::ReplayDriver
 		m_session->WaitFinished(kFinalPoseWait);
 		m_stats = m_session->Stats();
 		m_session.reset();
-		m_deadline.reset();
+		m_deadlineGameMs.reset();
 	}
 }

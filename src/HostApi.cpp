@@ -4,6 +4,7 @@
 #include "EventBus.h"
 #include "GameState.h"
 #include "Json.h"
+#include "TimeScaleControl.h"
 #include "ToolExtensions.h"
 #include "ToolRegistry.h"
 #include "Version.h"
@@ -141,6 +142,24 @@ namespace dvb::HostApi
 					}
 				}
 				g_events->Publish(a_topic, std::move(payload));
+			}
+
+			bool SetTimeScale(float a_scale, std::uint32_t a_leaseMs, const char* a_owner) override
+			{
+				// No allowHigh/allowTimeScale through the ABI: a consumer gets the documented range
+				// and never a scale that would silently invalidate another caller's capture.
+				const auto validation = TimeScaleControl::Validate(a_scale, false, false);
+				if (!validation.accepted)
+					return false;
+				const TimeScaleControl::SetResult set = TimeScaleControl::Set(validation.value,
+					static_cast<std::int64_t>(a_leaseMs),
+					a_owner && *a_owner ? a_owner : "api:anonymous", false);
+				return set.ok;
+			}
+
+			float GetTimeScale() override
+			{
+				return TimeScaleControl::Effective();
 			}
 		};
 

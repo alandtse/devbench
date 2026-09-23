@@ -16,6 +16,7 @@
 #include "ReplayTrajectory.h"
 #include "ScenarioPolicy.h"
 #include "Server.h"
+#include "TimeScaleControl.h"
 #include "ToolExtensions.h"
 #include "ToolRegistry.h"
 #include "VRInputState.h"
@@ -46,6 +47,22 @@ namespace dvb
 			if (a_v.is_number())
 				return a_v.get<double>() != 0.0;
 			return false;
+		}
+
+		bool BooleanArgument(const json& a_object, const char* a_name, bool a_default)
+		{
+			if (!a_object.contains(a_name))
+				return a_default;
+			if (!a_object[a_name].is_boolean())
+				throw ToolError(400, std::format("'{}' must be a boolean", a_name));
+			return a_object[a_name].get<bool>();
+		}
+
+		// A time-scale lease is owned by whoever set it, so an unrelated caller cannot renew or
+		// release it (see TimeScaleControl).
+		std::string LeaseOwner(const ToolContext& a_ctx)
+		{
+			return a_ctx.clientId.empty() ? std::string("rest:anonymous") : "mcp:" + a_ctx.clientId;
 		}
 
 		json GameHandler(const json& a_args, const ToolContext& a_ctx);
@@ -215,6 +232,11 @@ namespace dvb
 			"async — watch lifecycle 'postLoadGame' / inspect playerLoaded for completion. "
 			"A content-mismatch MessageBoxMenu (Yes/No) may gate it; check `menu` action=list.";
 
+		// game setTimeScale: how long to wait for the engine to actually reach the requested speed
+		// (the reconciler applies it on the next main-thread frame, and the engine then ramps).
+		constexpr int kScaleApplyTimeoutMs = 2000;
+		constexpr int kScalePollMs = 5;
+
 		// A Pascal-style string in the .ess header: uint16 length + that many raw (non-UTF16,
 		// despite the community name "wstring") bytes.
 		std::optional<std::string> ReadPString(std::ifstream& a_in)
@@ -337,7 +359,7 @@ namespace dvb
 		// game: programmatic save / load / list via BGSSaveLoadManager. loadLast gives a
 		// settled real-save state for testing WITHOUT coc's heavy new-game init. Mutating
 		// actions run on the main thread and are async — see kLoadNote.
-		json GameHandler(const json& a_args, const ToolContext&)
+		json GameHandler(const json& a_args, const ToolContext& a_ctx)
 		{
 			const std::string action = a_args.value("action", std::string{});
 
@@ -444,6 +466,50 @@ namespace dvb
 				});
 			}
 
+			if (action == "getTimeScale")
+				return TimeScaleControl::Status();
+
+			if (action == "setTimeScale") {
+				const auto scaleArg = a_args.find("scale");
+				const bool freeze = BooleanArgument(a_args, "freeze", false);
+				if (scaleArg == a_args.end() && !freeze)
+					throw ToolError(400, "game setTimeScale: 'scale' is required (or freeze:true, which means scale 0)");
+				if (scaleArg != a_args.end() && !scaleArg->is_number())
+					throw ToolError(400, std::format("game setTimeScale: invalid scale '{}' (must be a number)", scaleArg->dump()));
+
+				const auto validation = TimeScaleControl::Validate(
+					scaleArg != a_args.end() ? scaleArg->get<double>() : TimeScaleControl::kFreezeScale,
+					freeze, BooleanArgument(a_args, "allowHigh", false));
+				if (!validation.accepted)
+					throw ToolError(400, std::format("game setTimeScale: {}", validation.error));
+
+				std::int64_t holdMs = TimeScaleControl::kDefaultLeaseMs;
+				if (const auto holdArg = a_args.find("holdMs"); holdArg != a_args.end()) {
+					if (!holdArg->is_number_integer())
+						throw ToolError(400, std::format("game setTimeScale: invalid holdMs '{}' (must be a positive integer)", holdArg->dump()));
+					holdMs = holdArg->get<std::int64_t>();
+					if (holdMs <= 0 || holdMs > TimeScaleControl::kMaximumLeaseMs)
+						throw ToolError(400, std::format("game setTimeScale: 'holdMs' must be 1..{}", TimeScaleControl::kMaximumLeaseMs));
+				}
+
+				const TimeScaleControl::SetResult set = TimeScaleControl::Set(validation.value, holdMs,
+					LeaseOwner(a_ctx), BooleanArgument(a_args, "allowTimeScale", false));
+				if (!set.ok)
+					throw ToolError(409, std::format("game setTimeScale: {}", set.error));
+
+				// The reconciler applies this on the next engine frame and the engine then ramps
+				// toward it, so report only once it is actually running at the requested speed.
+				const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kScaleApplyTimeoutMs);
+				while (std::fabs(TimeScaleControl::Effective() - validation.value) > TimeScaleControl::kEffectiveTolerance) {
+					if (std::chrono::steady_clock::now() >= deadline)
+						throw ToolError(504, std::format("game setTimeScale: the engine is still at {} after {}ms (requested {})", TimeScaleControl::Effective(), kScaleApplyTimeoutMs, validation.value));
+					std::this_thread::sleep_for(std::chrono::milliseconds(kScalePollMs));
+				}
+				json out = TimeScaleControl::Status();
+				out["applied"] = true;
+				return out;
+			}
+
 			auto* task = SKSE::GetTaskInterface();
 			if (!task)
 				throw ToolError(500, "SKSE TaskInterface unavailable");
@@ -496,7 +562,7 @@ namespace dvb
 					out["note"] = kLoadNote;
 				return out;
 			}
-			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|advanceTime)", action));
+			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|advanceTime|getTimeScale|setTimeScale)", action));
 		}
 
 		bool ContainsCI(const std::string& a_hay, const std::string& a_needle);  // defined below (near CheckState)
@@ -1904,7 +1970,7 @@ namespace dvb
 							if (poseOk) {
 								r["ok"] = true;
 								if (step.contains("wait"))
-									std::this_thread::sleep_for(milliseconds(step["wait"].get<long>()));
+									playback.Sleep(step["wait"].get<long>());
 							}
 						} else if (step.contains("wait")) {
 							const long ms = step["wait"].get<long>();
@@ -2299,17 +2365,30 @@ namespace dvb
 			"inspect playerLoaded for completion. 'advanceTime' (param 'hours', non-zero, may be "
 			"negative) jumps the calendar directly — no need to fall back to console 'set timescale "
 			"to N' and waiting real time — and returns { gameHour, daysPassed, day, month, year } "
-			"read back the same tick; runs synchronously on the main thread.";
+			"read back the same tick; runs synchronously on the main thread. 'setTimeScale' (param "
+			"'scale', or 'freeze':true for 0) speeds up or slows down the game itself for "
+			"'holdMs' (default 60000) — which is what makes a replay or scenario run faster in wall "
+			"time — then restores the previous scale; 0.1..3.0, up to 10.0 with 'allowHigh':true, and "
+			"it returns { requested, effective, applied, owner, leaseRemainingMs } only once the "
+			"engine is actually running at the requested scale (the reconciler applies it on the next "
+			"frame and the engine then ramps). It is refused (409) while a recording or a capture is "
+			"in flight, unless 'allowTimeScale':true. 'getTimeScale' returns the same object without "
+			"changing anything.";
 		game.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast", "advanceTime" }) }, { "description", "list | save | load | loadLast | advanceTime" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast", "advanceTime", "getTimeScale", "setTimeScale" }) }, { "description", "list | save | load | loadLast | advanceTime | getTimeScale | setTimeScale" } } },
 								{ "name", json{ { "type", "string" }, { "description", "save file name (required for save/load; from action='list')" } } },
 								{ "dir", json{ { "type", "string" }, { "description", "list/load/loadLast: override the saves directory (default resolves from sLocalSavePath)" } } },
 								{ "filter", json{ { "type", "string" }, { "description", "list only: case-insensitive substring to match against save names" } } },
 								{ "limit", json{ { "type", "integer" }, { "description", "list only: cap the number of saves returned (newest-first); must be > 0 if given" } } },
 								{ "detail", json{ { "type", "boolean" }, { "description", "list only: add per-save character/location/level metadata (default false)" } } },
 								{ "hours", json{ { "type", "number" }, { "description", "advanceTime: hours to add to the calendar (non-zero; negative rewinds within the current session)" } } },
+								{ "scale", json{ { "type", "number" }, { "description", "setTimeScale: game speed multiplier, 0.1..3.0 (0 freezes, and needs freeze:true)" } } },
+								{ "holdMs", json{ { "type", "integer" }, { "description", "setTimeScale: how long the scale stays in effect before the previous scale is restored (default 60000, max 3600000)" } } },
+								{ "freeze", json{ { "type", "boolean" }, { "description", "setTimeScale: confirm scale 0 (freeze); required with a 0 scale" } } },
+								{ "allowHigh", json{ { "type", "boolean" }, { "description", "setTimeScale: permit a scale above 3.0, up to 10.0" } } },
+								{ "allowTimeScale", json{ { "type", "boolean" }, { "description", "setTimeScale: change the scale even while a recording or capture is in flight (default false)" } } },
 							} },
 		};
 		a_registry.Register(std::move(game), &GameHandler);
@@ -2566,7 +2645,14 @@ namespace dvb
 			"result's top-level 'checkpoints' array rolls up every capture step into "
 			"{id, ok, path, inconclusive, inconclusiveReason?, ssim?, threshold?, passed?} — read "
 			"this instead of filtering the (often much larger) 'results' step transcript yourself."
-			" Only one replay runs at a time: starting another while one is in flight is refused with 409 naming the active runId.";
+			" Only one replay runs at a time: starting another while one is in flight is refused with 409 naming the active runId. "
+			"Pass 'timeScale' (0.1..3.0, up to 10.0 with 'allowHigh':true) to replay the whole run that many times "
+			"faster — the trajectory is paced in GAME time, so the run keeps its shape and a mid-run change is absorbed; "
+			"the setup/restore phase before the trajectory (coc/cow + settle) always runs at normal speed, since a load "
+			"screen isn't sped up by this and its settle physics stay predictable; the scale is restored when the run "
+			"ends, and the result reports goldensEligible plus timeScaleChanges[] (a scaled run is not comparable to a "
+			"golden, which is reported rather than refused). 'start' is refused (409) while the game is running at a "
+			"scale other than 1, and both 'start' and 'replay' can override that with allowTimeScale:true.";
 		record.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
@@ -2587,6 +2673,9 @@ namespace dvb
 								{ "closeMenus", json{ { "type", "boolean" }, { "description", "replay: cancel an open MODAL (e.g. the Survival Mode prompt a scene transition can raise) instead of erroring, both at start and at the post-restore menu guard; non-modal gameplay menus still error (default false)" } } },
 								{ "async", json{ { "type", "boolean" }, { "description", "replay: return {queued:true, runId} immediately and run in the background (default true); false blocks and returns the result directly" } } },
 								{ "interpolate", json{ { "type", "boolean" }, { "description", "replay: drive the player along the recorded path once per engine frame with interpolated position/yaw/pitch on an absolute clock, instead of one teleport per sample. Result carries poseDriver stats; false keeps per-sample teleports (default true)" } } },
+								{ "timeScale", json{ { "type", "number" }, { "description", "replay: run the recorded trajectory this many times faster (0.1..3.0, up to 10.0 with allowHigh:true) and restore the previous scale when it ends — the setup/restore phase runs at normal speed regardless. The result reports goldensEligible plus timeScaleChanges[]" } } },
+								{ "allowHigh", json{ { "type", "boolean" }, { "description", "replay: permit a timeScale above 3.0, up to 10.0" } } },
+								{ "allowTimeScale", json{ { "type", "boolean" }, { "description", "start/replay: proceed while the game's time scale is not 1 (start would record an incomparable run; default false)" } } },
 								{ "runId", json{ { "type", "integer" }, { "description", "status: poll an async replay run started earlier (from replay's 'runId')" } } },
 							} },
 		};
@@ -2619,6 +2708,45 @@ namespace dvb
 					ActiveReplayClaim claimGuard{ runId };
 					const json        activity = plan.value("activity", json::object());
 					const std::string inputOwner = plan.value("inputOwner", std::string{});
+
+					// The run's hold on the game's speed — this is what makes a replay finish
+					// faster in wall time. Held for the whole run (including the async worker) and
+					// restored on any exit path; it also records every scale change issued while the
+					// run is open, so a checkpoint capture can declare itself incomparable.
+					float replayScale = static_cast<float>(TimeScaleControl::kNormalScale);
+					if (const auto scaleArg = a_args.find("timeScale"); scaleArg != a_args.end()) {
+						if (!scaleArg->is_number())
+							throw ToolError(400, std::format("replay: invalid timeScale '{}' (must be a number)", scaleArg->dump()));
+						const auto validation = TimeScaleControl::Validate(scaleArg->get<double>(), false,
+							BooleanArgument(a_args, "allowHigh", false));
+						if (!validation.accepted)
+							throw ToolError(400, std::format("replay: {}", validation.error));
+						// A frozen clock never advances the trajectory, so the run would never finish.
+						if (validation.value == static_cast<float>(TimeScaleControl::kFreezeScale))
+							throw ToolError(400, "replay: 'timeScale' cannot be 0 — a frozen clock never advances the trajectory");
+						replayScale = validation.value;
+					}
+					// Escalation to replayScale happens later, at setupStepCount; reject here too so a
+					// doomed run doesn't burn its setup steps first.
+					if (replayScale != static_cast<float>(TimeScaleControl::kNormalScale) &&
+						!BooleanArgument(a_args, "allowTimeScale", false)) {
+						// Same admission mutex TimeScaleControl::Set/Recording::start/Capture::Handle
+						// use, so this early check can't race a recording/capture start slipping in
+						// between the check and the RunHold constructed below.
+						std::lock_guard admissionLock(TimeScaleControl::AdmissionMutex());
+						if (Recording::IsActive())
+							throw ToolError(409, "replay: a recording is in progress — stop it first, or pass allowTimeScale:true to change the game's speed anyway");
+						if (Capture::InFlight())
+							throw ToolError(409, "replay: a capture is in flight — retry once it finishes, or pass allowTimeScale:true to change the game's speed anyway");
+					}
+					// Held at normal speed through setup/settle; escalated to replayScale at
+					// setupStepCount once the recorded trajectory starts (see BuildReplaySteps).
+					const bool        allowTimeScale = BooleanArgument(a_args, "allowTimeScale", false);
+					const std::size_t setupStepCount = plan.value("trajectoryStepCount", static_cast<std::size_t>(0));
+					const auto        scaleHold = std::make_shared<TimeScaleControl::RunHold>(
+						static_cast<float>(TimeScaleControl::kNormalScale), TimeScaleControl::kDefaultLeaseMs,
+						inputOwner.empty() ? std::format("replay:{}", runId) : inputOwner, allowTimeScale);
+
 					Recording::Notify(std::format("devbench: replaying {} steps (~{:.1f}s)", steps.size(), estMs / 1000.0));
 					logs::info("devbench: replay starting — {} steps, ~{}ms", steps.size(), estMs);
 					a_events.Publish("replay.started", json{ { "runId", runId }, { "steps", steps.size() },
@@ -2636,7 +2764,8 @@ namespace dvb
 					const auto        cameraHold = std::make_shared<FreeCamera::ReplayHold>();
 					auto              runReplay = [&a_registry, &a_events, a_ctx, steps, runId, coupling,
 													  activity, inputOwner, interpolate, cameraHold,
-													  trajectoryStepCount]() -> json {
+													  trajectoryStepCount, scaleHold, replayScale,
+													  setupStepCount, allowTimeScale]() -> json {
 						ActiveReplayClaim activeReplayGuard{ runId };
 						const auto        releaseRecordedInput = [&]() -> json {
 							if (inputOwner.empty())
@@ -2681,14 +2810,21 @@ namespace dvb
 							if (!initialCleanup.value("ok", true))
 								throw ToolError(409, "recorded input cleanup is still pending; retry after controller/key restoration succeeds");
 							bool cameraActivated = false;
+							bool scaleEscalated = false;
 							result = ScenarioHandler(json{ { "steps", steps }, { "runId", runId }, { "smoothPose", interpolate } },
 								a_ctx, a_registry, a_events,
-								[&cameraActivated, cameraHold, trajectoryStepCount](std::size_t a_index) {
-									if (cameraActivated || a_index != trajectoryStepCount)
-										return;
-									cameraActivated = true;
-									// No-op off VR; on VR, a failure here must abort the replay.
-									cameraHold->Activate();
+								[&cameraActivated, cameraHold, trajectoryStepCount, &scaleEscalated,
+									scaleHold, replayScale, setupStepCount, allowTimeScale](std::size_t a_index) {
+									if (!cameraActivated && a_index == trajectoryStepCount) {
+										cameraActivated = true;
+										// No-op off VR; on VR, a failure here must abort the replay.
+										cameraHold->Activate();
+									}
+									if (!scaleEscalated && a_index == setupStepCount &&
+										replayScale != static_cast<float>(TimeScaleControl::kNormalScale)) {
+										scaleEscalated = true;
+										scaleHold->Escalate(replayScale, TimeScaleControl::kDefaultLeaseMs, allowTimeScale);
+									}
 								});
 						} catch (const std::exception& e) {
 							const json cleanup = releaseRecordedInput();
@@ -2705,6 +2841,10 @@ namespace dvb
 						result["coupling"] = coupling;  // surface effective tier / override
 						result["activity"] = activity;
 						result["checkpoints"] = SummarizeCheckpoints(result);
+						// A run that did not play out entirely at normal speed is not comparable to
+						// a golden, so say so (and why) instead of leaving the verdict ambiguous.
+						result["goldensEligible"] = scaleHold->Eligible();
+						result["timeScaleChanges"] = scaleHold->Changes();
 						logs::info("devbench: replay finished — {} steps, ok={}",
 							result.value("stepsRun", 0), result.value("ok", false));
 						a_events.Publish("replay.finished", json{ { "runId", runId }, { "ok", result.value("ok", false) }, { "stepsRun", result.value("stepsRun", 0) } });

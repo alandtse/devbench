@@ -55,6 +55,10 @@ namespace dvb::Recording
 	/// hook) are the trajectory — so a recording that plays back a recipe embeds it cleanly.
 	void SetReplaying(bool a_replaying);
 
+	/// True while a recording is running (start..stop), so a caller can refuse work that would
+	/// make the capture incomparable — e.g. changing the game's time scale mid-recording.
+	bool IsActive();
+
 	/// Default settle delay (ms) inserted after a restore-load before the trajectory, so the
 	/// game settles before the player is teleported. Local/per-machine (set from config);
 	/// a replay call's settleMs arg overrides it.

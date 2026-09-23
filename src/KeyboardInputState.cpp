@@ -188,16 +188,22 @@ namespace dvb
 	}
 
 	KeyboardAcquireResult KeyboardLeaseTable::Acquire(KeyboardKey a_key, std::string a_owner,
-		std::int64_t a_nowMs, std::int64_t a_maxHoldMs)
+		std::int64_t a_nowMs, std::int64_t a_maxHoldMs, std::int64_t a_gameNowMs)
 	{
 		if (auto current = Find(a_key.scancode)) {
 			return { current->owner == a_owner ? KeyboardAcquireStatus::kAlreadyOwned : KeyboardAcquireStatus::kConflict,
 				*current };
 		}
 		KeyboardLease lease{ std::move(a_key), std::move(a_owner), m_nextGeneration++,
-			a_nowMs, a_nowMs + a_maxHoldMs };
+			a_nowMs, a_gameNowMs, a_nowMs + a_maxHoldMs };
 		m_leases.push_back(lease);
 		return { KeyboardAcquireStatus::kAcquired, std::move(lease) };
+	}
+
+	float HeldDownSeconds(std::int64_t a_pressedAtGameMs, std::int64_t a_nowGameMs)
+	{
+		return std::max(0.001F,
+			static_cast<float>(a_nowGameMs - a_pressedAtGameMs) / 1000.0F);
 	}
 
 	std::optional<KeyboardLease> KeyboardLeaseTable::Find(std::uint16_t a_scancode) const
