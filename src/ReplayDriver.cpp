@@ -3,6 +3,7 @@
 #include "FreeCamera.h"
 #include "GameClock.h"
 #include "GameState.h"
+#include "TimeScaleControl.h"
 #include "ToolRegistry.h"
 
 #include <RE/Skyrim.h>
@@ -276,7 +277,12 @@ namespace dvb::Recording::ReplayDriver
 			m_deadlineGameMs = GameClock::Now();
 		*m_deadlineGameMs += static_cast<double>(a_ms);
 		GameClock::Engaged engaged;
-		while (GameClock::Now() < *m_deadlineGameMs)
+		// Wall-clock backstop: bounds a genuinely stalled main thread (frame counter not
+		// advancing) rather than blocking this worker forever; full cooperative cancellation
+		// through Finish()/Stop() is a larger, separate change.
+		const auto wallDeadline = std::chrono::steady_clock::now() +
+		                          std::chrono::milliseconds(static_cast<long long>(a_ms / TimeScaleControl::kMinScale) + 5000);
+		while (GameClock::Now() < *m_deadlineGameMs && std::chrono::steady_clock::now() < wallDeadline)
 			std::this_thread::sleep_for(kSleepSlice);
 	}
 

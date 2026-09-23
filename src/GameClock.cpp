@@ -111,7 +111,12 @@ namespace dvb::GameClock
 			return;
 		Engaged      engaged;
 		const double deadline = Now() + static_cast<double>(a_gameMs);
-		while (Now() < deadline)
+		// Wall-clock backstop: game time can legitimately run up to 10x slower than real time
+		// (TimeScaleControl::kMinScale), so a genuinely frozen/stalled main thread — not just a
+		// slow one — is the only thing this bound should ever catch.
+		const auto wallDeadline = Clock::now() +
+		                          std::chrono::milliseconds(static_cast<long long>(a_gameMs / TimeScaleControl::kMinScale) + 5000);
+		while (Now() < deadline && Clock::now() < wallDeadline)
 			std::this_thread::sleep_for(std::chrono::milliseconds(kTickPumpMs));
 	}
 }
