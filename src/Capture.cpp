@@ -5,6 +5,7 @@
 #include "GameState.h"
 #include "MainThread.h"
 #include "Ssim.h"
+#include "TimeScaleControl.h"
 #include "ToolExtensions.h"
 
 #include <algorithm>
@@ -31,6 +32,17 @@ namespace dvb::Capture
 		std::vector<std::string> g_captureScanDirs = { "", "Screenshots" };
 
 		std::atomic<std::uint64_t> g_requestSeq{ 0 };
+		std::atomic<int>           g_inFlight{ 0 };
+
+		// Marks a capture in flight, so a concurrent time-scale change is refused (see
+		// TimeScaleControl::Set) rather than racing the frame being captured.
+		struct Capturing
+		{
+			Capturing() { g_inFlight.fetch_add(1, std::memory_order_acq_rel); }
+			~Capturing() { g_inFlight.fetch_sub(1, std::memory_order_acq_rel); }
+			Capturing(const Capturing&) = delete;
+			Capturing& operator=(const Capturing&) = delete;
+		};
 
 		std::string GenericPath(const fs::path& a_p)
 		{
@@ -619,9 +631,6 @@ namespace dvb::Capture
 	{
 		const std::string kind = a_args.value("kind", std::string("auto"));
 
-		if (kind == "native")
-			return Native(a_args);
-
 		if (kind == "providers") {
 			json keys = json::array();
 			for (const auto& k : ToolExtensions::Keys("capture"))
@@ -639,6 +648,23 @@ namespace dvb::Capture
 			}
 			return json{ { "extensions", std::move(out) } };
 		}
+
+		// Past the discovery kinds a capture may actually run. It has to be taken at the speed its
+		// golden was, so a scaled game is refused rather than producing an incomparable image.
+		std::optional<Capturing> capturing;
+		{
+			// Atomic with TimeScaleControl::Set's own check (same mutex), so a concurrent
+			// setTimeScale can't slip a non-normal scale past this check, or vice versa.
+			std::lock_guard admissionLock(TimeScaleControl::AdmissionMutex());
+			const float     effective = TimeScaleControl::Effective();
+			if (!a_args.value("allowTimeScale", false) &&
+				std::fabs(effective - static_cast<float>(TimeScaleControl::kNormalScale)) > TimeScaleControl::kEffectiveTolerance)
+				throw ToolError(409, std::format("capture blocked: the game is running at time scale {} — restore scale 1 (game setTimeScale), or pass allowTimeScale:true", effective));
+			capturing.emplace();
+		}
+
+		if (kind == "native")
+			return Native(a_args);
 
 		if (kind == "auto") {
 			const auto keys = ToolExtensions::Keys("capture");
@@ -660,6 +686,11 @@ namespace dvb::Capture
 
 		// A named provider.
 		return DispatchToProvider(kind, a_args, a_ctx);
+	}
+
+	bool InFlight()
+	{
+		return g_inFlight.load(std::memory_order_acquire) > 0;
 	}
 
 	ToolDescriptor BuildCaptureDescriptor()
@@ -697,6 +728,7 @@ namespace dvb::Capture
 								{ "recording", json{ { "type", "string" }, { "description", "recording file stem, for correlation (default 'adhoc')" } } },
 								{ "variant", json{ { "type", "string" }, { "description", "variant under test, for correlation (default 'default')" } } },
 								{ "allowNative", json{ { "type", "boolean" }, { "description", "permit kind=auto to fall back to the vanilla path when no provider is registered (default false)" } } },
+								{ "allowTimeScale", json{ { "type", "boolean" }, { "description", "capture anyway while the game's time scale is not 1 (default false; a scaled frame is not comparable to a golden taken at normal speed)" } } },
 								{ "excludeUi", json{ { "type", "boolean" }, { "description", "request a pre-UI capture source; native cannot honor this (default true)" } } },
 								{ "outDir", json{ { "type", "string" }, { "description", "override the capture bundle directory" } } },
 								{ "timeoutMs", json{ { "type", "integer" }, { "description", "how long to wait for the capture to be ready (default 8000)" } } },

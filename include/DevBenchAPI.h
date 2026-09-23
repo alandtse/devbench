@@ -85,6 +85,26 @@ namespace DevBenchAPI
 		// (devbench 1.5.0).
 		virtual bool RegisterToolExtension(const char* a_baseTool, const char* a_key,
 			const char* a_descriptorJson, ToolFn a_handler, void* a_ctx) = 0;
+
+		// Set the game's global time scale — the same control as `game setTimeScale`, so a consumer
+		// can speed up or slow down a run (e.g. 3.0 to finish a benchmark sooner). a_scale is
+		// 0.1..3.0; a_leaseMs is how long it stays in effect before the previous scale is restored
+		// (0 = 60000), so an interrupted consumer still leaves the game at normal speed.
+		// NON-BLOCKING and callable from ANY thread (including the main thread): the change is
+		// applied on a later main-thread frame; there is no RunAndWait. Returns false when the scale
+		// is out of range, or when a recording/capture is in flight and would be made incomparable.
+		// a_owner identifies the lease for `game getTimeScale` (nullptr = an anonymous owner).
+		//
+		// ABI: appended after RegisterToolExtension — call only when GetBuildNumber() >= 12000
+		// (devbench 1.20.0).
+		virtual bool SetTimeScale(float a_scale, std::uint32_t a_leaseMs, const char* a_owner) = 0;
+
+		// The global time multiplier the game is running at right now (what the engine has actually
+		// reached, not a value a request left pending). 1.0 when nothing has changed it.
+		//
+		// ABI: appended after SetTimeScale — call only when GetBuildNumber() >= 12000
+		// (devbench 1.20.0).
+		virtual float GetTimeScale() = 0;
 	};
 }
 

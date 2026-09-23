@@ -236,13 +236,29 @@
     },
     {
       "name": "game",
-      "description": "Save/load and list saves. action='list' returns { count, returned, truncated, saves: [{name, mtimeUnix}, ...] }, sorted newest-first (saves[0] is what 'loadLast' loads) — count is post-filter (how many matched), returned/saves are post-limit. 'filter' keeps only names containing a substring (case-insensitive; save names embed the location, e.g. 'Whiterun'), 'limit' caps how many are returned, 'detail'=true adds a 'meta' object per matched save (characterName, location, race, level, experience, playTime, saveNumber, saveType [inferred from the filename], screenshot, fileTimeUnix — read directly from the save's own .ess header, same bytes the vanilla Load menu shows, so it works even before anything has loaded) plus top-level metaAvailable/metaNote if none parsed; 'loadLast' loads the most recent save (a settled real-game state — avoids coc's heavy new-game init); 'load'/'save' take a 'name' ('load' skips the mod-mismatch confirmation modal). All but 'list' are fire-and-forget; watch lifecycle events / inspect playerLoaded for completion. 'advanceTime' (param 'hours', non-zero, may be negative) jumps the calendar directly — no need to fall back to console 'set timescale to N' and waiting real time — and returns { gameHour, daysPassed, day, month, year } read back the same tick; runs synchronously on the main thread.",
+      "description": "Save/load and list saves. action='list' returns { count, returned, truncated, saves: [{name, mtimeUnix}, ...] }, sorted newest-first (saves[0] is what 'loadLast' loads) — count is post-filter (how many matched), returned/saves are post-limit. 'filter' keeps only names containing a substring (case-insensitive; save names embed the location, e.g. 'Whiterun'), 'limit' caps how many are returned, 'detail'=true adds a 'meta' object per matched save (characterName, location, race, level, experience, playTime, saveNumber, saveType [inferred from the filename], screenshot, fileTimeUnix — read directly from the save's own .ess header, same bytes the vanilla Load menu shows, so it works even before anything has loaded) plus top-level metaAvailable/metaNote if none parsed; 'loadLast' loads the most recent save (a settled real-game state — avoids coc's heavy new-game init); 'load'/'save' take a 'name' ('load' skips the mod-mismatch confirmation modal). All but 'list' are fire-and-forget; watch lifecycle events / inspect playerLoaded for completion. 'advanceTime' (param 'hours', non-zero, may be negative) jumps the calendar directly — no need to fall back to console 'set timescale to N' and waiting real time — and returns { gameHour, daysPassed, day, month, year } read back the same tick; runs synchronously on the main thread. 'setTimeScale' (param 'scale', or 'freeze':true for 0) speeds up or slows down the game itself for 'holdMs' (default 60000) — which is what makes a replay or scenario run faster in wall time — then restores the previous scale; 0.1..3.0, up to 10.0 with 'allowHigh':true, and it returns { requested, effective, applied, owner, leaseRemainingMs } only once the engine is actually running at the requested scale (the reconciler applies it on the next frame and the engine then ramps). It is refused (409) while a recording or a capture is in flight, unless 'allowTimeScale':true. 'getTimeScale' returns the same object without changing anything.",
       "inputSchema": {
         "properties": {
           "action": {
-            "description": "list | save | load | loadLast | advanceTime",
-            "enum": ["list", "save", "load", "loadLast", "advanceTime"],
+            "description": "list | save | load | loadLast | advanceTime | getTimeScale | setTimeScale",
+            "enum": [
+              "list",
+              "save",
+              "load",
+              "loadLast",
+              "advanceTime",
+              "getTimeScale",
+              "setTimeScale"
+            ],
             "type": "string"
+          },
+          "allowHigh": {
+            "description": "setTimeScale: permit a scale above 3.0, up to 10.0",
+            "type": "boolean"
+          },
+          "allowTimeScale": {
+            "description": "setTimeScale: change the scale even while a recording or capture is in flight (default false)",
+            "type": "boolean"
           },
           "detail": {
             "description": "list only: add per-save character/location/level metadata (default false)",
@@ -256,6 +272,14 @@
             "description": "list only: case-insensitive substring to match against save names",
             "type": "string"
           },
+          "freeze": {
+            "description": "setTimeScale: confirm scale 0 (freeze); required with a 0 scale",
+            "type": "boolean"
+          },
+          "holdMs": {
+            "description": "setTimeScale: how long the scale stays in effect before the previous scale is restored (default 60000, max 3600000)",
+            "type": "integer"
+          },
           "hours": {
             "description": "advanceTime: hours to add to the calendar (non-zero; negative rewinds within the current session)",
             "type": "number"
@@ -267,6 +291,10 @@
           "name": {
             "description": "save file name (required for save/load; from action='list')",
             "type": "string"
+          },
+          "scale": {
+            "description": "setTimeScale: game speed multiplier, 0.1..3.0 (0 freezes, and needs freeze:true)",
+            "type": "number"
           }
         },
         "type": "object"
@@ -365,6 +393,10 @@
             "description": "permit kind=auto to fall back to the vanilla path when no provider is registered (default false)",
             "type": "boolean"
           },
+          "allowTimeScale": {
+            "description": "capture anyway while the game's time scale is not 1 (default false; a scaled frame is not comparable to a golden taken at normal speed)",
+            "type": "boolean"
+          },
           "checkpointId": {
             "description": "REQUIRED — stable file stem and correlation key",
             "type": "string"
@@ -425,13 +457,21 @@
     },
     {
       "name": "record",
-      "description": "Capture a manual play-through as a replayable scenario. action='start' begins sampling the player pose (x/y/z/angleZ/angleX + camera pos + POV + game frame) every intervalMs (default from config recordIntervalMs, min 10) on a background thread and captures a one-time scene manifest (worldspace/cell, time of day, weather, anchor pose, and the entryPoint — the save loaded or coc'd to reach the scene, or 'unknown'); a game must be loaded. 'checkpoint' marks THIS moment (while recording is active) as a screenshot checkpoint — requires 'id' (unique this recording); optional excludeUi (default true). Mirrors 'stop' capturing the trajectory: no manual JSON editing needed. Carries no golden/threshold — those are supplied later, per-checkpoint, on replay's 'goldens' arg, since a golden reference doesn't exist yet at mark-time. 'stop' writes the trajectory to Data/SKSE/Plugins/devbench/recordings/recording_<stamp>.json and returns its path + meta (meta.checkpoints holds any marked via 'checkpoint'). 'status' reports recording/sampleCount/intervalMs/checkpointCount. 'replay' runs a recording file ('path'): with restoreScene=true it re-establishes the entryPoint and waits for the player before the trajectory, so the run reproduces the recorded scene (interiors coc the cell; exterior entries use cow with the recorded worldspace + anchor grid cell — exterior editor ids are not unique and a raw exterior coc can wedge the engine); otherwise it teleports along the path in the current scene. Emits record.started / record.stopped and replay.started / replay.finished markers, plus scenario.step progress events. The recipe's coupling tier (meta.coupling) is the producer's signal for how tightly the start must be reproduced; a consumer can override it — 'coupling' forces a looser tier ('worldspace' skips the restore) and 'force' turns a scene mismatch from an abort into a reported warning, to run a recipe generally accepting it may not reproduce. replay is ASYNC BY DEFAULT — mirroring game{action:'load'} — and returns {queued:true, runId, steps, estMs} immediately; poll completion via record{action:'status', runId} (returns {done, ok, result} once finished, {done:false} while running) or watch replay.started / replay.finished on GET /api/events (both carry runId; the runId space is shared with scenario, so a replay's runId also resolves via scenario{action:'status'}). Pass async:false to block the request for the run's duration and get the result object directly. If the recording has meta.checkpoints, each expands into a `capture` step at the point in the trajectory its atMs was recorded, tagged with 'variant' for correlation (default 'default') — see the `capture` tool. Pass captureCheckpoints:false to replay the same recording as a plain trajectory-only run instead — checkpoints are skipped entirely (no capture provider required, nothing captured), so one recording can serve as both a general tour and a visual-review run depending on the call. Pass 'goldens' to also get an inline SSIM verdict per checkpoint: {\"<checkpointId>\": {golden, threshold?, regions?}}; a checkpoint with no matching entry is captured but not scored. The result's top-level 'checkpoints' array rolls up every capture step into {id, ok, path, inconclusive, inconclusiveReason?, ssim?, threshold?, passed?} — read this instead of filtering the (often much larger) 'results' step transcript yourself. Only one replay runs at a time: starting another while one is in flight is refused with 409 naming the active runId.",
+      "description": "Capture a manual play-through as a versioned activity trace and replayable scenario. action='start' begins sampling the player pose (x/y/z/angleZ/angleX + camera pos + POV + game frame + VR HMD/left-wand/right-wand world transforms) every intervalMs (default from config recordIntervalMs, range 10..1800000) on a background thread while the Skyrim BSInputDeviceManager sink records every normalized keyboard, mouse, gamepad, and VR-controller event plus menu and lifecycle transitions on the same monotonic clock. The activity contract and exact replay support are returned by start and stored in meta.activityCapture; activityEvents preserves unsupported events rather than approximating them. The sampling thread also captures a one-time scene manifest (worldspace/cell, time of day, weather, anchor pose, and the entryPoint — the save loaded or coc'd to reach the scene, or 'unknown'). Normally a game must be loaded; allowNoPlayer=true explicitly permits capture from the main menu/new-game flow and stores the first subsequently loaded player scene separately. 'checkpoint' marks THIS moment (while recording is active) as a screenshot checkpoint — requires 'id' (unique this recording); optional excludeUi (default true). Mirrors 'stop' capturing the trajectory: no manual JSON editing needed. Carries no golden/threshold — those are supplied later, per-checkpoint, on replay's 'goldens' arg, since a golden reference doesn't exist yet at mark-time. 'stop' writes the trajectory to Data/SKSE/Plugins/devbench/recordings/recording_<stamp>.json and returns its path + meta (meta.checkpoints holds any marked via 'checkpoint'). 'status' reports recording/sampleCount/intervalMs/checkpointCount/activityCounts. 'replay' runs a recording file ('path'): with restoreScene=true it re-establishes the entryPoint and waits for the player before the trajectory, so the run reproduces the recorded scene (interiors coc the cell; exterior entries use cow with the recorded worldspace + anchor grid cell — exterior editor ids are not unique and a raw exterior coc can wedge the engine); otherwise it teleports along the path in the current scene. Emits record.started / record.stopped and replay.started / replay.finished markers, plus scenario.step progress events. The recipe's coupling tier (meta.coupling) is the producer's signal for how tightly the start must be reproduced; a consumer can override it — 'coupling' forces a looser tier ('worldspace' skips the restore) and 'force' turns a scene mismatch from an abort into a reported warning, to run a recipe generally accepting it may not reproduce. replay is ASYNC BY DEFAULT — mirroring game{action:'load'} — and returns {queued:true, runId, steps, estMs} immediately; poll completion via record{action:'status', runId} (returns {done, ok, result} once finished, {done:false} while running) or watch replay.started / replay.finished on GET /api/events (both carry runId; the runId space is shared with scenario, so a replay's runId also resolves via scenario{action:'status'}). Pass async:false to block the request for the run's duration and get the result object directly. On VR, OpenVR HMD/controller poses and complete controller packet/button/touch/axis state are sampled even before a player exists. replayInputs=true (default) starts one atomic HMD+left+right tracked-set sequence and interleaves keyboard transitions on the same recording clock. Legacy recording-3 files without exact controller packets are upgraded from their wand-indexed normalized events using previous-pose hold; the replay report identifies fallback or unsupported events. Mouse/gamepad/menu/lifecycle events remain observational and explicitly reported rather than silently approximated. Set replayInputs=false for pose-only behavior. If the recording has meta.checkpoints, each expands into a `capture` step at the point in the trajectory its atMs was recorded, tagged with 'variant' for correlation (default 'default') — see the `capture` tool. Pass captureCheckpoints:false to replay the same recording as a plain trajectory-only run instead — checkpoints are skipped entirely (no capture provider required, nothing captured), so one recording can serve as both a general tour and a visual-review run depending on the call. Pass 'goldens' to also get an inline SSIM verdict per checkpoint: {\"<checkpointId>\": {golden, threshold?, regions?}}; a checkpoint with no matching entry is captured but not scored. The result's top-level 'checkpoints' array rolls up every capture step into {id, ok, path, inconclusive, inconclusiveReason?, ssim?, threshold?, passed?} — read this instead of filtering the (often much larger) 'results' step transcript yourself. Only one replay runs at a time: starting another while one is in flight is refused with 409 naming the active runId. Pass 'timeScale' (0.1..3.0, up to 10.0 with 'allowHigh':true) to replay the recorded trajectory that many times faster — it is paced in GAME time, so the run keeps its shape and a mid-run change is absorbed; the setup/restore phase before the trajectory (coc/cow + settle) always runs at normal speed, since a load screen isn't sped up by this and its settle physics stay predictable; the scale is restored when the run ends, and the result reports goldensEligible plus timeScaleChanges[] (a scaled run is not comparable to a golden, which is reported rather than refused). 'start' is refused (409) while the game is running at a scale other than 1, and both 'start' and 'replay' can override that with allowTimeScale:true.",
       "inputSchema": {
         "properties": {
           "action": {
             "description": "start | stop | status | replay | checkpoint",
             "enum": ["start", "stop", "status", "replay", "checkpoint"],
             "type": "string"
+          },
+          "allowHigh": {
+            "description": "replay: permit a timeScale above 3.0, up to 10.0",
+            "type": "boolean"
+          },
+          "allowTimeScale": {
+            "description": "start/replay: proceed while the game's time scale is not 1 (start would record an incomparable run; default false)",
+            "type": "boolean"
           },
           "async": {
             "description": "replay: return {queued:true, runId} immediately and run in the background (default true); false blocks and returns the result directly",
@@ -485,6 +525,10 @@
           "runId": {
             "description": "status: poll an async replay run started earlier (from replay's 'runId')",
             "type": "integer"
+          },
+          "timeScale": {
+            "description": "replay: run the recorded trajectory this many times faster (0.1..3.0, up to 10.0 with allowHigh:true) and restore the previous scale when it ends — the setup/restore phase runs at normal speed regardless. The result reports goldensEligible plus timeScaleChanges[]",
+            "type": "number"
           },
           "variant": {
             "description": "replay: tag for any meta.checkpoints captures, for correlation (default 'default')",

@@ -1,6 +1,7 @@
 #include "KeyboardInput.h"
 
 #include "EventBus.h"
+#include "GameClock.h"
 #include "GameState.h"
 #include "KeyboardInputState.h"
 #include "MainThread.h"
@@ -48,11 +49,33 @@ namespace dvb
 			return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 		}
 
+		std::int64_t GameNowMs()
+		{
+			return static_cast<std::int64_t>(GameClock::Now());
+		}
+
+		// A synthetic hold reads its duration off the game clock, so the clock must run while any
+		// key is held. Balanced through g_holdsClock, since other consumers engage it too.
+		std::atomic<bool> g_holdsClock{ false };
+
+		void EngageForHold()
+		{
+			bool expected = false;
+			if (g_holdsClock.compare_exchange_strong(expected, true))
+				GameClock::Engage();
+		}
+
+		void DisengageForHold()
+		{
+			if (g_holdsClock.exchange(false))
+				GameClock::Disengage();
+		}
+
 		struct RepeatingKey
 		{
 			std::uint16_t scancode;
 			std::uint64_t generation;
-			std::int64_t  pressedAtMs;
+			std::int64_t  pressedAtGameMs;
 			std::int64_t  expiresAtMs;
 		};
 
@@ -97,12 +120,15 @@ namespace dvb
 				task->Run();
 			const auto cutoff = g_repeatCutoff.load(std::memory_order_acquire);
 			std::erase_if(g_repeatingKeys, [=](const auto& key) { return key.generation <= cutoff; });
-			if (g_repeatingKeys.empty())
+			if (g_repeatingKeys.empty()) {
+				DisengageForHold();
 				return;
+			}
 			auto* queue = RE::BSInputEventQueue::GetSingleton();
 			if (!queue)
 				return;
 			const auto now = NowMs();
+			const auto gameNow = GameNowMs();
 			for (const auto& key : g_repeatingKeys) {
 				if (now >= key.expiresAtMs)
 					continue;
@@ -119,7 +145,7 @@ namespace dvb
 					}
 				}
 				if (!queued) {
-					const float heldSecs = std::max(0.001F, static_cast<float>(now - key.pressedAtMs) / 1000.0F);
+					const float heldSecs = HeldDownSeconds(key.pressedAtGameMs, gameNow);
 					queue->AddButtonEvent(RE::INPUT_DEVICE::kKeyboard, 0, key.scancode, 1.0F, heldSecs);
 				}
 			}
@@ -285,7 +311,7 @@ namespace dvb
 					if (const auto current = m_leases.Find(a_key.scancode);
 						current && m_pendingReleases.contains(current->generation))
 						throw ToolError(409, std::format("key '{}' has a pending release — retry after it completes", a_key.name));
-					acquired = m_leases.Acquire(a_key, a_owner, NowMs(), a_maxHoldMs);
+					acquired = m_leases.Acquire(a_key, a_owner, NowMs(), a_maxHoldMs, GameNowMs());
 					if (acquired.status == KeyboardAcquireStatus::kConflict)
 						throw ToolError(409, std::format("key '{}' is held by owner '{}'", a_key.name, acquired.lease.owner));
 					if (acquired.status == KeyboardAcquireStatus::kAlreadyOwned) {
@@ -296,6 +322,7 @@ namespace dvb
 						return result;
 					}
 					m_latestGeneration.store(acquired.lease.generation, std::memory_order_release);
+					EngageForHold();
 					try {
 						queued = QueueButton(acquired.lease, true, 0.0F);
 					} catch (...) {
@@ -330,7 +357,7 @@ namespace dvb
 			json Tap(const KeyboardKey& a_key, const std::string& a_owner, int a_durationMs)
 			{
 				json down = Down(a_key, a_owner, std::min(kMaximumMaxHoldMs, a_durationMs + 2000), true);
-				std::this_thread::sleep_for(milliseconds(a_durationMs));
+				GameClock::SleepMs(a_durationMs);
 				json up;
 				try {
 					up = Up(a_key, a_owner);
@@ -401,7 +428,7 @@ namespace dvb
 						json              result;
 						if (action == "wait") {
 							const int durationMs = BoundedInteger(event, "durationMs", 0, 0, 10000);
-							std::this_thread::sleep_for(milliseconds(durationMs));
+							GameClock::SleepMs(durationMs);
 							result = json{ { "action", "wait" }, { "durationMs", durationMs } };
 						} else {
 							const auto key = ParseKey(event);
@@ -418,7 +445,7 @@ namespace dvb
 						results.push_back(std::move(result));
 						const int afterMs = BoundedInteger(event, "afterMs", 0, 0, 10000);
 						if (afterMs)
-							std::this_thread::sleep_for(milliseconds(afterMs));
+							GameClock::SleepMs(afterMs);
 					}
 				} catch (...) {
 					for (const auto& lease : opened) {
@@ -510,9 +537,12 @@ namespace dvb
 					if (queue->buttonEventCount >= RE::BSInputEventQueue::MAX_BUTTON_EVENTS)
 						throw ToolError(503, "Skyrim keyboard input queue is full for this frame — retry after the next frame");
 					if (a_down)
-						g_repeatingKeys.push_back({ a_lease.key.scancode, a_lease.generation, NowMs(), a_lease.expiresAtMs });
-					else
+						g_repeatingKeys.push_back({ a_lease.key.scancode, a_lease.generation, a_lease.pressedAtGameMs, a_lease.expiresAtMs });
+					else {
 						std::erase_if(g_repeatingKeys, [&](const auto& key) { return key.scancode == a_lease.key.scancode; });
+						if (g_repeatingKeys.empty())
+							DisengageForHold();
+					}
 					queue->AddButtonEvent(RE::INPUT_DEVICE::kKeyboard, 0, a_lease.key.scancode,
 						a_down ? 1.0F : 0.0F, a_down ? 0.0F : a_heldSecs);
 					return json{ { "frame", game::CurrentFrame() } };
@@ -538,8 +568,7 @@ namespace dvb
 					return { false, result.value("frame", -1), {} };
 				}
 
-				const float heldSecs = std::max(0.001F,
-					static_cast<float>(NowMs() - a_lease.pressedAtMs) / 1000.0F);
+				const float heldSecs = HeldDownSeconds(a_lease.pressedAtGameMs, GameNowMs());
 				auto        queued = QueueButton(a_lease, false, heldSecs);
 				if (queued.pending) {
 					m_pendingReleases.insert_or_assign(a_lease.generation, PendingRelease{ std::move(queued.completion), reason });
