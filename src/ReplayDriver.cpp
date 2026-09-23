@@ -1,8 +1,8 @@
 #include "ReplayDriver.h"
 
+#include "FreeCamera.h"
 #include "GameState.h"
 #include "ToolRegistry.h"
-#include "VRFreeCamera.h"
 
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
@@ -111,7 +111,7 @@ namespace dvb::Recording::ReplayDriver
 				const bool   finishing = tMs >= static_cast<double>(m_trajectory.EndMs());
 				const Pose   pose = m_trajectory.Sample(tMs);
 				const bool   applied = Apply(pose);
-				if (applied && REL::Module::IsVR())
+				if (applied)
 					DriveCamera(pose);
 
 				{
@@ -160,22 +160,22 @@ namespace dvb::Recording::ReplayDriver
 				return *m_headHeightOffset;
 			}
 
-			// Drives the VR free camera every frame from the same interpolated pose, using the
+			// Drives the free camera every frame from the same interpolated pose, using the
 			// recording's own captured camera transform when present, else one derived from the
 			// player's pose.
 			void DriveCamera(const Pose& a_pose)
 			{
 				try {
 					if (a_pose.HasCam()) {
-						VRFreeCamera::Drive(static_cast<float>(*a_pose.camX), static_cast<float>(*a_pose.camY),
+						FreeCamera::Drive(static_cast<float>(*a_pose.camX), static_cast<float>(*a_pose.camY),
 							static_cast<float>(*a_pose.camZ), static_cast<float>(*a_pose.camPitch),
-							static_cast<float>(*a_pose.camYaw), VRFreeCamera::CurrentSession());
+							static_cast<float>(*a_pose.camYaw), FreeCamera::CurrentSession());
 						return;
 					}
-					VRFreeCamera::Drive(static_cast<float>(a_pose.x), static_cast<float>(a_pose.y),
+					FreeCamera::Drive(static_cast<float>(a_pose.x), static_cast<float>(a_pose.y),
 						static_cast<float>(a_pose.z) + HeadHeightOffset(),
 						static_cast<float>(a_pose.pitchDeg * kDegToRad), static_cast<float>(a_pose.yawDeg * kDegToRad),
-						VRFreeCamera::CurrentSession());
+						FreeCamera::CurrentSession());
 				} catch (const std::exception& e) {
 					// The hold may not have activated yet for this exact frame, or the free camera
 					// was taken by another owner; either way the next frame retries on its own.

@@ -3,6 +3,7 @@
 #include "Capture.h"
 #include "ConsoleLogCapture.h"
 #include "EventBus.h"
+#include "FreeCamera.h"
 #include "GameEvents.h"
 #include "GameState.h"
 #include "HostApi.h"
@@ -17,7 +18,6 @@
 #include "Server.h"
 #include "ToolExtensions.h"
 #include "ToolRegistry.h"
-#include "VRFreeCamera.h"
 #include "VRInputState.h"
 #include "Version.h"
 
@@ -1339,7 +1339,7 @@ namespace dvb
 					else if (cam->currentState && cam->currentState->id == RE::CameraState::kAutoVanity)
 						pov = "vanity";  // kAutoVanity=1 is identical in SE/VR layouts
 					json out{ { "pov", pov }, { "freeCam", cam->IsInFreeCameraMode() },
-						{ "freeCamOwned", VRFreeCamera::IsOwned() },
+						{ "freeCamOwned", FreeCamera::IsOwned() },
 						{ "stateId", cam->currentState ? json(static_cast<std::uint32_t>(cam->currentState->id)) : json(nullptr) },
 						{ "freeCamBackend", REL::Module::IsVR() ? "vr-state" : "engine" } };
 					if (cam->cameraRoot) {
@@ -1355,25 +1355,15 @@ namespace dvb
 					return out;
 				});
 			}
-			auto* task = SKSE::GetTaskInterface();
-			if (!task)
-				throw ToolError(500, "SKSE TaskInterface unavailable");
-
-			// VR transitions complete on the main thread; flat-game toggles remain deferred.
+			// Both runtimes complete on the main thread and read back the same tick (see
+			// FreeCamera::SetEnabled/Drive) rather than queuing a fire-and-forget toggle.
 			if (action == "freecam") {
 				const bool on = a_args.value("on", true);
-				if (REL::Module::IsVR()) {
-					const auto session = VRFreeCamera::CurrentSession();
-					return MainThread::RunAndWait([on, session]() {
-						VRFreeCamera::SetEnabled(on, session);
-						return json{ { "queued", false }, { "action", "freecam" }, { "on", on }, { "freeCam", on } };
-					});
-				}
-				task->AddTask([on]() {
-					if (auto* cam = RE::PlayerCamera::GetSingleton(); cam && cam->IsInFreeCameraMode() != on)
-						cam->ToggleFreeCameraMode(false);  // false: don't freeze time
+				const auto session = FreeCamera::CurrentSession();
+				return MainThread::RunAndWait([on, session]() {
+					FreeCamera::SetEnabled(on, session);
+					return json{ { "queued", false }, { "action", "freecam" }, { "on", on }, { "freeCam", on } };
 				});
-				return json{ { "queued", true }, { "action", "freecam" }, { "on", on } };
 			}
 
 			// drive: set the free camera's world transform — the exact-viewpoint replay primitive.
@@ -1384,23 +1374,11 @@ namespace dvb
 				const float pitch = a_args.value("pitch", 0.0f), yaw = a_args.value("yaw", 0.0f);
 				if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(pitch) || !std::isfinite(yaw))
 					throw ToolError(400, "camera drive requires finite coordinates and angles");
-				if (REL::Module::IsVR()) {
-					const auto session = VRFreeCamera::CurrentSession();
-					return MainThread::RunAndWait([x, y, z, pitch, yaw, session]() {
-						VRFreeCamera::Drive(x, y, z, pitch, yaw, session);
-						return json{ { "queued", false }, { "action", "drive" } };
-					});
-				}
-				task->AddTask([x, y, z, pitch, yaw]() {
-					auto* cam = RE::PlayerCamera::GetSingleton();
-					if (!cam || !cam->currentState || cam->currentState->id != RE::CameraState::kFree)
-						return;  // not in free cam — issue camera freecam {on:true} first
-					auto* fc = static_cast<RE::FreeCameraState*>(cam->currentState.get());
-					fc->translation = RE::NiPoint3{ x, y, z };
-					fc->rotation.x = pitch;  // BEST-EFFORT free-cam rotation convention — tune in-game
-					fc->rotation.y = yaw;
+				const auto session = FreeCamera::CurrentSession();
+				return MainThread::RunAndWait([x, y, z, pitch, yaw, session]() {
+					FreeCamera::Drive(x, y, z, pitch, yaw, session);
+					return json{ { "queued", false }, { "action", "drive" } };
 				});
-				return json{ { "queued", true }, { "action", "drive" } };
 			}
 
 			if (action != "setPov")
@@ -2346,24 +2324,28 @@ namespace dvb
 			"| vanity) on the main thread and returns { pov: <applied>, requestedPov } read back "
 			"the same tick — Skyrim's idle-vanity timer can still override it a few ticks later "
 			"while the player is stationary, so poll action='get' if you need certainty after "
-			"idling. action='freecam' (param 'on', default true) enables or disables free camera. "
-			"On VR, freeCamBackend='vr-state': activation and restoration complete before return "
-			"(queued=false), using the existing VR state without changing freeze time. On SE/AE "
-			"the native toggle is queued; poll action='get'.freeCam before 'drive'. "
+			"idling. action='freecam' (param 'on', default true) enables or disables free camera on "
+			"either runtime: activation and restoration complete before return (queued=false) and "
+			"read back the same tick, without changing freeze time. freeCamBackend reports which "
+			"mechanism is in play: VR ('vr-state') hand-drives the transition, since the engine's "
+			"own toggle never installs free-cam as the current state on VR 1.4.15; flat ('engine') "
+			"uses the engine's own toggle, which enters and restores correctly there. "
 			"action='drive' (params 'x','y','z','pitch','yaw', all default 0) "
 			"sets the free camera's world transform — requires free-cam mode already on. "
-			"VR pitch/yaw are native free-camera angles in radians; SE/AE writes them to "
-			"FreeCameraState::rotation using the existing best-effort convention. "
-			"VR enable, disable, and drive reject an active camera owned elsewhere; freeCamOwned reports devbench ownership. "
-			"After failed pre-load restoration, freecam off retries recovery using the loaded scene's normal VR state; "
-			"unavailable or rejected recovery returns HTTP 500. "
-			"VR drive completes its field writes before return; allow a rendered frame before capture. "
+			"pitch/yaw are native free-camera angles in radians on both runtimes, writing "
+			"FreeCameraState::rotation directly; completes its field writes before return, so allow "
+			"a rendered frame before capture. "
+			"enable, disable, and drive all reject an active free camera owned elsewhere; "
+			"freeCamOwned reports devbench's own ownership. "
+			"On VR, after failed pre-load restoration, freecam off retries recovery using the "
+			"loaded scene's normal VR state; unavailable or rejected recovery returns HTTP 500. "
 			"Recordings capture the POV per sample and replay restores it via this tool, since "
-			"what is rendered (and benchmarked) differs by POV. On VR, a recording also captures the "
-			"camera's own world transform per sample; record{action:'replay'} drives it exactly via "
-			"this tool's freecam+drive instead of setPov, since VR head-look is a degree of freedom "
-			"setpos+setPov can't reproduce. Devbench's own replay always owns and releases the free "
-			"camera itself for that duration.";
+			"what is rendered (and benchmarked) differs by POV. A recording also captures the "
+			"camera's own world transform per sample, on whichever runtime recorded it; "
+			"record{action:'replay'} drives it exactly via this tool's freecam+drive instead of "
+			"setPov, since head-look is a degree of freedom setpos+setPov can't reproduce, on "
+			"either runtime. Devbench's own replay always owns and releases the free camera itself "
+			"for that duration.";
 		camera.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
@@ -2373,8 +2355,8 @@ namespace dvb
 								{ "x", json{ { "type", "number" }, { "description", "drive: world X (requires free-cam mode)" } } },
 								{ "y", json{ { "type", "number" }, { "description", "drive: world Y (requires free-cam mode)" } } },
 								{ "z", json{ { "type", "number" }, { "description", "drive: world Z (requires free-cam mode)" } } },
-								{ "pitch", json{ { "type", "number" }, { "description", "drive: VR native free-cam pitch in radians; SE/AE best-effort FreeCameraState::rotation.x" } } },
-								{ "yaw", json{ { "type", "number" }, { "description", "drive: VR native free-cam yaw in radians; SE/AE best-effort FreeCameraState::rotation.y" } } },
+								{ "pitch", json{ { "type", "number" }, { "description", "drive: native free-cam pitch in radians (FreeCameraState::rotation.x)" } } },
+								{ "yaw", json{ { "type", "number" }, { "description", "drive: native free-cam yaw in radians (FreeCameraState::rotation.y)" } } },
 							} },
 		};
 		a_registry.Register(std::move(camera), &CameraHandler);
@@ -2651,7 +2633,7 @@ namespace dvb
 					const bool interpolate = Recording::WantsPoseDriver(a_args);
 					// Held from the trajectory boundary (not scene setup) to any exit; see ReplayHold.
 					const std::size_t trajectoryStepCount = plan.value("trajectoryStepCount", static_cast<std::size_t>(0));
-					const auto        cameraHold = std::make_shared<VRFreeCamera::ReplayHold>();
+					const auto        cameraHold = std::make_shared<FreeCamera::ReplayHold>();
 					auto              runReplay = [&a_registry, &a_events, a_ctx, steps, runId, coupling,
 													  activity, inputOwner, interpolate, cameraHold,
 													  trajectoryStepCount]() -> json {

@@ -7,7 +7,7 @@ before every mutation, including cleanup after a failed assertion.
 
 Run in a stationary, unobstructed scene without movement input. This checks the
 camera-node transform after subsequent game frames; visually inspect both eyes
-separately to qualify stereo presentation (docs/vr-free-camera.md).
+separately to qualify stereo presentation (docs/free-camera.md).
 """
 
 from __future__ import annotations

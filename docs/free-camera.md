@@ -1,6 +1,16 @@
-# Skyrim VR free camera
+# DevBench free camera
 
-DevBench's VR camera path enters the existing engine `FreeCameraState` directly. Calling the unpatched `PlayerCamera::ToggleFreeCameraMode` in Skyrim VR 1.4.15 crashes while entering free camera, even though the engine constructs a usable free-camera state.
+DevBench's `camera` tool drives the engine's `FreeCameraState` directly on both runtimes,
+via the shared `FreeCamera` module. The two runtimes need different activation paths:
+
+- **Flat (SE/AE)**: the engine's own `PlayerCamera::ToggleFreeCameraMode` works correctly —
+  confirmed by decompile, it pushes the prior state before switching and restores it on
+  exit — so DevBench calls it directly. No workaround needed.
+- **VR**: the same native function is broken (see below); DevBench enters and restores the
+  free-camera state by hand instead.
+
+The rest of this document is VR-specific RE evidence for that workaround; it does not apply
+to the flat runtime, whose native toggle needs no repair.
 
 ## Evidence from running-game memory
 
