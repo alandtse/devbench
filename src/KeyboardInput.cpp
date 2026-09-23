@@ -322,7 +322,6 @@ namespace dvb
 						return result;
 					}
 					m_latestGeneration.store(acquired.lease.generation, std::memory_order_release);
-					EngageForHold();
 					try {
 						queued = QueueButton(acquired.lease, true, 0.0F);
 					} catch (...) {
@@ -536,9 +535,10 @@ namespace dvb
 						throw ToolError(503, "Skyrim BSInputEventQueue unavailable");
 					if (queue->buttonEventCount >= RE::BSInputEventQueue::MAX_BUTTON_EVENTS)
 						throw ToolError(503, "Skyrim keyboard input queue is full for this frame — retry after the next frame");
-					if (a_down)
+					if (a_down) {
 						g_repeatingKeys.push_back({ a_lease.key.scancode, a_lease.generation, a_lease.pressedAtGameMs, a_lease.expiresAtMs });
-					else {
+						EngageForHold();
+					} else {
 						std::erase_if(g_repeatingKeys, [&](const auto& key) { return key.scancode == a_lease.key.scancode; });
 						if (g_repeatingKeys.empty())
 							DisengageForHold();

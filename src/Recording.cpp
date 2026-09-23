@@ -1267,8 +1267,11 @@ namespace dvb::Recording
 				{ "resolvedAtMs", a_cumMs },
 				{ "resolvedIndex", static_cast<long>(a_steps.size()) },
 				// Inherits the replay's own consent: a scaled replay already reports
-				// goldensEligible:false, so a checkpoint capture during it must not 409 too.
-				{ "allowTimeScale", a_args.value("allowTimeScale", false) },
+				// goldensEligible:false, so a checkpoint capture during it must not 409 too —
+				// requesting timeScale at all is the consent, not just an explicit allowTimeScale.
+				{ "allowTimeScale", a_args.value("allowTimeScale", false) ||
+										(a_args.contains("timeScale") && a_args["timeScale"].is_number() &&
+											a_args["timeScale"].get<double>() != TimeScaleControl::kNormalScale) },
 			};
 			if (a_cp.contains("subrect"))
 				capArgs["subrect"] = a_cp["subrect"];

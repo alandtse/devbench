@@ -269,10 +269,11 @@ namespace dvb::Recording::ReplayDriver
 	{
 		if (a_ms <= 0)
 			return;
-		if (!m_deadlineGameMs)
+		// Only accumulate without drift while the pose session is actively running (back-to-back
+		// waits driving smooth playback); a setup/settle wait before it starts should anchor to
+		// now, not a deadline left stale by whatever untracked work happened before this call.
+		if (!m_session || !m_deadlineGameMs)
 			m_deadlineGameMs = GameClock::Now();
-		// Accumulated rather than re-read from now, so the wait cannot drift with the re-check
-		// cadence; in game ms, so a run keeps its shape at any time scale.
 		*m_deadlineGameMs += static_cast<double>(a_ms);
 		GameClock::Engaged engaged;
 		while (GameClock::Now() < *m_deadlineGameMs)

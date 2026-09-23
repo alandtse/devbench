@@ -87,6 +87,12 @@ namespace dvb::GameClock
 		if (g_engaged.fetch_add(1, std::memory_order_acq_rel) == 0) {
 			g_rebase.store(true, std::memory_order_release);
 			std::call_once(g_pumpOnce, [] { std::thread(&Pump).detach(); });
+			// Pump's wait(lock, pred) checks the predicate and starts blocking under
+			// g_pumpMutex; taking the same lock here before notifying closes the window where
+			// this g_engaged transition and the notify could both land before Pump blocks.
+			{
+				std::lock_guard lock(g_pumpMutex);
+			}
 			g_pumpCv.notify_all();
 		}
 	}
