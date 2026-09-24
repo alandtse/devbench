@@ -8,6 +8,9 @@ namespace dvb
 
 	namespace Papyrus
 	{
+		/// Dispatch a call and report acceptance without waiting for its return value.
+		json QueueCall(const json& a_args);
+
 		/// papyrus tool: list/describe the live Papyrus callable surface and invoke functions,
 		/// returning the result value.
 		///

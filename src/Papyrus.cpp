@@ -460,7 +460,7 @@ namespace dvb::Papyrus
 			return true;
 		}
 
-		json HandleCall(const json& a_args)
+		json HandleCall(const json& a_args, bool a_waitForResult)
 		{
 			const std::string script = a_args.value("script", std::string{});
 			const std::string function = a_args.value("function", std::string{});
@@ -477,37 +477,21 @@ namespace dvb::Papyrus
 			if (!task)
 				throw ToolError(500, "SKSE TaskInterface unavailable");
 
-			auto                    state = std::make_shared<CallState>();
 			const RE::BSFixedString cls(script.c_str());
 			const RE::BSFixedString fn(function.c_str());
 
-			// Everything that touches the VM (form/array packing, handle bind, dispatch) runs on
-			// the main thread; the result arrives async on the VM tasklet thread via CallFunctor.
-			// Arg-build / bind / dispatch failures are reported back through state, preserving the
-			// status so an internal fault (503) isn't misreported to the caller as a 400.
-			auto fail = [state](int a_status, std::string a_msg) {
-				std::lock_guard<std::mutex> lk(state->m);
-				state->status = a_status;
-				state->error = std::move(a_msg);
-				state->done = true;
-				state->cv.notify_all();
-			};
-			task->AddTask([cls, fn, argsJson, selfJson, hasSelf, state, fail]() {
+			auto dispatch = [cls, fn, argsJson, selfJson, hasSelf](RE::BSTSmartPointer<BSScript::IStackCallbackFunctor> a_callback) {
 				auto* vm = BSScript::Internal::VirtualMachine::GetSingleton();
-				if (!vm) {
-					fail(503, "Papyrus VM unavailable");
-					return;
-				}
+				if (!vm)
+					throw ToolError(503, "Papyrus VM unavailable");
 
 				// Resolve self first (member) — the bound object's type is where we look up the
 				// function, and where args bind. For a global, the script type holds the function.
 				RE::BSTSmartPointer<BSScript::Object> selfObj;
 				if (hasSelf) {
 					std::string err;
-					if (!ResolveSelf(vm, selfJson, cls, selfObj, err)) {
-						fail(400, err);
-						return;
-					}
+					if (!ResolveSelf(vm, selfJson, cls, selfObj, err))
+						throw ToolError(400, err);
 				}
 				RE::BSTSmartPointer<BSScript::ObjectTypeInfo> scriptType;  // keeps a global's type alive
 				BSScript::ObjectTypeInfo*                     fnType = nullptr;
@@ -521,10 +505,8 @@ namespace dvb::Papyrus
 				// hard CTD, confirmed live), so a function that can't be resolved must fail cleanly
 				// here and never reach the dispatch.
 				const BSScript::IFunction* ifn = fnType ? FindFunction(fnType, std::string_view(fn.c_str() ? fn.c_str() : ""), !hasSelf) : nullptr;
-				if (!ifn) {
-					fail(404, std::format("no such {} function '{}' on script '{}'", hasSelf ? "member" : "global/native", fn.c_str() ? fn.c_str() : "", cls.c_str() ? cls.c_str() : ""));
-					return;
-				}
+				if (!ifn)
+					throw ToolError(404, std::format("no such {} function '{}' on script '{}'", hasSelf ? "member" : "global/native", fn.c_str() ? fn.c_str() : "", cls.c_str() ? cls.c_str() : ""));
 				// Declared param types so a form arg can be packed to a base-typed param.
 				std::vector<BSScript::TypeInfo> paramTypes;
 				for (std::uint32_t p = 0; p < ifn->GetParamCount(); ++p) {
@@ -542,14 +524,12 @@ namespace dvb::Papyrus
 						rawArgs->args.push_back(JsonToVariable(vm, a, pt));
 						++i;
 					}
-				} catch (const ToolError& e) {
+				} catch (const ToolError&) {
 					delete rawArgs;
-					fail(e.code, e.what());
-					return;
+					throw;
 				} catch (const std::exception& e) {
 					delete rawArgs;
-					fail(400, e.what());
-					return;
+					throw ToolError(400, e.what());
 				}
 
 				// Pad omitted trailing optionals with their type default — the VM won't, and a
@@ -557,10 +537,32 @@ namespace dvb::Papyrus
 				for (std::size_t p = rawArgs->args.size(); p < paramTypes.size(); ++p)
 					rawArgs->args.push_back(DefaultVariable(paramTypes[p]));
 
-				RE::BSTSmartPointer<BSScript::IStackCallbackFunctor> cb(new CallFunctor(state));
-				const bool                                           ok = hasSelf ? vm->DispatchMethodCall(selfObj, fn, rawArgs, cb) : vm->DispatchStaticCall(cls, fn, rawArgs, cb);
+				const bool ok = hasSelf ? vm->DispatchMethodCall(selfObj, fn, rawArgs, a_callback) : vm->DispatchStaticCall(cls, fn, rawArgs, a_callback);
 				if (!ok)
-					fail(400, hasSelf ? "method dispatch refused — unknown function, wrong arg count, or not a member of that object's script" : "dispatch refused — unknown function, wrong arg count, or not a global/native function");
+					throw ToolError(400, hasSelf ? "method dispatch refused — unknown function, wrong arg count, or not a member of that object's script" : "dispatch refused — unknown function, wrong arg count, or not a global/native function");
+			};
+
+			if (!a_waitForResult) {
+				return MainThread::RunAndWait([dispatch]() -> json {
+					dispatch(nullptr);
+					return json{ { "queued", true } };
+				});
+			}
+
+			auto state = std::make_shared<CallState>();
+			auto fail = [state](int a_status, std::string a_msg) {
+				std::lock_guard<std::mutex> lk(state->m);
+				state->status = a_status;
+				state->error = std::move(a_msg);
+				state->done = true;
+				state->cv.notify_all();
+			};
+			task->AddTask([dispatch, state, fail]() {
+				try {
+					dispatch(RE::BSTSmartPointer<BSScript::IStackCallbackFunctor>(new CallFunctor(state)));
+				} catch (const ToolError& e) {
+					fail(e.code, e.what());
+				}
 			});
 
 			std::unique_lock<std::mutex> lk(state->m);
@@ -585,6 +587,11 @@ namespace dvb::Papyrus
 		}
 	}
 
+	json QueueCall(const json& a_args)
+	{
+		return HandleCall(a_args, false);
+	}
+
 	json Handle(const json& a_args, const ToolContext&)
 	{
 		const std::string action = a_args.value("action", std::string("list"));
@@ -593,7 +600,7 @@ namespace dvb::Papyrus
 		if (action == "describe")
 			return HandleDescribe(a_args);
 		if (action == "call")
-			return HandleCall(a_args);
+			return HandleCall(a_args, true);
 		throw ToolError(400, std::format("unknown action '{}' (list|describe|call)", action));
 	}
 }

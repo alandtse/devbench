@@ -336,7 +336,7 @@ namespace dvb
 		// game: programmatic save / load / list. Named saves use SKSE's Game.SaveGame
 		// request; loads use BGSSaveLoadManager. loadLast gives a settled real-save
 		// state for testing WITHOUT coc's heavy new-game init. Both are async — see kLoadNote.
-		json GameHandler(const json& a_args, const ToolContext& a_ctx)
+		json GameHandler(const json& a_args, const ToolContext&)
 		{
 			const std::string action = a_args.value("action", std::string{});
 
@@ -483,7 +483,7 @@ namespace dvb
 				if (isSave) {
 					// SKSE tasks can run on worker threads. Synchronous Save can deadlock
 					// against the main thread's VM lock, so use SKSE's save request.
-					Papyrus::Handle(json{ { "action", "call" }, { "script", "Game" }, { "function", "SaveGame" }, { "args", json::array({ name }) } }, a_ctx);
+					Papyrus::QueueCall(json{ { "script", "Game" }, { "function", "SaveGame" }, { "args", json::array({ name }) } });
 				} else {
 					task->AddTask([name]() {
 						auto* m = RE::BGSSaveLoadManager::GetSingleton();
