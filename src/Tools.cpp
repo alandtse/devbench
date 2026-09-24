@@ -50,12 +50,11 @@ namespace dvb
 
 		json GameHandler(const json& a_args, const ToolContext& a_ctx);
 
-		// Console `save`/`load` run the whole save/load synchronously inside the GFx
-		// console drain, off the engine's sanctioned save point: the save job spins in
-		// SkyrimVM::Freeze waiting for Papyrus stacks that only the (blocked) main loop
-		// can drain — an engine-level deadlock that reproduces with every devbench hook
-		// disabled. Reroute those commands to the BGSSaveLoadManager request path the
-		// `game` tool uses, which the engine services at its own save point.
+		// Console `save` runs the whole save synchronously inside the GFx console
+		// drain, off the engine's sanctioned save point: a worker can block in
+		// SkyrimVM::Freeze on the main thread's VM lock while the main thread waits
+		// for that worker. Reroute save/load to the `game` tool, which queues named
+		// saves through SKSE and keeps the save-name lookup and load checks together.
 		std::optional<json> RedirectConsoleSaveLoad(const std::string& a_command, const ToolContext& a_ctx)
 		{
 			const auto  sp = a_command.find(' ');
@@ -334,10 +333,10 @@ namespace dvb
 				a_out["metaNote"] = "none of the matched saves' .ess headers could be read";
 		}
 
-		// game: programmatic save / load / list via BGSSaveLoadManager. loadLast gives a
-		// settled real-save state for testing WITHOUT coc's heavy new-game init. Mutating
-		// actions run on the main thread and are async — see kLoadNote.
-		json GameHandler(const json& a_args, const ToolContext&)
+		// game: programmatic save / load / list. Named saves use SKSE's Game.SaveGame
+		// request; loads use BGSSaveLoadManager. loadLast gives a settled real-save
+		// state for testing WITHOUT coc's heavy new-game init. Both are async — see kLoadNote.
+		json GameHandler(const json& a_args, const ToolContext& a_ctx)
 		{
 			const std::string action = a_args.value("action", std::string{});
 
@@ -481,15 +480,18 @@ namespace dvb
 						throw ToolError(404, std::format("save '{}' not found in {} — use action='list' for valid names", name, saveDir.string()));
 					Recording::NoteLoadEntry(name);  // reproducible entry point for a later recording
 				}
-				task->AddTask([name, isSave]() {
-					auto* m = RE::BGSSaveLoadManager::GetSingleton();
-					if (!m)
-						return;
-					if (isSave)
-						m->Save(name.c_str());
-					else
+				if (isSave) {
+					// SKSE tasks can run on worker threads. Synchronous Save can deadlock
+					// against the main thread's VM lock, so use SKSE's save request.
+					Papyrus::Handle(json{ { "action", "call" }, { "script", "Game" }, { "function", "SaveGame" }, { "args", json::array({ name }) } }, a_ctx);
+				} else {
+					task->AddTask([name]() {
+						auto* m = RE::BGSSaveLoadManager::GetSingleton();
+						if (!m)
+							return;
 						m->Load(name.c_str(), false);  // checkForMods=false skips the mod-mismatch modal
-				});
+					});
+				}
 				logs::info("devbench: game {} '{}'", action, name);
 				json out{ { "queued", true }, { "action", action }, { "name", name } };
 				if (!isSave)
@@ -2268,9 +2270,9 @@ namespace dvb
 			"running gets 409. exec then returns { queued:false, completed }, completed=false meaning "
 			"the end marker never arrived and `lines` may be incomplete; a capture that never sees its "
 			"begin marker gets 504 and the command is not run. "
-			"`save <name>`/`load <name>` are rerouted to the `game` tool's BGSSaveLoadManager "
-			"path and return { redirected:'game' } — running them as raw console commands "
-			"deadlocks the engine (SkyrimVM::Freeze vs blocked main loop).";
+			"`save <name>`/`load <name>` are rerouted to the `game` tool's save/load "
+			"path and return { redirected:'game' } — saves use SKSE's queued request "
+			"to avoid synchronous save deadlocks (SkyrimVM::Freeze vs blocked main loop).";
 		console.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
