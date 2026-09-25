@@ -73,6 +73,43 @@ def test_refs_player_by_formid(client, inspect):
     assert isinstance(actor, dict), ref
     assert _is_number(actor.get("health")), actor
     assert _is_number(actor.get("level")), actor
+    rotation = ref.get("rotation")
+    assert isinstance(rotation, list) and len(rotation) == 3, ref
+    assert all(_is_number(v) for v in rotation), ref
+
+
+@pytest.mark.requires_player
+def test_refs_enumerate_reports_cell_and_model(client, inspect):
+    require_enum(inspect, "kind", "refs")
+    body = client.ok("inspect", {"kind": "refs", "formType": "Static", "radius": 5000, "limit": 50})
+    refs = body.get("refs")
+    assert isinstance(refs, list), body
+    # Not every ref has a mesh (e.g. markers) or a parent cell (exterior worldspace refs may
+    # not), so assert on shape/type where present rather than requiring every ref to carry one.
+    for ref in refs:
+        if "model" in ref:
+            assert isinstance(ref["model"], str) and ref["model"], ref
+        if "cell" in ref:
+            assert isinstance(ref["cell"], dict) and "formId" in ref["cell"], ref
+        if "bounds" in ref:
+            bounds = ref["bounds"]
+            assert isinstance(bounds, dict) and "min" in bounds and "max" in bounds, ref
+            assert len(bounds["min"]) == 3 and len(bounds["max"]) == 3, ref
+
+
+@pytest.mark.requires_player
+def test_refs_model_filter(client, inspect):
+    require_enum(inspect, "kind", "refs")
+    unfiltered = client.ok("inspect", {"kind": "refs", "formType": "Static", "radius": 5000, "limit": 50})
+    with_model = next((r for r in unfiltered.get("refs", []) if r.get("model")), None)
+    if with_model is None:
+        pytest.skip("no static ref with a mesh path in range to filter on")
+    needle = with_model["model"].split("\\")[-1].split(".")[0][:6].lower()
+    body = client.ok("inspect", {"kind": "refs", "model": needle, "radius": 5000, "limit": 50})
+    refs = body.get("refs")
+    assert isinstance(refs, list) and refs, body
+    for ref in refs:
+        assert needle in ref.get("model", "").lower(), ref
 
 
 @pytest.mark.requires_player
