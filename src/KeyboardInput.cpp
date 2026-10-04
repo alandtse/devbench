@@ -49,7 +49,9 @@ namespace dvb
 			return EngineButtonOf(a_code).device == EngineDevice::kMouse ? RE::INPUT_DEVICE::kMouse : RE::INPUT_DEVICE::kKeyboard;
 		}
 
-		std::int32_t IdCodeOf(std::uint16_t a_code) { return EngineButtonOf(a_code).id; }
+		// Unsigned on purpose: an std::int32_t id binds BSInputEventQueue's VR-only AddButtonEvent overload, which does
+		// nothing on SE/AE, instead of the AddEvent<ButtonEvent> template every runtime uses.
+		std::uint32_t IdCodeOf(std::uint16_t a_code) { return static_cast<std::uint32_t>(EngineButtonOf(a_code).id); }
 
 		std::int64_t NowMs()
 		{
