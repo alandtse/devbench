@@ -1,8 +1,11 @@
 #pragma once
 
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -75,6 +78,9 @@ namespace dvb
 	class ToolRegistry
 	{
 	public:
+		/// A tool's declared top-level argument names (see Invoke's unknown-key check).
+		using KeySet = std::shared_ptr<const std::set<std::string, std::less<>>>;
+
 		/// Register (or replace) a tool. Returns false if it replaced an existing
 		/// entry of the same name — callers may treat that as a warning.
 		bool Register(ToolDescriptor a_desc, ToolHandler a_handler);
@@ -97,15 +103,21 @@ namespace dvb
 		using RegistrationListener = std::function<void(const ToolDescriptor&)>;
 		void SetRegistrationListener(RegistrationListener a_listener);
 
+		/// When true, a request carrying a top-level key the tool's inputSchema does not declare
+		/// fails with 400 instead of just gaining a `warnings` entry (object replies only). Off by default.
+		void SetStrictArgs(bool a_strict) { m_strictArgs.store(a_strict, std::memory_order_relaxed); }
+
 	private:
 		struct Entry
 		{
 			ToolDescriptor desc;
 			ToolHandler    handler;
+			KeySet         knownKeys;  ///< null = schema doesn't enumerate its keys; skip the check
 		};
 
 		mutable std::mutex                     m_mutex;
 		std::unordered_map<std::string, Entry> m_tools;
 		RegistrationListener                   m_onRegister;
+		std::atomic<bool>                      m_strictArgs{ false };
 	};
 }

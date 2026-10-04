@@ -20,6 +20,34 @@ namespace dvb
 	std::optional<KeyboardKey>      ResolveKeyboardKey(int a_scancode);
 	const std::vector<KeyboardKey>& KeyboardKeyCatalog();
 
+	// A key code below kMouseCodeBase is a DirectInput scan code on the keyboard device; from
+	// kMouseCodeBase to kMouseCodeLast it is a mouse button, code - kMouseCodeBase being the engine's
+	// mouse button id (left 0, right 1, middle 2).
+	inline constexpr std::uint16_t kMouseCodeBase = 0x100;
+	inline constexpr std::uint16_t kMouseCodeLast = 0x102;
+
+	enum class EngineDevice
+	{
+		kKeyboard,
+		kMouse,
+	};
+
+	// The button event the engine sees for a key code.
+	struct EngineButton
+	{
+		EngineDevice device = EngineDevice::kKeyboard;
+		std::int32_t id = 0;
+	};
+
+	EngineButton EngineButtonOf(std::uint16_t a_code);
+	// "directInputScanCode" or "mouseButton".
+	const char* CodeDomainOf(std::uint16_t a_code);
+	const char* EngineDeviceName(EngineDevice a_device);
+
+	// Whether a button event already queued this poll takes the place of a held key's repeat: only a
+	// press or hold (value > 0) of the same engine button does; a release of it does not.
+	bool QueuedPressCovers(EngineButton a_queued, float a_value, std::uint16_t a_heldCode);
+
 	struct KeyboardLease
 	{
 		KeyboardKey   key;

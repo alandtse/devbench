@@ -15,7 +15,7 @@ includes("xmake/cpp-mcp.lua")
 set_project("devbench")
 set_license("GPL-3.0")
 
-local version = "1.22.0"
+local version = "1.23.0"
 local ver = version:split("%.")
 set_version(version)
 
@@ -170,6 +170,7 @@ add_files("src/KeyboardInputState.cpp") -- key resolution + lease ownership; pur
 add_files("src/VRInputState.cpp") -- atomic tracked-set validation/encoding; pure logic
 add_files("src/ConsoleCaptureLogic.cpp") -- console capture slicing + line sampler; pure logic
 add_files("src/CameraOrbitLogic.cpp") -- camera orbit admission, baseline and restoration; pure logic
+add_files("src/PrologueScan.cpp") -- relocatable-prologue check for the console print hook; pure logic
 add_files("src/ReplayTrajectory.cpp") -- pose keyframe sampling/interpolation; pure logic
 add_files("src/RecordingActivity.cpp") -- activity contract + input/trajectory interleave; pure logic
 add_headerfiles("tests/*.h")
