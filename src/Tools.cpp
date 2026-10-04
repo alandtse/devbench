@@ -38,6 +38,26 @@ namespace dvb
 {
 	namespace
 	{
+		// Main thread. What the orbit was asked for and whether it has applied yet (it applies on the next
+		// third-person camera update).
+		json OrbitJson()
+		{
+			const auto&     s = CameraOrbit::State();
+			const auto&     r = s.Requested();
+			constexpr float kRad = 180.0f / 3.14159265f;
+			json            requested = nullptr;
+			if (s.On())
+				requested = json{ { "yawDeg", r.yawRad * kRad },
+					{ "pitchDeg", r.pitchRad ? json(*r.pitchRad * kRad) : json(nullptr) },
+					{ "zoom", r.zoom ? json(*r.zoom) : json(nullptr) },
+					{ "right", r.offset ? json(r.offset->x) : json(nullptr) },
+					{ "up", r.offset ? json(r.offset->z) : json(nullptr) } };
+			return json{ { "on", s.On() }, { "applied", s.Applied() }, { "requested", requested },
+				{ "lastEnd", CameraOrbit::EndReasonName(s.LastEnd()) }, { "session", s.Session() }, { "revision", s.Revision() } };
+		}
+	}
+	namespace
+	{
 		bool Truthy(const json& a_v)
 		{
 			if (a_v.is_boolean())
@@ -1426,7 +1446,7 @@ namespace dvb
 							};
 						}
 					}
-					out["orbit"] = CameraOrbit::Active();
+					out["orbit"] = OrbitJson();
 					if (cam->cameraRoot) {
 						const auto& t = cam->cameraRoot->world.translate;
 						out["camX"] = t.x;
@@ -1446,8 +1466,9 @@ namespace dvb
 				const bool on = a_args.value("on", true);
 				const auto session = FreeCamera::CurrentSession();
 				return MainThread::RunAndWait([on, session]() {
+					const bool orbitEnded = on && CameraOrbit::State().On();
 					FreeCamera::SetEnabled(on, session);
-					return json{ { "queued", false }, { "action", "freecam" }, { "on", on }, { "freeCam", on } };
+					return json{ { "queued", false }, { "action", "freecam" }, { "on", on }, { "freeCam", on }, { "orbitEnded", orbitEnded } };
 				});
 			}
 
@@ -1471,34 +1492,55 @@ namespace dvb
 			// right / up offset the camera (omitted keeps the game's own). No free camera is involved, so gameplay input still
 			// reaches the player. on=false hands the camera back.
 			if (action == "orbit") {
+				if (a_args.contains("on") && !a_args["on"].is_boolean())
+					throw ToolError(400, "camera orbit 'on' must be a boolean");
 				const bool on = a_args.value("on", true);
 				if (!on) {
-					CameraOrbit::Set(false, 0.0f, -99.0f, -9.0f);
-					CameraOrbit::SetOffset(false, 0.0f, 0.0f);
-					return json{ { "action", "orbit" }, { "on", false } };
+					return MainThread::RunAndWait([]() -> json {
+						const bool wasOn = CameraOrbit::End(CameraOrbit::EndReason::kRequested);
+						return json{ { "action", "orbit" }, { "on", false }, { "wasOn", wasOn }, { "orbit", OrbitJson() } };
+					});
 				}
+				for (const char* key : { "yawDeg", "pitchDeg", "zoom", "right", "up" })
+					if (a_args.contains(key) && !a_args[key].is_number())
+						throw ToolError(400, std::format("camera orbit '{}' must be a number", key));
 				const float yaw = a_args.value("yawDeg", 180.0f);
-				const float pitch = a_args.value("pitchDeg", -999.0f);
-				const float zoom = a_args.value("zoom", -9.0f);
+				const float pitch = a_args.value("pitchDeg", 0.0f);
+				const float zoom = a_args.value("zoom", 0.0f);
 				const float right = a_args.value("right", 0.0f), up = a_args.value("up", 0.0f);
 				if (!std::isfinite(yaw) || !std::isfinite(pitch) || !std::isfinite(zoom) || !std::isfinite(right) || !std::isfinite(up))
 					throw ToolError(400, "camera orbit requires finite yawDeg / pitchDeg / zoom / right / up");
-				if (a_args.contains("zoom") && (zoom < -1.0f || zoom > 1.0f))
+				if (zoom < -1.0f || zoom > 1.0f)
 					throw ToolError(400, "camera orbit 'zoom' must be within [-1, 1]");
-				if (a_args.contains("pitchDeg") && (pitch < -89.0f || pitch > 89.0f))
+				if (pitch < -89.0f || pitch > 89.0f)
 					throw ToolError(400, "camera orbit 'pitchDeg' must be within [-89, 89]");
-				constexpr float kDeg = 3.14159265f / 180.0f;
-				return MainThread::RunAndWait([=]() -> json {
+				constexpr float      kDeg = 3.14159265f / 180.0f;
+				CameraOrbit::Request request;
+				request.yawRad = yaw * kDeg;
+				if (a_args.contains("pitchDeg"))
+					request.pitchRad = pitch * kDeg;
+				if (a_args.contains("zoom"))
+					request.zoom = zoom;
+				if (a_args.contains("right") || a_args.contains("up"))
+					request.offset = CameraOrbit::Vec3{ right, 0.0f, up };
+				const auto session = CameraOrbit::CurrentSession();
+				return MainThread::RunAndWait([request, session]() -> json {
 					auto* cam = RE::PlayerCamera::GetSingleton();
 					if (!cam)
 						throw ToolError(500, "PlayerCamera unavailable");
-					if (cam->IsInFreeCameraMode())
+					switch (CameraOrbit::Enable(request, session)) {
+					case CameraOrbit::Admission::kStaleSession:
+						throw ToolError(409, "camera orbit was requested before a load or new game; request it again");
+					case CameraOrbit::Admission::kLoading:
+						throw ToolError(409, "camera orbit is unavailable while the game is loading");
+					case CameraOrbit::Admission::kFreeCamera:
 						throw ToolError(409, "camera orbit holds the third-person camera; leave the free camera first");
+					default:
+						break;
+					}
 					if (!cam->IsInThirdPerson())
 						cam->ForceThirdPerson();
-					CameraOrbit::SetOffset(a_args.contains("right") || a_args.contains("up"), right, up);
-					CameraOrbit::Set(true, yaw * kDeg, a_args.contains("pitchDeg") ? pitch * kDeg : -99.0f, a_args.contains("zoom") ? zoom : -9.0f);
-					return json{ { "action", "orbit" }, { "on", true }, { "thirdPerson", cam->IsInThirdPerson() } };
+					return json{ { "action", "orbit" }, { "on", true }, { "thirdPerson", cam->IsInThirdPerson() }, { "orbit", OrbitJson() } };
 				});
 			}
 
@@ -1514,6 +1556,7 @@ namespace dvb
 				auto* cam = RE::PlayerCamera::GetSingleton();
 				if (!cam)
 					throw ToolError(500, "PlayerCamera unavailable");
+				const bool orbitEnded = CameraOrbit::End(CameraOrbit::EndReason::kPov);
 				if (pov == "first")
 					cam->ForceFirstPerson();
 				else if (pov == "third")
@@ -1527,7 +1570,7 @@ namespace dvb
 					applied = "third";
 				else if (cam->currentState && cam->currentState->id == RE::CameraState::kAutoVanity)
 					applied = "vanity";
-				return json{ { "action", "setPov" }, { "requestedPov", pov }, { "pov", applied } };
+				return json{ { "action", "setPov" }, { "requestedPov", pov }, { "pov", applied }, { "orbitEnded", orbitEnded } };
 			});
 		}
 
@@ -2475,7 +2518,10 @@ namespace dvb
 			"action='orbit' (params yawDeg default 180, pitchDeg, zoom, right, up; on=false stops) holds the gameplay "
 			"third-person camera round the player on every camera update, with the player's facing held for the orbit - no "
 			"free camera, so gameplay input keeps reaching the player (a held mouseLeft keeps charging a spell, for example). "
-			"It is rejected while the free camera is on and stops on load / new game. "
+			"It is refused (409) while the free camera is on, during a load, or when requested before a load / new game. "
+			"It ends - writing back the heading, tilt, zoom and offsets it overwrote - on on=false, when the camera leaves "
+			"third person (any POV switch), on freecam on or setPov (both answer orbitEnded), and is dropped without "
+			"restoring on load / new game. get reports orbit { on, applied, requested, lastEnd, session, revision }. "
 			"enable, disable, and drive all reject an active free camera owned elsewhere; "
 			"freeCamOwned reports devbench's own ownership. "
 			"On VR, after failed pre-load restoration, freecam off retries recovery using the "

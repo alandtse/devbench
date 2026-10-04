@@ -17,6 +17,20 @@ namespace dvb::MainThread
 	}
 }
 
+// Records the orbit ends the free camera asks for; the orbit itself is tested in CameraOrbitLogic_test.
+#include "CameraOrbit.h"
+namespace dvb::CameraOrbit
+{
+	int       g_testEnds = 0;
+	EndReason g_testLastEnd = EndReason::kNone;
+	bool      End(EndReason a_reason)
+	{
+		++g_testEnds;
+		g_testLastEnd = a_reason;
+		return false;
+	}
+}
+
 // Compile the production controller against a small camera model. This checks
 // ownership, lifecycle and mutations; it does not claim to qualify Skyrim's ABI
 // or rendered stereo. Namespace substitutions isolate these fakes from other TUs.
@@ -637,4 +651,15 @@ TEST_CASE("flat camera BeginLoad/EndLoad invalidate an in-flight session without
 	CHECK(scene.camera.IsInFreeCameraMode());
 	CHECK(!Camera::IsOwned());
 	ExpectError(409, [&] { Camera::SetEnabled(true, session); });
+}
+
+TEST_CASE("turning the free camera on ends a camera orbit first; turning it off does not")
+{
+	Scene scene;
+	dvb::CameraOrbit::g_testEnds = 0;
+	scene.Enable(true);
+	CHECK(dvb::CameraOrbit::g_testEnds == 1);
+	CHECK(dvb::CameraOrbit::g_testLastEnd == dvb::CameraOrbit::EndReason::kFreeCamera);
+	scene.Enable(false);
+	CHECK(dvb::CameraOrbit::g_testEnds == 1);
 }

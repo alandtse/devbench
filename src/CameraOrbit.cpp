@@ -1,7 +1,10 @@
 #include "CameraOrbit.h"
 
+#include <RE/L/LoadingMenu.h>
+#include <RE/P/PlayerCamera.h>
 #include <RE/P/PlayerCharacter.h>
 #include <RE/T/ThirdPersonState.h>
+#include <RE/U/UI.h>
 
 #include <atomic>
 
@@ -9,70 +12,93 @@ namespace dvb::CameraOrbit
 {
 	namespace
 	{
-		std::atomic<bool>  g_on{ false };
-		std::atomic<float> g_yaw{ 0.0f };
-		std::atomic<float> g_pitch{ 0.0f };
-		std::atomic<bool>  g_pitchSet{ false };
-		std::atomic<float> g_zoom{ 0.0f };
-		std::atomic<bool>  g_zoomSet{ false };
-		std::atomic<bool>  g_offsetSet{ false };
-		std::atomic<float> g_right{ 0.0f };
-		std::atomic<float> g_up{ 0.0f };
-		std::atomic<bool>  g_haveBase{ false };
-		std::atomic<float> g_baseYaw{ 0.0f };
-		std::atomic<float> g_basePitch{ 0.0f };
-		std::atomic<bool>  g_restorePitch{ false };
+		OrbitState                 g_state;  // main thread
+		std::atomic<std::uint64_t> g_session{ 1 };
 
-		// Runs on the main thread inside ThirdPersonState::Update. currentYaw / targetYaw are the camera's own heading.
-		// The player's facing is captured once per orbit and held: with a weapon or spell drawn and no attack held, the
-		// player otherwise turns to face wherever the camera looks, and a camera in front would chase the player round.
+		Vec3         FromNi(const RE::NiPoint3& a_p) { return { a_p.x, a_p.y, a_p.z }; }
+		RE::NiPoint3 ToNi(const Vec3& a_v) { return { a_v.x, a_v.y, a_v.z }; }
+
+		CameraFields Read(const RE::ThirdPersonState* a_state)
+		{
+			return { a_state->targetYaw, a_state->currentYaw, a_state->targetZoomOffset, a_state->currentZoomOffset,
+				FromNi(a_state->posOffsetExpected), FromNi(a_state->posOffsetActual) };
+		}
+
+		void WriteCamera(RE::ThirdPersonState* a_state, const CameraFields& a_fields)
+		{
+			a_state->targetYaw = a_fields.targetYaw;
+			a_state->currentYaw = a_fields.currentYaw;
+			a_state->targetZoomOffset = a_fields.targetZoom;
+			a_state->currentZoomOffset = a_fields.currentZoom;
+			a_state->posOffsetExpected = ToNi(a_fields.offsetExpected);
+			a_state->posOffsetActual = ToNi(a_fields.offsetActual);
+		}
+
+		// The live third-person state, or null when the camera is in another state.
+		RE::ThirdPersonState* LiveThirdPerson()
+		{
+			auto* cam = RE::PlayerCamera::GetSingleton();
+			if (!cam || !cam->currentState || cam->currentState->id != RE::CameraState::kThirdPerson)
+				return nullptr;
+			return static_cast<RE::ThirdPersonState*>(cam->currentState.get());
+		}
+
+		// The player's facing is held at the baseline: with a weapon or spell drawn and no attack held, the player
+		// otherwise turns to face wherever the camera looks, and a camera in front would chase the player round.
 		void Apply(RE::ThirdPersonState* a_state)
 		{
 			auto* pc = RE::PlayerCharacter::GetSingleton();
 			if (!pc)
 				return;
-			if (!g_haveBase.load(std::memory_order_acquire)) {
-				g_baseYaw.store(pc->data.angle.z, std::memory_order_relaxed);
-				g_basePitch.store(pc->data.angle.x, std::memory_order_relaxed);
-				g_haveBase.store(true, std::memory_order_release);
+			const auto write = g_state.Apply(Baseline{ pc->data.angle.z, pc->data.angle.x, Read(a_state) });
+			if (!write)
+				return;
+			pc->data.angle.z = write->playerYaw;
+			if (write->playerPitch)
+				pc->data.angle.x = *write->playerPitch;  // the third-person tilt follows the player's look pitch
+			WriteCamera(a_state, write->camera);
+		}
+
+		bool EndInto(EndReason a_reason, RE::ThirdPersonState* a_state)
+		{
+			if (!g_state.On())
+				return false;
+			const CameraFields current = a_state ? Read(a_state) : CameraFields{};
+			const auto         restore = g_state.End(a_reason, current);
+			if (restore) {
+				if (a_state)
+					WriteCamera(a_state, restore->camera);
+				if (restore->playerPitch)
+					if (auto* pc = RE::PlayerCharacter::GetSingleton())
+						pc->data.angle.x = *restore->playerPitch;
 			}
-			const float base = g_baseYaw.load(std::memory_order_relaxed);
-			pc->data.angle.z = base;
-			const float yaw = base + g_yaw.load(std::memory_order_relaxed);
-			a_state->targetYaw = yaw;
-			a_state->currentYaw = yaw;
-			if (g_offsetSet.load(std::memory_order_relaxed)) {
-				const RE::NiPoint3 off{ g_right.load(std::memory_order_relaxed), 0.0f, g_up.load(std::memory_order_relaxed) };
-				a_state->posOffsetExpected = off;
-				a_state->posOffsetActual = off;
-			}
-			// the third-person tilt follows the player's look pitch (radians, positive looks down)
-			if (g_pitchSet.load(std::memory_order_relaxed)) {
-				pc->data.angle.x = g_pitch.load(std::memory_order_relaxed);
-				g_restorePitch.store(true, std::memory_order_relaxed);
-			}
-			if (g_zoomSet.load(std::memory_order_relaxed)) {
-				const float zoom = g_zoom.load(std::memory_order_relaxed);
-				a_state->targetZoomOffset = zoom;
-				a_state->currentZoomOffset = zoom;
-			}
+			return true;
 		}
 
 		struct Update
 		{
 			static void thunk(RE::ThirdPersonState* a_state, RE::BSTSmartPointer<RE::TESCameraState>& a_next)
 			{
-				const bool on = g_on.load(std::memory_order_relaxed);
+				const std::uint64_t revision = g_state.Revision();
+				const bool          on = g_state.On();
 				if (on)
 					Apply(a_state);
-				else if (g_restorePitch.exchange(false, std::memory_order_relaxed)) {
-					// the orbit tilted the player's look pitch; hand the player back the pitch it had before
-					if (auto* pc = RE::PlayerCharacter::GetSingleton())
-						pc->data.angle.x = g_basePitch.load(std::memory_order_relaxed);
-				}
 				func(a_state, a_next);
-				if (on)
-					Apply(a_state);  // the update itself resets the heading behind a drawn weapon
+				// the update itself resets the heading behind a drawn weapon; re-apply only the same configuration
+				if (on && g_state.On() && g_state.Revision() == revision)
+					Apply(a_state);
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		// Leaving the third-person state for any other (a POV switch, the free camera, ...) ends the orbit while this
+		// state is still valid to restore into, so it never lies latent and comes back on a later return.
+		struct EndState
+		{
+			static void thunk(RE::ThirdPersonState* a_state)
+			{
+				EndInto(EndReason::kLeftThirdPerson, a_state);
+				func(a_state);
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -82,34 +108,27 @@ namespace dvb::CameraOrbit
 	{
 		REL::Relocation<std::uintptr_t> vtbl{ RE::VTABLE_ThirdPersonState[0] };
 		Update::func = vtbl.write_vfunc(REL::Module::IsVR() ? 0x04 : 0x03, Update::thunk);
+		EndState::func = vtbl.write_vfunc(0x02, EndState::thunk);
 	}
 
-	void SetOffset(bool a_set, float a_right, float a_up)
+	std::uint64_t CurrentSession() { return g_session.load(std::memory_order_acquire); }
+
+	Admission Enable(const Request& a_request, std::uint64_t a_session)
 	{
-		g_right.store(a_right, std::memory_order_relaxed);
-		g_up.store(a_up, std::memory_order_relaxed);
-		g_offsetSet.store(a_set, std::memory_order_relaxed);
+		auto*      ui = RE::UI::GetSingleton();
+		auto*      cam = RE::PlayerCamera::GetSingleton();
+		const bool loading = !ui || ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) || !RE::PlayerCharacter::GetSingleton();
+		const bool freeCamera = cam && cam->IsInFreeCameraMode();
+		return g_state.Enable(a_request, a_session, loading, freeCamera);
 	}
 
-	void Set(bool a_on, float a_yawRad, float a_pitchRad, float a_zoom)
+	bool End(EndReason a_reason) { return EndInto(a_reason, LiveThirdPerson()); }
+
+	void EndSession()
 	{
-		g_yaw.store(a_yawRad, std::memory_order_relaxed);
-		g_pitch.store(a_pitchRad, std::memory_order_relaxed);
-		g_pitchSet.store(a_pitchRad > -9.0f, std::memory_order_relaxed);
-		g_zoom.store(a_zoom, std::memory_order_relaxed);
-		g_zoomSet.store(a_zoom >= -1.0f && a_zoom <= 1.0f, std::memory_order_relaxed);
-		if (!a_on || !g_on.load(std::memory_order_relaxed))
-			g_haveBase.store(false, std::memory_order_release);  // a new orbit captures the facing again
-		g_on.store(a_on, std::memory_order_release);
+		g_state.EndSession();
+		g_session.store(g_state.Session(), std::memory_order_release);
 	}
 
-	void Stop()
-	{
-		g_on.store(false, std::memory_order_release);
-		g_restorePitch.store(false, std::memory_order_relaxed);  // a pitch from the old game is never written into the new one
-		g_offsetSet.store(false, std::memory_order_relaxed);
-		g_haveBase.store(false, std::memory_order_release);
-	}
-
-	bool Active() { return g_on.load(std::memory_order_acquire); }
+	const OrbitState& State() { return g_state; }
 }

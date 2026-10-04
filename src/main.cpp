@@ -68,7 +68,7 @@ namespace
 		if (!a_msg)
 			return;
 		if (a_msg->type == SKSE::MessagingInterface::kPreLoadGame || a_msg->type == SKSE::MessagingInterface::kNewGame)
-			dvb::CameraOrbit::Stop();  // an orbit never carries into another game
+			dvb::CameraOrbit::EndSession();  // an orbit never carries into another game
 		if (a_msg->type == SKSE::MessagingInterface::kPreLoadGame)
 			dvb::FreeCamera::BeginLoad();
 		else if (a_msg->type == SKSE::MessagingInterface::kNewGame || a_msg->type == SKSE::MessagingInterface::kPostLoadGame)
