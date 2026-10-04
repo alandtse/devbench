@@ -87,6 +87,7 @@ namespace
 				g_config = cfg;  // kept for kInputLoaded (input sink registers later)
 				g_server = new dvb::Server("127.0.0.1", cfg.port);
 				g_server->Events().SetFrameProvider(&dvb::game::CurrentFrame);
+				g_server->Tools().SetStrictArgs(cfg.strictToolArgs);
 				dvb::RegisterCoreTools(g_server->Tools(), g_server->Events());
 				dvb::Recording::SetLoadSettleMs(cfg.loadSettleMs);
 				dvb::Recording::SetDefaultIntervalMs(cfg.recordIntervalMs);

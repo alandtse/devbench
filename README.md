@@ -150,6 +150,11 @@ Missing → auto-created with defaults. Invalid → defaults (logged). All keys 
   // frozen main thread, which a menu/lifecycle event can never report on its own (those are
   // published BY the main thread). 0 disables the watchdog.
   "stallWatchdogMs": 5000,
+
+  // A tool request with a top-level key the tool's inputSchema doesn't declare (e.g. `params`
+  // for `args`) gets a `warnings` entry in the reply naming the accepted keys. When true it
+  // fails with 400 instead. Off by default: a tool with an incomplete schema would break.
+  "strictToolArgs": false,
 }
 ```
 
