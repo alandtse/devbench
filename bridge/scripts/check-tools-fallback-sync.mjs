@@ -25,7 +25,7 @@ const REGISTRATION_FILES = [
 // line (comments excluded) mentions one of those.
 const DESCRIPTOR_FILE = "src/ToolRegistry.h";
 const DESCRIPTOR_TOKENS =
-  /(DefaultInputSchema|ToolDescriptor|inputSchema|readOnly)/;
+  /\b(DefaultInputSchema|ToolDescriptor|inputSchema|readOnly)\b/;
 const FALLBACK_FILE = "bridge/src/tools-fallback.json";
 
 // Structural validation, independent of whether a registration file changed --
