@@ -827,10 +827,25 @@ namespace dvb
 			if (!a_ref)
 				return nullptr;
 			json j = IdentifyForm(a_ref);
-			if (auto* base = a_ref->GetBaseObject())
+			if (auto* base = a_ref->GetBaseObject()) {
 				j["base"] = IdentifyForm(base);
+				if (auto* model = base->As<RE::TESModel>(); model && model->GetModel() && *model->GetModel())
+					j["model"] = model->GetModel();
+			}
 			const auto p = a_ref->GetPosition();
 			j["position"] = json::array({ p.x, p.y, p.z });
+			const auto r = a_ref->GetAngle();
+			j["rotation"] = json::array({ r.x, r.y, r.z });
+			if (auto* cell = a_ref->GetParentCell())
+				j["cell"] = IdentifyForm(cell);
+			const auto bMin = a_ref->GetBoundMin();
+			const auto bMax = a_ref->GetBoundMax();
+			if (bMin != RE::NiPoint3{} || bMax != RE::NiPoint3{}) {
+				j["bounds"] = json{
+					{ "min", json::array({ bMin.x, bMin.y, bMin.z }) },
+					{ "max", json::array({ bMax.x, bMax.y, bMax.z }) },
+				};
+			}
 
 			if (auto* actor = a_ref->As<RE::Actor>()) {
 				json a{ { "level", actor->GetLevel() } };
@@ -1521,6 +1536,7 @@ namespace dvb
 				const std::string formId = a_args.value("formId", std::string{});
 				const bool        selected = a_args.value("selected", false);
 				const std::string typeFilter = a_args.value("formType", std::string{});
+				const std::string modelFilter = a_args.value("model", std::string{});
 				const double      radius = a_args.value("radius", 0.0);
 				const int         limit = a_args.value("limit", 100);
 				if (radius < 0.0)
@@ -1574,6 +1590,7 @@ namespace dvb
 					// Friendly type names ('Actor', 'weapon') map onto the engine's 4-char codes;
 					// raw codes/prefixes still substring-match. Shared with 'inventory'.
 					std::string needle = FormTypeNeedle(typeFilter);
+					std::string modelNeedle = lower(modelFilter);
 					json        refs = json::array();
 					int         total = 0;
 					auto        cb = [&](RE::TESObjectREFR* r) {
@@ -1582,6 +1599,12 @@ namespace dvb
 								const std::string t = lower(std::string(RE::FormTypeToString(r->GetFormType())));
 								const std::string bt = r->GetBaseObject() ? lower(std::string(RE::FormTypeToString(r->GetBaseObject()->GetFormType()))) : std::string{};
 								if (t.find(needle) == std::string::npos && bt.find(needle) == std::string::npos)
+									return RE::BSContainer::ForEachResult::kContinue;
+							}
+							if (!modelNeedle.empty()) {
+								auto*       model = r->GetBaseObject() ? r->GetBaseObject()->As<RE::TESModel>() : nullptr;
+								const char* path = model ? model->GetModel() : nullptr;
+								if (!path || lower(std::string(path)).find(modelNeedle) == std::string::npos)
 									return RE::BSContainer::ForEachResult::kContinue;
 							}
 							++total;
@@ -2560,9 +2583,12 @@ namespace dvb
 				"'effects' → active magic effects on the player (or an actor 'formId') { target, count, "
 				"activeEffects:[{spell, effect, magnitude, duration, elapsed}] }; "
 				"'refs' → identify reference(s) sharing one shape { formId, formType, name, "
-				"editorId, base, position } — pass 'formId' for one form, 'selected'=true for the "
+				"editorId, base, position, rotation, cell, model, bounds } — 'model' is the base "
+				"object's mesh (.nif) path when it has one; 'bounds' is { min, max } local extents "
+				"for framing a shot; pass 'formId' for one form, 'selected'=true for the "
 				"console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid "
-				"(optional 'formType' filter, 'radius' from player, 'limit' default 100). "
+				"(optional 'formType' filter, 'model' substring filter against the mesh path, "
+				"'radius' from player, 'limit' default 100). "
 				"'registrants' → who has requested the C-ABI interface and what they registered "
 				"through it { consumers:[{name,atEpoch,atFrame}], registrations:[{kind,name,atEpoch,"
 				"atFrame,replaced}], capabilities:{capture,inspect,menu → [registered keys]} } — "
@@ -2588,7 +2614,8 @@ namespace dvb
 									{ "selected", json{ { "type", "boolean" }, { "description", "refs/lights: use the console-selected / crosshair ref instead" } } },
 									{ "scope", json{ { "type", "string" }, { "enum", json::array({ "ref", "scene" }) }, { "description", "lights: 'ref' (default) reads one reference's 3D; 'scene' lists every light the renderer is using, nearest the player first, each with the reference it hangs under" } } },
 									{ "formType", json{ { "type", "string" }, { "description", "refs/inventory: keep only entries whose type matches (e.g. Actor, Weapon, Potion)" } } },
-									{ "radius", json{ { "type", "number" }, { "description", "refs enumerate / lights scope=scene: only those within this distance of the player (0 = no limit)" } } },
+									{ "model", json{ { "type", "string" }, { "description", "refs enumerate: keep only refs whose base object's mesh path contains this substring (case-insensitive, e.g. 'wrcity01')" } } },
+									{ "radius", json{ { "type", "number" }, { "description", "refs enumerate: only refs within this distance of the player (0 = whole loaded grid); lights scope=scene: only lights within it (0 = no limit)" } } },
 									{ "limit", json{ { "type", "integer" }, { "description", "refs/inventory/lights scope=scene: max entries to return (default 100)" } } },
 								} },
 			};

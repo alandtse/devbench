@@ -44,6 +44,14 @@ namespace dvb
 
 		std::atomic<bool> g_inputReady{ false };
 
+		// Codes from kMouseBase up are mouse buttons (see the key catalog); lower codes are keyboard scan codes.
+		constexpr std::uint16_t kMouseBase = 0x100;
+		constexpr std::uint16_t kMouseLast = 0x102;
+
+		RE::INPUT_DEVICE DeviceOf(std::uint16_t a_code) { return a_code >= kMouseBase ? RE::INPUT_DEVICE::kMouse : RE::INPUT_DEVICE::kKeyboard; }
+
+		std::int32_t IdCodeOf(std::uint16_t a_code) { return a_code >= kMouseBase ? a_code - kMouseBase : a_code; }
+
 		std::int64_t NowMs()
 		{
 			return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
@@ -138,15 +146,15 @@ namespace dvb
 				bool queued = false;
 				for (auto* event = queue->GetQueueHead(); event; event = event->next) {
 					const auto* button = event->AsButtonEvent();
-					if (button && button->device == RE::INPUT_DEVICE::kKeyboard &&
-						button->GetIDCode() == key.scancode) {
+					if (button && button->device == DeviceOf(key.scancode) &&
+						button->GetIDCode() == IdCodeOf(key.scancode)) {
 						queued = true;
 						break;
 					}
 				}
 				if (!queued) {
 					const float heldSecs = HeldDownSeconds(key.pressedAtGameMs, gameNow);
-					queue->AddButtonEvent(RE::INPUT_DEVICE::kKeyboard, 0, key.scancode, 1.0F, heldSecs);
+					queue->AddButtonEvent(DeviceOf(key.scancode), 0, IdCodeOf(key.scancode), 1.0F, heldSecs);
 				}
 			}
 		}
@@ -178,8 +186,7 @@ namespace dvb
 			if (a_args["key"].is_string())
 				key = ResolveKeyboardKey(a_args["key"].get<std::string>());
 			else if (a_args["key"].is_number_integer()) {
-				const auto value = BoundedInteger(a_args, "key", 0, 0,
-					std::numeric_limits<std::uint16_t>::max());
+				const auto value = BoundedInteger(a_args, "key", 0, 0, kMouseLast);
 				key = ResolveKeyboardKey(value);
 			} else
 				throw ToolError(400, "'key' must be a string name or integer DirectInput scancode");
@@ -268,6 +275,7 @@ namespace dvb
 															{ "maximumSequenceEvents", kMaximumSequenceEvents },
 															{ "maximumSequenceMs", kMaximumSequenceMs },
 															{ "keys", std::move(keys) },
+															{ "mouseButtons", json{ { "codeBase", kMouseBase }, { "keys", json::array({ "mouseLeft", "mouseRight", "mouseMiddle" }) } } },
 														} },
 										  { "vrTrackedSet", VRInputCapabilities() },
 									  } },
@@ -548,7 +556,7 @@ namespace dvb
 						if (g_repeatingKeys.empty())
 							DisengageForHold();
 					}
-					queue->AddButtonEvent(RE::INPUT_DEVICE::kKeyboard, 0, a_lease.key.scancode,
+					queue->AddButtonEvent(DeviceOf(a_lease.key.scancode), 0, IdCodeOf(a_lease.key.scancode),
 						a_down ? 1.0F : 0.0F, a_down ? 0.0F : a_heldSecs);
 					return json{ { "frame", game::CurrentFrame() } };
 				});
@@ -806,7 +814,8 @@ namespace dvb
 		input.description =
 			"Versioned synthetic input interface. action='capabilities' (default) returns the exact "
 			"contract/version, readiness, limits, injection path, supported actions, and complete "
-			"keyboard name→DirectInput-scan-code catalog; clients MUST capability-negotiate rather "
+			"keyboard name→DirectInput-scan-code catalog (plus mouseLeft/mouseRight/mouseMiddle, injected as mouse button events); "
+			"clients MUST capability-negotiate rather "
 			"than assuming this tool exists. Contract v1 implements device='keyboard' using Skyrim's "
 			"own BSInputEventQueue (not Windows SendInput, so window focus is irrelevant). 'status' "
 			"reports readiness and every synthetic held key with owner/lease timing. 'down' starts a "
@@ -838,7 +847,7 @@ namespace dvb
 			{ "properties", json{
 								{ "action", json{ { "type", "string" }, { "enum", json::array({ "capabilities", "status", "down", "up", "tap", "sequence", "stop", "releaseAll" }) } } },
 								{ "device", json{ { "type", "string" }, { "enum", json::array({ "keyboard", "vrTrackedSet" }) }, { "description", "mutation/status device; omit for capabilities" } } },
-								{ "key", json{ { "oneOf", json::array({ json{ { "type", "string" } }, json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", 255 } } }) }, { "description", "down/up/tap: documented key name or raw DirectInput scancode" } } },
+								{ "key", json{ { "oneOf", json::array({ json{ { "type", "string" } }, json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", 258 } } }) }, { "description", "down/up/tap: documented key name or raw DirectInput scancode; mouseLeft / mouseRight / mouseMiddle (256-258) are mouse buttons" } } },
 								{ "owner", json{ { "type", "string" }, { "minLength", 1 }, { "maxLength", 128 }, { "description", "stable task/session owner; defaults to MCP session id or rest:anonymous" } } },
 								{ "durationMs", json{ { "type", "integer" }, { "minimum", 10 }, { "maximum", 5000 }, { "description", "tap duration (default 50); sequence tap/wait event duration" } } },
 								{ "maxHoldMs", json{ { "type", "integer" }, { "minimum", 100 }, { "maximum", kMaximumMaxHoldMs }, { "description", "down safety lease (default 5000); automatic up at expiry" } } },

@@ -120,6 +120,11 @@ namespace dvb
 			KeyAlias{ 0xDB, "leftWindows", "lwin|leftWin" },
 			KeyAlias{ 0xDC, "rightWindows", "rwin|rightWin" },
 			KeyAlias{ 0xDD, "menu", "apps" },
+			// Mouse buttons: 0x100 + the engine's mouse button id (left 0, right 1, middle 2). They share the key lease
+			// table and are injected as INPUT_DEVICE::kMouse button events.
+			KeyAlias{ 0x100, "mouseLeft", "mouse1|lmb|leftMouse|leftButton" },
+			KeyAlias{ 0x101, "mouseRight", "mouse2|rmb|rightMouse|rightButton" },
+			KeyAlias{ 0x102, "mouseMiddle", "mouse3|mmb|middleMouse|middleButton" },
 		};
 
 		std::string Normalize(std::string_view a_value)
@@ -167,7 +172,7 @@ namespace dvb
 
 	std::optional<KeyboardKey> ResolveKeyboardKey(int a_scancode)
 	{
-		if (a_scancode <= 0 || a_scancode > 0xFF)
+		if (a_scancode <= 0 || a_scancode > 0x102)
 			return std::nullopt;
 		for (const auto& entry : kAliases)
 			if (entry.scancode == a_scancode)

@@ -34,7 +34,18 @@ TEST_CASE("raw DirectInput scancodes preserve unknown but valid keys")
 	CHECK(unknown.has_value());
 	CHECK(unknown->name == "scancode-170");
 	CHECK(!ResolveKeyboardKey(0).has_value());
-	CHECK(!ResolveKeyboardKey(256).has_value());
+	CHECK(!ResolveKeyboardKey(0x103).has_value());
+}
+
+TEST_CASE("mouse buttons resolve above the scancode range, by code and by name")
+{
+	const auto left = ResolveKeyboardKey(0x100);
+	CHECK(left.has_value());
+	CHECK(left->name == "mouseLeft");
+	const auto right = ResolveKeyboardKey(std::string_view("rmb"));
+	CHECK(right.has_value());
+	CHECK(right->scancode == 0x101);
+	CHECK(ResolveKeyboardKey(std::string_view("mouse middle"))->scancode == 0x102);
 }
 
 TEST_CASE("keyboard leases are idempotent for their owner and reject another owner")
