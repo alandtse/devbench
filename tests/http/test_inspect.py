@@ -103,9 +103,10 @@ def test_refs_model_filter(client, inspect):
     if with_model is None:
         pytest.skip("no static ref with a mesh path in range to filter on")
     needle = with_model["model"].split("\\")[-1].split(".")[0][:6].lower()
-    body = client.ok("inspect", {"kind": "refs", "model": needle, "radius": 5000, "limit": 50})
+    body = client.ok("inspect", {"kind": "refs", "formType": "Static", "model": needle, "radius": 5000, "limit": 50})
     refs = body.get("refs")
     assert isinstance(refs, list) and refs, body
+    assert any(ref.get("formId") == with_model["formId"] for ref in refs), body
     for ref in refs:
         assert needle in ref.get("model", "").lower(), ref
 

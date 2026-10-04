@@ -114,7 +114,17 @@ def main() -> None:
     tool(url, "console", {"command": f"player.setpos x {standoff[0]}"})
     tool(url, "console", {"command": f"player.setpos y {standoff[1]}"})
     tool(url, "console", {"command": f"player.setpos z {standoff[2]}"})
-    time.sleep(0.5)  # let the cell finish loading around the new position before framing/capture
+    deadline = time.monotonic() + 15.0
+    while time.monotonic() < deadline:
+        try:
+            here = tool(url, "inspect", {"kind": "scene"}).get("position")
+        except requests.RequestException:
+            here = None
+        if here and math.dist(here, standoff) <= 2.0:
+            break
+        time.sleep(0.5)
+    else:
+        sys.exit("player did not reach the standoff within 15 seconds")
 
     player = {"form": "0x14"}
 
