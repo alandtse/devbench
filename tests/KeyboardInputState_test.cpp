@@ -123,3 +123,30 @@ TEST_CASE("held seconds are game seconds, so a hold keeps its meaning at any tim
 	// The same 2000 ms of wall-clock holding at scale 3 is 6000 ms of play.
 	CHECK(HeldDownSeconds(pressedAtGameMs, pressedAtGameMs + 6000) == 6.0F);
 }
+
+TEST_CASE("each mouse button maps to the mouse device and its engine button id")
+{
+	CHECK(dvb::EngineButtonOf(0x100).device == dvb::EngineDevice::kMouse);
+	CHECK(dvb::EngineButtonOf(0x100).id == 0);
+	CHECK(dvb::EngineButtonOf(0x101).id == 1);
+	CHECK(dvb::EngineButtonOf(0x102).id == 2);
+	CHECK(dvb::EngineButtonOf(0x102).device == dvb::EngineDevice::kMouse);
+	CHECK(dvb::EngineButtonOf(0x39).device == dvb::EngineDevice::kKeyboard);
+	CHECK(dvb::EngineButtonOf(0x39).id == 0x39);
+	CHECK(std::string(dvb::CodeDomainOf(0x101)) == "mouseButton");
+	CHECK(std::string(dvb::CodeDomainOf(0xFF)) == "directInputScanCode");
+}
+
+TEST_CASE("only a queued press or hold of the same button replaces a held repeat")
+{
+	const dvb::EngineButton left{ dvb::EngineDevice::kMouse, 0 };
+	CHECK(dvb::QueuedPressCovers(left, 1.0F, 0x100));   // the initial down
+	CHECK(dvb::QueuedPressCovers(left, 0.5F, 0x100));   // a held event
+	CHECK(!dvb::QueuedPressCovers(left, 0.0F, 0x100));  // a release does not
+	CHECK(!dvb::QueuedPressCovers(left, 1.0F, 0x101));  // another mouse button
+	const dvb::EngineButton keyboardZero{ dvb::EngineDevice::kKeyboard, 0 };
+	CHECK(!dvb::QueuedPressCovers(keyboardZero, 1.0F, 0x100));  // same id, other device
+	const dvb::EngineButton space{ dvb::EngineDevice::kKeyboard, 0x39 };
+	CHECK(dvb::QueuedPressCovers(space, 1.0F, 0x39));
+	CHECK(!dvb::QueuedPressCovers(space, 0.0F, 0x39));
+}
