@@ -152,8 +152,8 @@ Missing → auto-created with defaults. Invalid → defaults (logged). All keys 
   "stallWatchdogMs": 5000,
 
   // A tool request with a top-level key the tool's inputSchema doesn't declare (e.g. `params`
-  // for `args`) gets a `warnings` entry in the reply naming the accepted keys. When true it
-  // fails with 400 instead. Off by default: a tool with an incomplete schema would break.
+  // for `args`) gets a `warnings` entry in the reply naming the accepted keys (object replies
+  // only; the server log always records it). When true the request fails with 400 instead. Off by default: a tool with an incomplete schema would break.
   "strictToolArgs": false,
 }
 ```

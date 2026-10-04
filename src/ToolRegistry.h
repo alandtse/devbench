@@ -104,7 +104,7 @@ namespace dvb
 		void SetRegistrationListener(RegistrationListener a_listener);
 
 		/// When true, a request carrying a top-level key the tool's inputSchema does not declare
-		/// fails with 400 instead of just gaining a `warnings` entry. Off by default.
+		/// fails with 400 instead of just gaining a `warnings` entry (object replies only). Off by default.
 		void SetStrictArgs(bool a_strict) { m_strictArgs.store(a_strict, std::memory_order_relaxed); }
 
 	private:
