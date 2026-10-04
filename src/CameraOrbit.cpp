@@ -125,6 +125,10 @@ namespace dvb::CameraOrbit
 
 	Admission Enable(const Request& a_request, std::uint64_t a_session)
 	{
+		// ThirdPersonState is larger on VR (0x100 against 0xE8) and its fields' VR offsets are not mapped, so the
+		// orbit never writes them there.
+		if (REL::Module::IsVR())
+			return Admission::kUnsupportedRuntime;
 		auto*      ui = RE::UI::GetSingleton();
 		auto*      cam = RE::PlayerCamera::GetSingleton();
 		const bool loading = !ui || ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) || !RE::PlayerCharacter::GetSingleton();

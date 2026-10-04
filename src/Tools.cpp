@@ -1432,7 +1432,7 @@ namespace dvb
 						{ "freeCamOwned", FreeCamera::IsOwned() },
 						{ "stateId", cam->currentState ? json(static_cast<std::uint32_t>(cam->currentState->id)) : json(nullptr) },
 						{ "freeCamBackend", REL::Module::IsVR() ? "vr-state" : "engine" } };
-					if (cam->IsInThirdPerson()) {
+					if (cam->IsInThirdPerson() && !REL::Module::IsVR()) {  // VR's ThirdPersonState layout is not mapped
 						if (auto* tps = static_cast<RE::ThirdPersonState*>(cam->currentState.get())) {
 							out["thirdPersonState"] = json{
 								{ "targetYaw", tps->targetYaw },
@@ -1535,6 +1535,8 @@ namespace dvb
 						throw ToolError(409, "camera orbit is unavailable while the game is loading");
 					case CameraOrbit::Admission::kFreeCamera:
 						throw ToolError(409, "camera orbit holds the third-person camera; leave the free camera first");
+					case CameraOrbit::Admission::kUnsupportedRuntime:
+						throw ToolError(501, "camera orbit is not available on VR yet");
 					default:
 						break;
 					}
@@ -2522,6 +2524,7 @@ namespace dvb
 			"It ends - writing back the heading, tilt, zoom and offsets it overwrote - on on=false, when the camera leaves "
 			"third person (any POV switch), on freecam on or setPov (both answer orbitEnded), and is dropped without "
 			"restoring on load / new game. get reports orbit { on, applied, requested, lastEnd, session, revision }. "
+			"Not available on VR yet (501). "
 			"enable, disable, and drive all reject an active free camera owned elsewhere; "
 			"freeCamOwned reports devbench's own ownership. "
 			"On VR, after failed pre-load restoration, freecam off retries recovery using the "

@@ -66,6 +66,7 @@ namespace dvb::CameraOrbit
 		kStaleSession,  // a load or new game happened after the request was made
 		kLoading,
 		kFreeCamera,
+		kUnsupportedRuntime,  // VR: the third-person state's layout there is not known
 	};
 
 	/// One orbit's configuration, baseline and lifecycle. Every change bumps the revision, and every
