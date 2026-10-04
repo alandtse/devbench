@@ -104,9 +104,13 @@ namespace dvb
 			const std::string action = a_args.value("action", std::string("exec"));
 
 			if (action == "read") {
-				const int maxLines = a_args.value("maxLines", 200);
-				if (maxLines < 1 || maxLines > static_cast<int>(ConsoleLogCapture::PrintCollector::kMaxLines))
-					throw ToolError(400, std::format("console read: 'maxLines' must be 1..{}", ConsoleLogCapture::PrintCollector::kMaxLines));
+				std::int64_t maxLines = 200;
+				if (const auto it = a_args.find("maxLines"); it != a_args.end()) {
+					if (!it->is_number_integer() || it->get<std::int64_t>() < 1 ||
+						it->get<std::int64_t>() > static_cast<std::int64_t>(ConsoleLogCapture::PrintCollector::kMaxLines))
+						throw ToolError(400, std::format("console read: 'maxLines' must be an integer 1..{}", ConsoleLogCapture::PrintCollector::kMaxLines));
+					maxLines = it->get<std::int64_t>();
+				}
 				return MainThread::RunAndWait([maxLines]() -> json {
 					const auto r = ConsoleLogCapture::ReadFenced(static_cast<std::size_t>(maxLines));
 					json       arr = json::array();
@@ -133,6 +137,7 @@ namespace dvb
 									  { "printHooked", r.printHooked },
 									  { "printLines", r.printLines },
 									  { "printDropped", r.printDropped },
+									  { "printFailures", r.printFailures },
 									  { "ringLines", r.ringLines },
 									  { "samples", r.samples },
 									  { "ticks", r.ticks },
@@ -803,6 +808,30 @@ namespace dvb
 			});
 		}
 
+		// A "0x" prefix is a FormID only when a_prefixIsFormId; otherwise the EditorID is tried first, so an
+		// all-hex EditorID is not read as a FormID. Hex must be the whole string and fit 32 bits.
+		RE::TESForm* LookupFormArg(const std::string& a_formId, bool a_prefixIsFormId = false)
+		{
+			auto byHex = [](const std::string& s) -> RE::TESForm* {
+				std::size_t        consumed = 0;
+				unsigned long long id = 0;
+				try {
+					id = std::stoull(s, &consumed, 16);
+				} catch (...) {
+					return nullptr;
+				}
+				if (consumed != s.size() || id > 0xFFFFFFFFull)
+					return nullptr;
+				return RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
+			};
+			const bool prefixed = a_formId.size() > 2 && a_formId[0] == '0' && (a_formId[1] == 'x' || a_formId[1] == 'X');
+			if (prefixed && a_prefixIsFormId)
+				return byHex(a_formId.substr(2));
+			if (auto* f = RE::TESForm::LookupByEditorID(a_formId))
+				return f;
+			return byHex(prefixed ? a_formId.substr(2) : a_formId);
+		}
+
 		// Identify any form as { formId, formType, name, editorId } — CommonLib's RE'd accessors.
 		json IdentifyForm(const RE::TESForm* a_form)
 		{
@@ -1260,18 +1289,7 @@ namespace dvb
 					if (formId.empty()) {
 						owner = RE::PlayerCharacter::GetSingleton();
 					} else {
-						RE::TESForm* f = RE::TESForm::LookupByEditorID(formId);
-						if (!f) {
-							std::size_t        consumed = 0;
-							unsigned long long id = 0;
-							const std::string  hex = (formId.size() > 2 && formId[0] == '0' && (formId[1] == 'x' || formId[1] == 'X')) ? formId.substr(2) : formId;
-							try {
-								id = std::stoull(hex, &consumed, 16);
-							} catch (...) {
-							}
-							if (consumed == hex.size() && id <= 0xFFFFFFFFull)
-								f = RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
-						}
+						RE::TESForm* f = LookupFormArg(formId);
 						owner = f ? f->As<RE::TESObjectREFR>() : nullptr;
 					}
 					if (!owner)
@@ -1393,18 +1411,7 @@ namespace dvb
 					if (formId.empty()) {
 						actor = RE::PlayerCharacter::GetSingleton();
 					} else {
-						RE::TESForm* f = RE::TESForm::LookupByEditorID(formId);
-						if (!f) {
-							std::size_t        consumed = 0;
-							unsigned long long id = 0;
-							const std::string  hex = (formId.size() > 2 && formId[0] == '0' && (formId[1] == 'x' || formId[1] == 'X')) ? formId.substr(2) : formId;
-							try {
-								id = std::stoull(hex, &consumed, 16);
-							} catch (...) {
-							}
-							if (consumed == hex.size() && id <= 0xFFFFFFFFull)
-								f = RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
-						}
+						RE::TESForm* f = LookupFormArg(formId);
 						actor = f ? f->As<RE::Actor>() : nullptr;
 					}
 					if (!actor)
@@ -1500,18 +1507,7 @@ namespace dvb
 					if (selected) {
 						ref = RE::Console::GetSelectedRef().get();
 					} else if (!formId.empty()) {
-						RE::TESForm* f = RE::TESForm::LookupByEditorID(formId);
-						if (!f) {
-							std::size_t        consumed = 0;
-							unsigned long long id = 0;
-							const std::string  hex = (formId.size() > 2 && formId[0] == '0' && (formId[1] == 'x' || formId[1] == 'X')) ? formId.substr(2) : formId;
-							try {
-								id = std::stoull(hex, &consumed, 16);
-							} catch (...) {
-							}
-							if (consumed == hex.size() && id <= 0xFFFFFFFFull)
-								f = RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
-						}
+						RE::TESForm* f = LookupFormArg(formId);
 						ref = f ? f->As<RE::TESObjectREFR>() : nullptr;
 					} else {
 						ref = pc;
@@ -1550,28 +1546,8 @@ namespace dvb
 					};
 
 					if (!formId.empty()) {
-						// Explicit 0x.. → FormID; otherwise EditorID first (so an all-hex EditorID
-						// isn't misread as a FormID), then a bare hex FormID fallback.
-						// Whole-string + 32-bit-range hex, so "14G" / overflow don't truncate to a
-						// valid FormID and resolve the wrong form.
-						auto byHex = [](const std::string& s) -> RE::TESForm* {
-							std::size_t        consumed = 0;
-							unsigned long long id = 0;
-							try {
-								id = std::stoull(s, &consumed, 16);
-							} catch (...) {
-								return nullptr;
-							}
-							if (consumed != s.size() || id > 0xFFFFFFFFull)
-								return nullptr;
-							return RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
-						};
-						RE::TESForm* f = nullptr;
-						if (formId.size() > 2 && formId[0] == '0' && (formId[1] == 'x' || formId[1] == 'X'))
-							f = byHex(formId.substr(2));
-						else if (f = RE::TESForm::LookupByEditorID(formId); !f)
-							f = byHex(formId);
-						json one = (f && f->As<RE::TESObjectREFR>()) ? IdentifyRef(f->As<RE::TESObjectREFR>()) : IdentifyForm(f);
+						RE::TESForm* f = LookupFormArg(formId, true);
+						json         one = (f && f->As<RE::TESObjectREFR>()) ? IdentifyRef(f->As<RE::TESObjectREFR>()) : IdentifyForm(f);
 						return json{ { "count", f ? 1 : 0 }, { "refs", f ? json::array({ one }) : json::array() } };
 					}
 
@@ -1682,7 +1658,7 @@ namespace dvb
 			if (auto entry = ToolExtensions::Find("inspect", kind))
 				return entry->handler(a_args, a_ctx);
 
-			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|inventory|quests|effects|refs|registrants|screenshots|extensions, or a registered kind — see inspect kind=extensions)", kind));
+			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|inventory|quests|effects|refs|lights|registrants|screenshots|extensions, or a registered kind — see inspect kind=extensions)", kind));
 		}
 
 		// camera: read or set the player camera point of view, so a recording can capture the
@@ -2666,7 +2642,7 @@ namespace dvb
 			"output as { markersFound, lines:[...], source, lossPossible }. source='print' (the normal "
 			"case) comes from a hook on the console's print function and holds EVERY line printed "
 			"between the markers, from the game or any plugin, whether or not the Console menu exists "
-			"(lossPossible only past 20000 lines). The fallbacks, used only when that hook could not "
+			"(lossPossible only past 20000 lines, or when a print could not be formatted: diag.printFailures). The fallbacks, used only when that hook could not "
 			"be installed (diag.printHooked=false): source='buffer' is complete, including several "
 			"lines printed in one frame (e.g. `help`); source='sampler' is used once the Console menu "
 			"has been created, when the game stops filling that buffer: it sees one line per frame, so "

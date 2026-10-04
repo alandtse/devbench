@@ -38,3 +38,21 @@ TEST_CASE("papyrus defaults match a native function's unnamed parameter by posit
 	CHECK(!Find("ObjectReference", "PlaceAtMe", "param2").has_value());              // no position: by name only
 	CHECK(!Find("ObjectReference", "PlaceAtMe", "abForcePersist", 1u).has_value());  // a real name never matches by position
 }
+
+TEST_CASE("papyrus defaults keep EnableFastTravel enabling when called with no argument")
+{
+	for (const auto* script : { "Game", "ObjectReference" }) {
+		const auto v = Find(script, "EnableFastTravel", "param1", 0u);
+		CHECK(v.has_value());
+		CHECK(v->kind == Kind::kBool);
+		CHECK(v->number == 1.0);
+	}
+}
+
+TEST_CASE("papyrus defaults cover every non-neutral default the game's own sources declare")
+{
+	CHECK(Find("Utility", "RandomInt", "param2", 1u)->number == 100.0);
+	CHECK(Find("Input", "GetMappedKey", "param2", 1u)->number == 255.0);
+	CHECK(Find("Quest", "ModObjectiveGlobal", "aiObjectiveID", 2u)->number == -1.0);
+	CHECK(Find("Actor", "KeepOffsetFromActor", "param9", 8u)->kind == Kind::kFloat);
+}

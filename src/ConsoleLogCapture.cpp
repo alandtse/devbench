@@ -54,6 +54,8 @@ namespace dvb::ConsoleLogCapture
 		std::atomic<bool> g_printCapturing{ false };
 		std::mutex        g_printMutex;
 		PrintCollector    g_printed;
+		// Prints the detour could not format or keep; reset with the collector.
+		std::atomic<std::size_t> g_printFailures{ 0 };
 
 		// ConsoleLog::VPrint(this, fmt, va_list) at entry: rdx is the format, r8 the argument list.
 		void PrintDetour(CONTEXT& a_ctx)
@@ -64,22 +66,35 @@ namespace dvb::ConsoleLogCapture
 				const auto* fmt = reinterpret_cast<const char*>(a_ctx.Rdx);
 				if (!fmt)
 					return;
-				const auto args = reinterpret_cast<std::va_list>(a_ctx.R8);
-				char       head[1024];
-				const int  n = std::vsnprintf(head, sizeof(head), fmt, args);
-				if (n < 0)
+				const auto   args = reinterpret_cast<std::va_list>(a_ctx.R8);
+				char         head[1024];
+				std::va_list first;
+				va_copy(first, args);
+				const int n = std::vsnprintf(head, sizeof(head), fmt, first);
+				va_end(first);
+				if (n < 0) {
+					g_printFailures.fetch_add(1, std::memory_order_relaxed);
 					return;
+				}
 				std::string text;
 				if (static_cast<std::size_t>(n) < sizeof(head)) {
 					text.assign(head, static_cast<std::size_t>(n));
 				} else {
 					text.resize(static_cast<std::size_t>(n) + 1);
-					std::vsnprintf(text.data(), text.size(), fmt, args);
+					std::va_list second;
+					va_copy(second, args);
+					const int again = std::vsnprintf(text.data(), text.size(), fmt, second);
+					va_end(second);
+					if (again != n) {
+						g_printFailures.fetch_add(1, std::memory_order_relaxed);
+						return;
+					}
 					text.resize(static_cast<std::size_t>(n));
 				}
 				std::lock_guard<std::mutex> lk(g_printMutex);
 				g_printed.Feed(text);
 			} catch (...) {
+				g_printFailures.fetch_add(1, std::memory_order_relaxed);
 			}
 		}
 
@@ -91,6 +106,7 @@ namespace dvb::ConsoleLogCapture
 					std::lock_guard<std::mutex> lk(g_printMutex);
 					g_printed.Reset();
 				}
+				g_printFailures.store(0, std::memory_order_relaxed);
 				g_printCapturing.store(g_printHooked.load(), std::memory_order_release);
 			}
 			~PrintCaptureWindow() { g_printCapturing.store(false, std::memory_order_release); }
@@ -354,8 +370,9 @@ namespace dvb::ConsoleLogCapture
 			slice = SliceFencedLines(g_printed.Lines(), a_maxLines);
 			out.printLines = g_printed.Lines().size();
 			out.printDropped = g_printed.Dropped();
+			out.printFailures = g_printFailures.load(std::memory_order_relaxed);
 			out.source = "print";
-			out.lossPossible = out.printDropped > 0;
+			out.lossPossible = out.printDropped > 0 || out.printFailures > 0;
 		} else if (source == Source::kSampler) {
 			slice = SliceFencedLines(g_sampler.Lines(), a_maxLines);
 			out.source = "sampler";

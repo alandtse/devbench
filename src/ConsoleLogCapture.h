@@ -18,7 +18,8 @@ namespace dvb::ConsoleLogCapture
 
 		/// "print", "buffer", "sampler", or "none" if no capture has seen its begin marker.
 		std::string source = "none";
-		/// The sampler can lose lines; the print hook only past its line cap.
+		/// The sampler can lose lines; the print hook only past its line cap or for a print it could
+		/// not format or keep (printFailures).
 		bool lossPossible = false;
 		/// The end marker never arrived, so `lines` may be incomplete.
 		bool timedOut = false;
@@ -36,6 +37,7 @@ namespace dvb::ConsoleLogCapture
 		bool        printHooked = false;
 		std::size_t printLines = 0;
 		std::size_t printDropped = 0;
+		std::size_t printFailures = 0;
 
 		std::size_t ringLines = 0;
 		std::size_t samples = 0;

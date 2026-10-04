@@ -8,8 +8,8 @@ namespace dvb::PapyrusDefaults
 {
 	/// A default a Papyrus source file declares for an optional parameter. The compiler writes these
 	/// into each call site, so the running VM never sees them; this is the table of the non-neutral
-	/// ones (anything other than None / 0 / 0.0 / false / "") for commonly called vanilla and SKSE
-	/// functions.
+	/// ones (anything other than None / 0 / 0.0 / false / "") for every native function in the vanilla and SKSE
+	/// sources and the commonly called non-native ones.
 	struct Value
 	{
 		enum class Kind

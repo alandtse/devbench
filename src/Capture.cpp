@@ -49,9 +49,7 @@ namespace dvb::Capture
 			return a_p.generic_string();  // forward slashes, per the provider contract
 		}
 
-		// Where the file really sits on disk. Under Mod Organizer 2 the game sees a virtual Data
-		// folder and a file written there lands in MO2's overwrite folder; the open handle knows.
-		// Empty when the file cannot be opened.
+		// Resolve the on-disk path from the handle; MO2 can redirect virtual Data paths to its overwrite folder.
 		std::string RealPath(const fs::path& a_p)
 		{
 			HANDLE h = CreateFileW(a_p.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
@@ -75,7 +73,6 @@ namespace dvb::Capture
 			return GenericPath(fs::path(buf));
 		}
 
-		// Adds realPath next to path, and says so when a virtual file system may be hiding it.
 		void AddRealPath(json& a_result, const fs::path& a_p)
 		{
 			const std::string real = RealPath(a_p);
@@ -92,10 +89,9 @@ namespace dvb::Capture
 					"inside and outside the game.";
 		}
 
-		// Names a client may reach for from other tools; the real ones are checkpointId and cleanup.
 		void RejectMisnamedArgs(const json& a_args)
 		{
-			if (a_args.contains("id") && !a_args.contains("checkpointId"))
+			if (a_args.contains("id"))
 				throw ToolError(400, "capture: the file stem is 'checkpointId', not 'id'");
 			if (a_args.contains("deleteSource"))
 				throw ToolError(400, "capture: deleting the game's own screenshot is 'cleanup':true, not 'deleteSource'");
