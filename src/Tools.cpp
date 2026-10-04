@@ -2501,7 +2501,14 @@ namespace dvb
 			"name) and returns its { globalFunctions, memberFunctions, properties }, each function "
 			"with params + returnType — use it to discover what 'call' can invoke. 'call' runs a "
 			"function via the VM: 'script' + 'function' (+ optional 'args' array, 'timeoutMs' "
-			"default 3000) and returns { called, returned, returnedType }. Unlike console 'cgf', "
+			"default 3000) and returns { called, returned, returnedType }. Omitted trailing optional "
+			"args are filled from a table of known Papyrus defaults (PlaceAtMe aiCount=1, MoveTo "
+			"abMatchRotation=true, ...) when script, function, position, name and type all match; "
+			"any other omitted arg refuses the call (400, nothing runs) unless 'fillNeutral':true, "
+			"which sends None/0/false/\"\" instead. Fills are listed under 'filledArgs' (source "
+			"table|neutral) with a 'warning' for any neutral guess. A 504 says whether the call was "
+			"already dispatched (it may still run). "
+			"Unlike console 'cgf', "
 			"this hands the return value back (e.g. Utility.GetCurrentGameTime → a Float). Pass "
 			"'self' to call a MEMBER function on a target: { \"form\": \"0x14 | EditorID\" } targets "
 			"any form, or \"selected\" uses the console/crosshair ref (set via prid); without 'self' "
@@ -2519,6 +2526,7 @@ namespace dvb
 								{ "filter", json{ { "type", "string" }, { "description", "list: case-insensitive substring to match class names" } } },
 								{ "limit", json{ { "type", "integer" }, { "description", "list: max class names to return (default 200)" } } },
 								{ "timeoutMs", json{ { "type", "integer" }, { "description", "call: ms to wait for the result before 504 (default 3000)" } } },
+								{ "fillNeutral", json{ { "type", "boolean" }, { "description", "call: send None/0/false/\"\" for omitted args the defaults table does not know, instead of refusing the call (default false)" } } },
 							} },
 		};
 		a_registry.Register(std::move(papyrus), &Papyrus::Handle);
