@@ -2,6 +2,7 @@
 #include "Capture.h"
 #include "Config.h"
 #include "ConsoleHook.h"
+#include "ConsoleLogCapture.h"
 #include "FreeCamera.h"
 #include "GameEvents.h"
 #include "GameState.h"
@@ -100,6 +101,7 @@ namespace
 				dvb::InstallGameEvents(g_server->Events());
 				dvb::StallWatchdog::Start(g_server->Events(), cfg.stallWatchdogMs);
 				dvb::ConsoleHook::Install(g_server->Events());  // observe console commands as events / for recording
+				dvb::ConsoleLogCapture::InstallPrintHook();     // every printed line reaches a console capture
 
 				// Receive cross-plugin interface requests from ANY plugin (nullptr sender),
 				// so consumer mods' dispatches reach us (mirrors MergeMapper). Registered

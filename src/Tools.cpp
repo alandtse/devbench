@@ -104,8 +104,11 @@ namespace dvb
 			const std::string action = a_args.value("action", std::string("exec"));
 
 			if (action == "read") {
-				return MainThread::RunAndWait([]() -> json {
-					const auto r = ConsoleLogCapture::ReadFenced(200);
+				const int maxLines = a_args.value("maxLines", 200);
+				if (maxLines < 1 || maxLines > static_cast<int>(ConsoleLogCapture::PrintCollector::kMaxLines))
+					throw ToolError(400, std::format("console read: 'maxLines' must be 1..{}", ConsoleLogCapture::PrintCollector::kMaxLines));
+				return MainThread::RunAndWait([maxLines]() -> json {
+					const auto r = ConsoleLogCapture::ReadFenced(static_cast<std::size_t>(maxLines));
 					json       arr = json::array();
 					for (const auto& l : r.lines)
 						arr.push_back(l);
@@ -127,6 +130,10 @@ namespace dvb
 									  { "consoleMenuExists", r.consoleMenuExists },
 									  { "consoleMenuOpen", r.consoleMenuOpen },
 									  { "consoleMode", r.consoleMode },
+									  { "printHooked", r.printHooked },
+									  { "printLines", r.printLines },
+									  { "printBytes", r.printBytes },
+									  { "printDropped", r.printDropped },
 									  { "ringLines", r.ringLines },
 									  { "samples", r.samples },
 									  { "ticks", r.ticks },
@@ -2357,11 +2364,15 @@ namespace dvb
 			"Run a Skyrim console command. action='exec' (default) queues `command` onto the main "
 			"thread (runs next tick). With capture=true it is fenced between marker commands and exec "
 			"returns once the output has landed, so a following action='read' returns the command's "
-			"output as { markersFound, lines:[...], source, lossPossible }. source='buffer' is complete, "
-			"including several lines printed in one frame (e.g. `help`). source='sampler' is used once "
-			"the Console menu has been created, when the game stops filling that buffer: it sees one "
-			"line per frame, so a command that prints SEVERAL lines in a frame keeps only the last "
-			"(lossPossible=true); getav, getgs and getpos are exact. A second capture while one is "
+			"output as { markersFound, lines:[...], source, lossPossible }. source='print' (the normal "
+			"case) comes from a hook on the console's print function and holds EVERY line printed "
+			"between the markers, from the game or any plugin, whether or not the Console menu exists "
+			"(lossPossible only past 20000 lines or 4 MiB, counted in diag.printDropped). The fallbacks, used only when that hook could not "
+			"be installed (diag.printHooked=false): source='buffer' is complete, including several "
+			"lines printed in one frame (e.g. `help`); source='sampler' is used once the Console menu "
+			"has been created, when the game stops filling that buffer: it sees one line per frame, so "
+			"a command that prints SEVERAL lines in a frame keeps only the last (lossPossible=true). "
+			"read returns the most recent 'maxLines' lines (default 200). A second capture while one is "
 			"running gets 409. exec then returns { queued:false, completed }, completed=false meaning "
 			"the end marker never arrived and `lines` may be incomplete; a capture that never sees its "
 			"begin marker gets 504 and the command is not run. "
@@ -2374,6 +2385,7 @@ namespace dvb
 								{ "action", json{ { "type", "string" }, { "enum", json::array({ "exec", "read" }) }, { "description", "'exec' (default) runs `command`; 'read' returns the fenced output and closes the window" } } },
 								{ "command", json{ { "type", "string" }, { "description", "the console command, exactly as typed after ~ (required for exec)" } } },
 								{ "capture", json{ { "type", "boolean" }, { "description", "exec: fence and capture this command's output for the next read" } } },
+								{ "maxLines", json{ { "type", "integer" }, { "description", "read: most recent lines to return (default 200, max 20000)" } } },
 							} },
 		};
 		a_registry.Register(std::move(console), &ConsoleHandler);
