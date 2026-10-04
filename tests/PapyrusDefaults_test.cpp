@@ -50,9 +50,28 @@ TEST_CASE("papyrus defaults say which signature a value comes from")
 	const auto skse = Find("Actor", "EquipItemEx", "equipSound", 3u);
 	CHECK(skse.has_value());
 	CHECK(skse->source == "SKSE");
-	const auto mood = Find("Actor", "SetExpressionOverride", "aiMood", 0u);
-	CHECK(mood.has_value());
-	CHECK(mood->number == 7.0);
+	CHECK(!Find("Actor", "SetExpressionOverride", "aiMood", 0u).has_value());  // required: no declared default
+	CHECK(Find("Actor", "SetExpressionOverride", "aiStrength", 1u)->number == 100.0);
+}
+
+TEST_CASE("papyrus defaults keep EnableFastTravel enabling when called with no argument")
+{
+	for (const auto* script : { "Game", "ObjectReference" }) {
+		const auto v = Find(script, "EnableFastTravel", "param1", 0u);
+		CHECK(v.has_value());
+		CHECK(v->kind == Kind::kBool);
+		CHECK(v->number == 1.0);
+		CHECK(v->source == "vanilla");
+	}
+}
+
+TEST_CASE("papyrus defaults cover every non-neutral default the game's own sources declare")
+{
+	CHECK(Find("Utility", "RandomInt", "param2", 1u)->number == 100.0);
+	CHECK(Find("Game", "PlayBink", "param5", 4u)->number == 1.0);
+	CHECK(Find("Quest", "ModObjectiveGlobal", "aiObjectiveID", 2u)->number == -1.0);
+	CHECK(Find("Input", "GetMappedKey", "param2", 1u)->source == "SKSE");
+	CHECK(Find("Actor", "EquipItemById", "param5", 4u)->source == "SKSE");
 }
 
 using dvb::PapyrusDefaults::Choose;
