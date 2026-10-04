@@ -104,9 +104,12 @@ namespace dvb
 			const std::string action = a_args.value("action", std::string("exec"));
 
 			if (action == "read") {
-				const int maxLines = a_args.value("maxLines", 200);
-				if (maxLines < 1 || maxLines > static_cast<int>(ConsoleLogCapture::PrintCollector::kMaxLines))
-					throw ToolError(400, std::format("console read: 'maxLines' must be 1..{}", ConsoleLogCapture::PrintCollector::kMaxLines));
+				std::int64_t maxLines = 200;
+				try {
+					maxLines = ParseBoundedIntegerArgument(a_args, "maxLines", 200, 1, static_cast<std::int64_t>(ConsoleLogCapture::PrintCollector::kMaxLines));
+				} catch (const std::invalid_argument&) {
+					throw ToolError(400, std::format("console read: 'maxLines' must be an integer 1..{}", ConsoleLogCapture::PrintCollector::kMaxLines));
+				}
 				return MainThread::RunAndWait([maxLines]() -> json {
 					const auto r = ConsoleLogCapture::ReadFenced(static_cast<std::size_t>(maxLines));
 					json       arr = json::array();
