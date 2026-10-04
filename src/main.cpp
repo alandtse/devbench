@@ -101,23 +101,23 @@ namespace
 				// kPostLoad (observed as other mods' API-dependent features vanishing, with the
 				// fault showing up only in an unrelated mod's log). A dev tool failing to start
 				// must not take the rest of the load order down with it.
-			try {
-				g_server->Start();
-			} catch (const std::exception& e) {
-				logs::error("devbench: server failed to start: {}", e.what());
 				try {
-					g_server->Stop();
+					g_server->Start();
+				} catch (const std::exception& e) {
+					logs::error("devbench: server failed to start: {}", e.what());
+					try {
+						g_server->Stop();
+					} catch (...) {
+						logs::error("devbench: Stop() also failed");
+					}
 				} catch (...) {
-					logs::error("devbench: Stop() also failed");
+					logs::error("devbench: server failed to start (unknown exception)");
+					try {
+						g_server->Stop();
+					} catch (...) {
+						logs::error("devbench: Stop() also failed");
+					}
 				}
-			} catch (...) {
-				logs::error("devbench: server failed to start (unknown exception)");
-				try {
-					g_server->Stop();
-				} catch (...) {
-					logs::error("devbench: Stop() also failed");
-				}
-			}
 				dvb::InstallGameEvents(g_server->Events());
 				dvb::StallWatchdog::Start(g_server->Events(), cfg.stallWatchdogMs);
 				dvb::ConsoleHook::Install(g_server->Events());  // observe console commands as events / for recording
