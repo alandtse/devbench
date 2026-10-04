@@ -84,8 +84,6 @@ def test_refs_enumerate_reports_cell_and_model(client, inspect):
     body = client.ok("inspect", {"kind": "refs", "formType": "Static", "radius": 5000, "limit": 50})
     refs = body.get("refs")
     assert isinstance(refs, list), body
-    # Not every ref has a mesh (e.g. markers) or a parent cell (exterior worldspace refs may
-    # not), so assert on shape/type where present rather than requiring every ref to carry one.
     for ref in refs:
         if "model" in ref:
             assert isinstance(ref["model"], str) and ref["model"], ref

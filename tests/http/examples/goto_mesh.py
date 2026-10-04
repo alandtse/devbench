@@ -92,19 +92,21 @@ def main() -> None:
     ap.add_argument("--editorid", help="EditorID")
     ap.add_argument("--distance", type=float, default=None, help="standoff distance in game units (default: auto from bounds)")
     args = ap.parse_args()
+    if args.distance is not None and not (math.isfinite(args.distance) and args.distance > 0):
+        ap.error("--distance must be a positive, finite number")
 
     url = discover()
     if not tool(url, "inspect", {"kind": "state"}).get("playerLoaded"):
         sys.exit("no in-world save loaded — load a save first")
 
     target = find_target(url, model=args.model, formid=args.formid, editorid=args.editorid)
+    if "position" not in target:
+        sys.exit("target must be a placed reference")
     pos = target["position"]
     print(f"target: {target.get('name') or target.get('editorId') or target['formId']} "
           f"({target.get('model', 'no mesh path')}) at {pos}")
 
     dist = standoff_distance(target, args.distance)
-    # South of the target, roughly eye height above its footprint — a workable default framing
-    # for exterior architecture; re-run with --distance to tighten/loosen the shot.
     standoff = [pos[0], pos[1] - dist, pos[2] + 64.0]
     print(f"standoff: {standoff} (distance={dist:.0f})")
 
@@ -114,16 +116,20 @@ def main() -> None:
     tool(url, "console", {"command": f"player.setpos z {standoff[2]}"})
     time.sleep(0.5)  # let the cell finish loading around the new position before framing/capture
 
-    heading = tool(url, "papyrus", {
-        "action": "call", "script": "ObjectReference", "function": "GetHeadingAngle",
-        "self": {"form": "0x14"}, "args": [{"form": target["formId"]}],
-    }).get("returned")
-    if heading is None:
-        sys.exit(f"GetHeadingAngle failed: {heading}")
-    tool(url, "papyrus", {
-        "action": "call", "script": "ObjectReference", "function": "SetAngle",
-        "self": {"form": "0x14"}, "args": [0.0, 0.0, heading],
-    })
+    player = {"form": "0x14"}
+
+    def call(function: str, args: list) -> object:
+        return tool(url, "papyrus", {
+            "action": "call", "script": "ObjectReference", "function": function,
+            "self": player, "args": args,
+        }).get("returned")
+
+    heading = call("GetHeadingAngle", [{"form": target["formId"]}])
+    angle_z = call("GetAngleZ", [])
+    if heading is None or angle_z is None:
+        sys.exit(f"heading lookup failed: GetHeadingAngle={heading} GetAngleZ={angle_z}")
+    # GetHeadingAngle is relative to the current facing; SetAngle is absolute.
+    call("SetAngle", [0.0, 0.0, (angle_z + heading) % 360.0])
     tool(url, "camera", {"action": "setPov", "pov": "third"})
     time.sleep(0.5)  # let the camera settle into the new POV/facing before capture
 
