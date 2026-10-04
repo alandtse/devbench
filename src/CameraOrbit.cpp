@@ -21,7 +21,7 @@ namespace dvb::CameraOrbit
 		CameraFields Read(const RE::ThirdPersonState* a_state)
 		{
 			return { a_state->targetYaw, a_state->currentYaw, a_state->targetZoomOffset, a_state->currentZoomOffset,
-				FromNi(a_state->posOffsetExpected), FromNi(a_state->posOffsetActual) };
+				FromNi(a_state->posOffsetExpected), FromNi(a_state->posOffsetActual), a_state->freeRotation.x };
 		}
 
 		void WriteCamera(RE::ThirdPersonState* a_state, const CameraFields& a_fields)
@@ -32,6 +32,7 @@ namespace dvb::CameraOrbit
 			a_state->currentZoomOffset = a_fields.currentZoom;
 			a_state->posOffsetExpected = ToNi(a_fields.offsetExpected);
 			a_state->posOffsetActual = ToNi(a_fields.offsetActual);
+			a_state->freeRotation.x = a_fields.freeRotationX;
 		}
 
 		// The live third-person state, or null when the camera is in another state.
@@ -56,7 +57,16 @@ namespace dvb::CameraOrbit
 			pc->data.angle.z = write->playerYaw;
 			if (write->playerPitch)
 				pc->data.angle.x = *write->playerPitch;  // the third-person tilt follows the player's look pitch
-			WriteCamera(a_state, write->camera);
+			// The game turns the camera round the player by one of two values: the free-rotation offset while free
+			// rotation is on (weapon sheathed), else the camera's own heading. Writing both turns it twice.
+			auto camera = write->camera;
+			if (a_state->freeRotationEnabled) {
+				camera.targetYaw = a_state->targetYaw;
+				camera.currentYaw = a_state->currentYaw;
+			} else {
+				camera.freeRotationX = a_state->freeRotation.x;
+			}
+			WriteCamera(a_state, camera);
 		}
 
 		bool EndInto(EndReason a_reason, RE::ThirdPersonState* a_state)

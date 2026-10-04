@@ -53,6 +53,7 @@ namespace dvb::CameraOrbit
 		const float yaw = base.playerYaw + m_request.yawRad;
 		out.camera.targetYaw = yaw;
 		out.camera.currentYaw = yaw;
+		out.camera.freeRotationX = m_request.yawRad;
 		if (m_request.offset) {
 			out.camera.offsetExpected = *m_request.offset;
 			out.camera.offsetActual = *m_request.offset;
@@ -85,6 +86,7 @@ namespace dvb::CameraOrbit
 		out.camera = a_current;
 		out.camera.targetYaw = base.camera.targetYaw;
 		out.camera.currentYaw = base.camera.currentYaw;
+		out.camera.freeRotationX = base.camera.freeRotationX;
 		if (m_overridden.zoom) {
 			out.camera.targetZoom = base.camera.targetZoom;
 			out.camera.currentZoom = base.camera.currentZoom;

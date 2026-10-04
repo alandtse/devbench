@@ -30,6 +30,7 @@ namespace dvb::CameraOrbit
 		float currentZoom = 0.0f;
 		Vec3  offsetExpected;
 		Vec3  offsetActual;
+		float freeRotationX = 0.0f;  // heading offset from the player's facing, used while free rotation is on
 	};
 
 	/// The player and camera as they were when an orbit first applied, before any write.

@@ -54,6 +54,7 @@ TEST_CASE("an orbit captures the scene once and leaves omitted parts alone")
 	CHECK(w->playerYaw == 1.0f);
 	CHECK(w->camera.targetYaw == 4.0f);
 	CHECK(w->camera.currentYaw == 4.0f);
+	CHECK(w->camera.freeRotationX == 3.0f);   // the same heading, relative to the facing, for free rotation
 	CHECK(!w->playerPitch.has_value());       // no pitch asked for
 	CHECK(w->camera.targetZoom == 0.3f);      // no zoom asked for
 	CHECK(w->camera.offsetActual.x == 7.0f);  // no offset asked for
@@ -81,6 +82,7 @@ TEST_CASE("ending an orbit writes back exactly what it overwrote")
 	const auto restore = s.End(EndReason::kRequested, now);
 	CHECK(restore.has_value());
 	CHECK(restore->camera.targetYaw == 0.2f);
+	CHECK(restore->camera.freeRotationX == 0.0f);
 	CHECK(restore->camera.targetZoom == 0.3f);
 	CHECK(restore->camera.currentZoom == 0.35f);
 	CHECK(restore->camera.offsetActual.x == 9.0f);
