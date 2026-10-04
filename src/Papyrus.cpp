@@ -583,7 +583,8 @@ namespace dvb::Papyrus
 					paramTypes.push_back(pt);
 				}
 
-				auto* rawArgs = new RuntimeArgs();
+				// Owned until the dispatch takes it.
+				auto rawArgs = std::make_unique<RuntimeArgs>();
 				try {
 					std::size_t i = 0;
 					for (const auto& a : argsJson) {
@@ -592,19 +593,13 @@ namespace dvb::Papyrus
 						++i;
 					}
 				} catch (const ToolError&) {
-					delete rawArgs;
 					throw;
 				} catch (const std::exception& e) {
-					delete rawArgs;
 					throw ToolError(400, e.what());
 				}
 
-				// Pad omitted trailing optionals — the VM won't, and a short arg list makes
-				// reference ops (MoveTo/Disable/Kill) run yet do nothing. Papyrus defaults live
-				// in the .psc and are compiled into each call site, so the VM cannot say what
-				// they are, or even whether a parameter is optional: the known ones come from a
-				// table, and any other omitted parameter refuses the call before anything runs
-				// unless the caller asked for neutral values.
+				// Pad omitted trailing optionals — the VM won't, and a short arg list makes reference ops run yet do nothing.
+				// Papyrus defaults are compiled into call sites; the VM cannot report them.
 				std::string missing;
 				for (std::size_t p = rawArgs->args.size(); p < paramTypes.size(); ++p) {
 					auto v = FillOmitted(ifn, static_cast<std::uint32_t>(p), fillNeutral, *filled, missing);
@@ -614,7 +609,7 @@ namespace dvb::Papyrus
 				if (!missing.empty())
 					throw ToolError(400, std::format("omitted argument(s) {} have no known default and the VM cannot say whether they are optional; the call was not run. Pass them explicitly, or set 'fillNeutral':true to send None/0/0.0/false/\"\" in their place", missing));
 
-				const bool ok = hasSelf ? vm->DispatchMethodCall(selfObj, fn, rawArgs, a_callback) : vm->DispatchStaticCall(cls, fn, rawArgs, a_callback);
+				const bool ok = hasSelf ? vm->DispatchMethodCall(selfObj, fn, rawArgs.release(), a_callback) : vm->DispatchStaticCall(cls, fn, rawArgs.release(), a_callback);
 				if (!ok)
 					throw ToolError(400, hasSelf ? "method dispatch refused — unknown function, wrong arg count, or not a member of that object's script" : "dispatch refused — unknown function, wrong arg count, or not a global/native function");
 			};
