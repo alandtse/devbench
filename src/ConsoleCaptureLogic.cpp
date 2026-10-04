@@ -52,38 +52,95 @@ namespace dvb::ConsoleLogCapture
 		return FindMarker(a_text, a_marker, false) != std::string_view::npos;
 	}
 
+	std::optional<Frame> FrameOf(std::string_view a_line, std::string_view a_marker)
+	{
+		const std::size_t at = FindMarker(a_line, a_marker, false);
+		if (at == std::string_view::npos)
+			return std::nullopt;
+		return Frame{ std::string(a_line.substr(0, at)), std::string(a_line.substr(at + a_marker.size())) };
+	}
+
+	bool IsFramedLine(std::string_view a_line, const Frame& a_frame, std::string_view a_marker)
+	{
+		return !a_marker.empty() && a_line.size() == a_frame.prefix.size() + a_marker.size() + a_frame.suffix.size() &&
+		       a_line.starts_with(a_frame.prefix) && a_line.ends_with(a_frame.suffix) &&
+		       a_line.substr(a_frame.prefix.size(), a_marker.size()) == a_marker;
+	}
+
 	bool IsFenceCommand(std::string_view a_command)
 	{
 		return a_command.starts_with(kMarkerBegin) || a_command.starts_with(kMarkerEnd);
 	}
 
+	namespace
+	{
+		bool LineBreak(char a_c) { return a_c == '\n' || a_c == '\r'; }
+
+		// The begin marker's line (its frame) and the position of the first exactly framed end line after it.
+		struct TextFence
+		{
+			std::size_t begin = std::string_view::npos;  // where the begin line starts
+			std::size_t afterBegin = 0;                  // first character after the begin line
+			std::size_t end = std::string_view::npos;    // where the end line starts
+		};
+
+		TextFence LocateFence(std::string_view a_text, const Fence& a_fence)
+		{
+			TextFence         out;
+			const std::size_t at = FindMarker(a_text, a_fence.begin, true);
+			if (at == std::string_view::npos)
+				return out;
+			std::size_t lineStart = at;
+			while (lineStart > 0 && !LineBreak(a_text[lineStart - 1]))
+				--lineStart;
+			std::size_t lineEnd = at;
+			while (lineEnd < a_text.size() && !LineBreak(a_text[lineEnd]))
+				++lineEnd;
+			out.begin = lineStart;
+			out.afterBegin = lineEnd;
+			const auto frame = FrameOf(a_text.substr(lineStart, lineEnd - lineStart), a_fence.begin);
+			for (std::size_t s = lineEnd; s < a_text.size();) {
+				if (LineBreak(a_text[s])) {
+					++s;
+					continue;
+				}
+				std::size_t e = s;
+				while (e < a_text.size() && !LineBreak(a_text[e]))
+					++e;
+				if (frame && IsFramedLine(a_text.substr(s, e - s), *frame, a_fence.end)) {
+					out.end = s;
+					break;
+				}
+				s = e;
+			}
+			return out;
+		}
+	}
+
 	FenceState FindFence(std::string_view a_text, const Fence& a_fence, std::size_t a_fromOffset)
 	{
-		FenceState        state;
-		const std::size_t begin = FindMarker(a_text, a_fence.begin, true);
-		if (begin == std::string_view::npos || begin < a_fromOffset)
+		FenceState state;
+		const auto fence = LocateFence(a_text, a_fence);
+		if (fence.begin == std::string_view::npos || fence.begin < a_fromOffset)
 			return state;
 		state.hasBegin = true;
-		state.hasEnd = FindMarker(a_text, a_fence.end, false, begin) != std::string_view::npos;
+		state.hasEnd = fence.end != std::string_view::npos;
 		return state;
 	}
 
 	Slice SliceFencedText(std::string_view a_text, const Fence& a_fence, std::size_t a_maxLines, std::size_t a_fromOffset)
 	{
-		Slice             out;
-		const std::size_t begin = FindMarker(a_text, a_fence.begin, true);
-		if (begin == std::string_view::npos || begin < a_fromOffset)
+		Slice      out;
+		const auto fence = LocateFence(a_text, a_fence);
+		if (fence.begin == std::string_view::npos || fence.begin < a_fromOffset)
 			return out;
 		out.sawBegin = true;
-		const std::size_t end = FindMarker(a_text, a_fence.end, false, begin);
 
-		std::size_t start = a_text.find('\n', begin);
-		start = (start == std::string_view::npos) ? a_text.size() : start + 1;
-		std::size_t stop = a_text.size();
-		if (end != std::string_view::npos) {
+		const std::size_t start = fence.afterBegin;
+		std::size_t       stop = a_text.size();
+		if (fence.end != std::string_view::npos) {
 			out.sawEnd = true;
-			const std::size_t lineStart = a_text.rfind('\n', end);
-			stop = (lineStart == std::string_view::npos || lineStart < start) ? start : lineStart;
+			stop = fence.end;
 		}
 
 		std::string line;
@@ -106,10 +163,11 @@ namespace dvb::ConsoleLogCapture
 
 	Slice SliceFencedLines(const std::deque<std::string>& a_lines, const Fence& a_fence, std::size_t a_maxLines)
 	{
-		Slice       out;
-		std::size_t begin = a_lines.size();
+		Slice                out;
+		std::size_t          begin = a_lines.size();
+		std::optional<Frame> frame;
 		for (std::size_t i = a_lines.size(); i-- > 0;) {
-			if (HasMarker(a_lines[i], a_fence.begin)) {
+			if ((frame = FrameOf(a_lines[i], a_fence.begin))) {
 				begin = i;
 				break;
 			}
@@ -120,7 +178,7 @@ namespace dvb::ConsoleLogCapture
 
 		std::size_t end = a_lines.size();
 		for (std::size_t i = begin + 1; i < a_lines.size(); ++i) {
-			if (HasMarker(a_lines[i], a_fence.end)) {
+			if (IsFramedLine(a_lines[i], *frame, a_fence.end)) {
 				end = i;
 				out.sawEnd = true;
 				break;
@@ -136,6 +194,7 @@ namespace dvb::ConsoleLogCapture
 	void LineSampler::Reset(std::string a_seedLine, Fence a_fence)
 	{
 		m_fence = std::move(a_fence);
+		m_frame.reset();
 		m_lines.clear();
 		m_lastSeen = std::move(a_seedLine);
 		m_samples = 0;
@@ -160,12 +219,12 @@ namespace dvb::ConsoleLogCapture
 			return Seen::kNothing;
 		// A marker is recorded the first time it shows even if it matches the seed, so a stale
 		// marker left by an aborted capture cannot swallow this capture's own.
-		if (!m_sawBegin && HasMarker(a_line, m_fence.begin)) {
+		if (!m_sawBegin && (m_frame = FrameOf(a_line, m_fence.begin))) {
 			m_sawBegin = true;
 			Record(a_line);
 			return Seen::kBegin;
 		}
-		if (m_sawBegin && !m_sawEnd && HasMarker(a_line, m_fence.end)) {
+		if (m_sawBegin && !m_sawEnd && IsFramedLine(a_line, *m_frame, m_fence.end)) {
 			m_sawEnd = true;
 			Record(a_line);
 			return Seen::kEnd;
@@ -220,6 +279,7 @@ namespace dvb::ConsoleLogCapture
 	void PrintCollector::Reset(Fence a_fence)
 	{
 		m_fence = std::move(a_fence);
+		m_frame.reset();
 		m_lines.clear();
 		m_outputLines = 0;
 		m_bytes = 0;
@@ -239,13 +299,13 @@ namespace dvb::ConsoleLogCapture
 		if (m_sawEnd || a_line.empty())
 			return;
 		if (!m_sawBegin) {
-			if (!HasMarker(a_line, m_fence.begin))
+			if (!(m_frame = FrameOf(a_line, m_fence.begin)))
 				return;
 			m_sawBegin = true;
 			m_lines.emplace_back(a_line);
 			return;
 		}
-		if (HasMarker(a_line, m_fence.end)) {
+		if (IsFramedLine(a_line, *m_frame, m_fence.end)) {
 			m_sawEnd = true;
 			m_lines.emplace_back(a_line);
 			return;

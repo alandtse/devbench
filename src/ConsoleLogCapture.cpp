@@ -40,7 +40,7 @@ namespace dvb::ConsoleLogCapture
 			kSampler,
 		};
 
-		// The fence, sampler state and the buffer baseline are main thread only.
+		// The fence, sampler state, the buffer baseline and the closing snapshot are main thread only.
 		Fence               g_fence;
 		LineSampler         g_sampler;
 		std::size_t         g_bufferBaseline = 0;
@@ -147,6 +147,40 @@ namespace dvb::ConsoleLogCapture
 		std::size_t BufferFromOffset(std::size_t a_bufferSize)
 		{
 			return a_bufferSize < g_bufferBaseline ? 0 : g_bufferBaseline;
+		}
+
+		// What the capture held when it closed, whichever source it used; ReadFenced answers from this, so a read
+		// never sees lines printed after the end marker or a source that moved on since.
+		struct Snapshot
+		{
+			bool        valid = false;
+			Source      source = Source::kNone;
+			Slice       slice;
+			std::size_t printLines = 0;
+			std::size_t printBytes = 0;
+			std::size_t printDropped = 0;
+		};
+		Snapshot g_snapshot;
+
+		void TakeSnapshot(Source a_source)
+		{
+			Snapshot s;
+			s.valid = true;
+			s.source = a_source;
+			if (a_source == Source::kPrint) {
+				std::lock_guard<std::mutex> lk(g_printMutex);
+				const auto&                 printed = g_printed.Collected();
+				s.slice = SliceFencedLines(printed.Lines(), g_fence, PrintCollector::kMaxLines);
+				s.printLines = printed.Lines().size();
+				s.printBytes = printed.Bytes();
+				s.printDropped = printed.Dropped();
+			} else if (a_source == Source::kSampler) {
+				s.slice = SliceFencedLines(g_sampler.Lines(), g_fence, PrintCollector::kMaxLines);
+			} else if (a_source == Source::kBuffer) {
+				const auto buffer = BufferText();
+				s.slice = SliceFencedText(buffer, g_fence, PrintCollector::kMaxLines, BufferFromOffset(buffer.size()));
+			}
+			g_snapshot = std::move(s);
 		}
 
 		struct LookView
@@ -315,6 +349,7 @@ namespace dvb::ConsoleLogCapture
 		static std::mt19937 nonces{ std::random_device{}() };
 		const Fence         fence = MakeFence(static_cast<std::uint32_t>(nonces()));
 		MainThread::RunAndWait([&fence]() -> json {
+			g_snapshot = {};
 			g_fence = fence;
 			g_sampler.Reset(CurrentLine(), fence);
 			g_bufferBaseline = BufferText().size();
@@ -324,25 +359,38 @@ namespace dvb::ConsoleLogCapture
 		},
 			kLookTimeout);
 
-		const PrintCaptureWindow window(fence);
-		const auto               deadline = Clock::now() + kCaptureDeadline;
-		const auto               source = ChooseSource(fence, deadline);
-		if (source == Source::kNone) {
-			g_timedOut.store(true);
-			throw ToolError(504, "console capture never saw its begin marker; the command was not run");
-		}
-		g_source.store(source);
+		bool   finished = false;
+		Source source = Source::kNone;
+		{
+			const PrintCaptureWindow window(fence);
+			const auto               deadline = Clock::now() + kCaptureDeadline;
+			source = ChooseSource(fence, deadline);
+			if (source == Source::kNone) {
+				g_timedOut.store(true);
+				throw ToolError(504, "console capture never saw its begin marker; the command was not run");
+			}
+			g_source.store(source);
 
-		bool finished = false;
-		if (source == Source::kPrint)
-			finished = CaptureFromPrint(a_command, fence, deadline);
-		else if (source == Source::kBuffer)
-			finished = CaptureFromBuffer(a_command, fence, deadline);
-		else
-			finished = CaptureFromSampler(a_command, fence, deadline);
-		if (!finished) {
-			logs::warn("devbench: console capture did not see its end marker");
-			g_timedOut.store(true);
+			if (source == Source::kPrint)
+				finished = CaptureFromPrint(a_command, fence, deadline);
+			else if (source == Source::kBuffer)
+				finished = CaptureFromBuffer(a_command, fence, deadline);
+			else
+				finished = CaptureFromSampler(a_command, fence, deadline);
+			if (!finished) {
+				logs::warn("devbench: console capture did not see its end marker");
+				g_timedOut.store(true);
+			}
+		}
+		// The print window is closed; take every source's view at this one point.
+		try {
+			MainThread::RunAndWait([source]() -> json {
+				TakeSnapshot(source);
+				return true;
+			},
+				kLookTimeout);
+		} catch (const ToolError& e) {
+			logs::warn("devbench: console capture could not snapshot its output: {}", e.what());
 		}
 		return finished;
 	}
@@ -375,28 +423,26 @@ namespace dvb::ConsoleLogCapture
 		out.bufferLen = buffer.size();
 		out.bufferHasBegin = HasMarker(buffer, g_fence.begin);
 
-		const Source source = g_source.load();
-		Slice        slice;
-		if (source == Source::kPrint) {
-			std::lock_guard<std::mutex> lk(g_printMutex);
-			const auto&                 printed = g_printed.Collected();
-			slice = SliceFencedLines(printed.Lines(), g_fence, a_maxLines);
-			out.printLines = printed.Lines().size();
-			out.printBytes = printed.Bytes();
-			out.printDropped = printed.Dropped();
+		if (!g_snapshot.valid)
+			return out;
+		const Snapshot& s = g_snapshot;
+		if (s.source == Source::kPrint) {
+			out.printLines = s.printLines;
+			out.printBytes = s.printBytes;
+			out.printDropped = s.printDropped;
 			out.source = "print";
-			out.lossPossible = out.printDropped > 0;
-		} else if (source == Source::kSampler) {
-			slice = SliceFencedLines(g_sampler.Lines(), g_fence, a_maxLines);
+			out.lossPossible = s.printDropped > 0;
+		} else if (s.source == Source::kSampler) {
 			out.source = "sampler";
 			out.lossPossible = true;
-		} else if (source == Source::kBuffer || out.bufferHasBegin) {
-			slice = SliceFencedText(buffer, g_fence, a_maxLines, BufferFromOffset(buffer.size()));
+		} else if (s.source == Source::kBuffer) {
 			out.source = "buffer";
 		}
-		out.sawBegin = slice.sawBegin;
-		out.sawEnd = slice.sawEnd;
-		out.lines = std::move(slice.lines);
+		out.sawBegin = s.slice.sawBegin;
+		out.sawEnd = s.slice.sawEnd;
+		const auto& lines = s.slice.lines;
+		const auto  first = lines.size() > a_maxLines ? lines.size() - a_maxLines : 0;
+		out.lines.assign(lines.begin() + static_cast<std::ptrdiff_t>(first), lines.end());
 		return out;
 	}
 }

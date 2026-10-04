@@ -3,8 +3,10 @@
 #include "ConsoleCaptureLogic.h"
 
 using dvb::ConsoleLogCapture::Fence;
+using dvb::ConsoleLogCapture::FrameOf;
 using dvb::ConsoleLogCapture::HasMarker;
 using dvb::ConsoleLogCapture::IsFenceCommand;
+using dvb::ConsoleLogCapture::IsFramedLine;
 using dvb::ConsoleLogCapture::kRingMax;
 using dvb::ConsoleLogCapture::LineSampler;
 using dvb::ConsoleLogCapture::MakeFence;
@@ -468,4 +470,55 @@ TEST_CASE("a closed window keeps what it collected and admits nothing")
 	CHECK(!windows.Keep(w, nullptr));
 	CHECK(windows.Collected().SawBegin());
 	CHECK(windows.Collected().Dropped() == 1);
+}
+
+TEST_CASE("the end marker counts only in the begin marker's exact frame")
+{
+	const auto frame = FrameOf(BeginLine(), kF.begin);
+	CHECK(frame.has_value());
+	CHECK(frame->prefix == "Script command \"");
+	CHECK(frame->suffix == "\" not found.");
+	CHECK(IsFramedLine(EndLine(), *frame, kF.end));
+	CHECK(!IsFramedLine("echo: " + kF.end, *frame, kF.end));                             // output that mentions the end command
+	CHECK(!IsFramedLine(EndLine() + " (repeated)", *frame, kF.end));                     // a longer line
+	CHECK(!IsFramedLine("Script command \"" + kF.end + "\" missing.", *frame, kF.end));  // another frame
+}
+
+TEST_CASE("output mentioning the end command does not close any source")
+{
+	const std::string mention = "the fence ends with " + kF.end + " here";
+	PrintCollector    c;
+	c.Reset(kF);
+	c.Feed(BeginLine());
+	c.Feed(mention);
+	CHECK(!c.SawEnd());
+	c.Feed(EndLine());
+	CHECK(c.SawEnd());
+	CHECK(SliceFencedLines(c.Lines(), kF, 200).lines.size() == 1);
+
+	LineSampler sampler;
+	sampler.Reset("", kF);
+	sampler.Observe(BeginLine());
+	CHECK(sampler.Observe(mention) == LineSampler::Seen::kLine);
+	CHECK(sampler.Observe(EndLine()) == LineSampler::Seen::kEnd);
+
+	const std::string text = BeginLine() + "\n" + mention + "\nreal output\n" + EndLine() + "\n";
+	CHECK(FindFence(text, kF).hasEnd);
+	const auto slice = SliceFencedText(text, kF, 200);
+	CHECK(slice.sawEnd);
+	CHECK(slice.lines.size() == 2);
+	CHECK(!FindFence(BeginLine() + "\n" + mention + "\n", kF).hasEnd);
+}
+
+TEST_CASE("a frame learned in another language still closes the capture")
+{
+	const std::string begin = "Commande de script « " + kF.begin + " » introuvable.";
+	const std::string end = "Commande de script « " + kF.end + " » introuvable.";
+	PrintCollector    c;
+	c.Reset(kF);
+	c.Feed(begin);
+	c.Feed("sortie");
+	c.Feed(end);
+	CHECK(c.SawEnd());
+	CHECK(SliceFencedLines(c.Lines(), kF, 200).lines.size() == 1);
 }

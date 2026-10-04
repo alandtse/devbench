@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -23,6 +24,19 @@ namespace dvb::ConsoleLogCapture
 	};
 	Fence MakeFence(std::uint32_t a_nonce);
 	bool  HasMarker(std::string_view a_text, std::string_view a_marker);
+
+	/// The text the game printed round a capture's begin command (e.g. `Script command "` and `" not found.`).
+	/// The end marker counts only on a line that is exactly that frame round the end command, so output that
+	/// merely mentions the end command never closes the capture. Learned from the game's own line, so it holds in
+	/// any language.
+	struct Frame
+	{
+		std::string prefix;
+		std::string suffix;
+	};
+	/// The frame round a_marker when a_line holds it as a whole token.
+	std::optional<Frame> FrameOf(std::string_view a_line, std::string_view a_marker);
+	bool                 IsFramedLine(std::string_view a_line, const Frame& a_frame, std::string_view a_marker);
 	/// Whether a console command is one of devbench's fence commands.
 	bool IsFenceCommand(std::string_view a_command);
 
@@ -82,6 +96,7 @@ namespace dvb::ConsoleLogCapture
 		void Record(std::string_view a_line);
 
 		Fence                   m_fence;
+		std::optional<Frame>    m_frame;
 		std::deque<std::string> m_lines;
 		std::string             m_lastSeen;
 		std::size_t             m_samples = 0;
@@ -134,6 +149,7 @@ namespace dvb::ConsoleLogCapture
 		void Line(std::string_view a_line);
 
 		Fence                   m_fence;
+		std::optional<Frame>    m_frame;
 		std::deque<std::string> m_lines;
 		std::size_t             m_outputLines = 0;
 		std::size_t             m_bytes = 0;
