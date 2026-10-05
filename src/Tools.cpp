@@ -1488,7 +1488,13 @@ namespace dvb
 						if (RE::NiPoint3 e; cam->cameraRoot->world.rotate.ToEulerAnglesXYZ(e)) {
 							out["camPitch"] = e.x;
 							out["camYaw"] = e.z;
+							out["camAngles"] = "worldEuler";
 						}
+					}
+					if (const auto native = FreeCamera::OwnedAngles()) {
+						out["camPitch"] = native->pitch;
+						out["camYaw"] = native->yaw;
+						out["camAngles"] = "freeCameraState";
 					}
 					return out;
 				});
@@ -2541,7 +2547,7 @@ namespace dvb
 		camera.name = "camera";
 		camera.description =
 			"Read or set the player camera. action='get' (default) returns { pov, freeCam, camX, "
-			"camY, camZ, camPitch, camYaw, stateId, freeCamBackend, freeCamOwned, orbit } (plus thirdPersonState: heading, zoom "
+			"camY, camZ, camPitch, camYaw, camAngles, stateId, freeCamBackend, freeCamOwned, orbit } (plus thirdPersonState: heading, zoom "
 			"and offsets, while in third person) read live on the main thread, where pov is first | "
 			"third | vanity | other. stateId is the runtime-specific CameraState value; interpret it "
 			"with freeCamBackend. action='setPov' applies a switch (param 'pov': first | third "
@@ -2557,8 +2563,14 @@ namespace dvb
 			"action='drive' (params 'x','y','z','pitch','yaw', all default 0) "
 			"sets the free camera's world transform — requires free-cam mode already on. "
 			"pitch/yaw are native free-camera angles in radians on both runtimes, writing "
-			"FreeCameraState::rotation directly; completes its field writes before return, so allow "
-			"a rendered frame before capture. "
+			"FreeCameraState::rotation directly; yaw increases clockwise from +Y (north) and the view "
+			"direction is (sin yaw, cos yaw) at pitch 0, the same sense as a reference's heading in "
+			"inspect refs rotation[2] (observed on SE 1.6.1170; VR and AE unchecked). Completes its field writes before "
+			"return, so allow a rendered frame before capture. "
+			"While devbench owns the free camera, get reports camPitch/camYaw as exactly those native "
+			"angles (camAngles='freeCameraState'); otherwise they are generic XYZ Euler angles of the "
+			"camera's world rotation (camAngles='worldEuler'), which can differ in sign and branch "
+			"from the direction the camera renders and should not be used to verify a pose. "
 			"action='orbit' (params yawDeg default 180, pitchDeg, zoom, right, up; on=false stops) holds the gameplay "
 			"third-person camera round the player on every camera update, with the player's facing held for the orbit - no "
 			"free camera, so gameplay input keeps reaching the player (a held mouseLeft keeps charging a spell, for example). "
@@ -2593,7 +2605,7 @@ namespace dvb
 								{ "y", json{ { "type", "number" }, { "description", "drive: world Y (requires free-cam mode)" } } },
 								{ "z", json{ { "type", "number" }, { "description", "drive: world Z (requires free-cam mode)" } } },
 								{ "pitch", json{ { "type", "number" }, { "description", "drive: native free-cam pitch in radians (FreeCameraState::rotation.x)" } } },
-								{ "yaw", json{ { "type", "number" }, { "description", "drive: native free-cam yaw in radians (FreeCameraState::rotation.y)" } } },
+								{ "yaw", json{ { "type", "number" }, { "description", "drive: native free-cam yaw in radians (FreeCameraState::rotation.y), clockwise from +Y; 0 looks along +Y" } } },
 							} },
 		};
 		a_registry.Register(std::move(camera), &CameraHandler);
