@@ -1,6 +1,8 @@
 #pragma once
 
+#include <numbers>
 #include <optional>
+#include <string>
 #include <string_view>
 
 namespace dvb::CameraFrame
@@ -50,13 +52,20 @@ namespace dvb::CameraFrame
 		double yaw = 0;
 	};
 
-	inline constexpr double kDefaultHeight = 128.0;          // a standing human; used when the bounds are empty
-	inline constexpr double kDistanceFactor = 1.4;           // x height: head and shoulders with the face readable
-	inline constexpr double kMaxPitch = 1.5533430342749532;  // 89 degrees
+	inline constexpr double kDefaultHeight = 128.0;
+	inline constexpr double kDistanceFactor = 1.4;
+	inline constexpr double kDegToRad = std::numbers::pi / 180.0;
+	inline constexpr double kMaxPitchDeg = 89.0;
+	inline constexpr double kMaxPitch = kMaxPitchDeg * kDegToRad;
+	inline constexpr double kMaxEyeFraction = 2.0;
+	inline constexpr double kMaxDistance = 100000.0;
+	inline constexpr double kMaxDistanceScale = 1000.0;
+
+	/// Why `a_options` cannot be framed (a value outside its limit or not finite), or nullopt if it can.
+	std::optional<std::string> Validate(const Options& a_options);
 
 	/// Place the camera on the chosen side of `a_target`, looking at it. Yaw increases clockwise from
-	/// +Y and the view direction is (sin yaw, cos yaw), the same sense as a reference's heading, so a
-	/// camera at heading + offset looks back at the target with yaw = heading + offset + pi.
+	/// +Y and the view direction is (sin yaw, cos yaw), the same sense as a reference's heading.
 	Pose Frame(const Target& a_target, const Options& a_options);
 
 	/// Wrap an angle into (-pi, pi].

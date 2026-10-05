@@ -1,12 +1,11 @@
-// Host-independent coverage for the camera frame pose math. The expected poses for the four
-// horizontal sides are the ones driven on AE 1.7.104 around Balgruuf (heading 1.6715 rad, bounds
-// 0..128, camera 180 units out at 0.85 of his height): front showed his face, right and left
-// his profile, back his back.
+// Pose math for camera action=frame.
 
 #include "test_framework.h"
 
 #include <cmath>
+#include <limits>
 #include <numbers>
+#include <string>
 
 #include "CameraFrameLogic.h"
 
@@ -73,7 +72,6 @@ TEST_CASE("every horizontal side looks at the target")
 	for (Side side : { Side::kFront, Side::kBack, Side::kLeft, Side::kRight }) {
 		const Target t = Balgruuf();
 		const Pose   p = Frame(t, At180(side));
-		// forward = (sin yaw, cos yaw): the target must lie straight ahead.
 		const double dx = t.x - p.x, dy = t.y - p.y;
 		CHECK(Near(std::sin(p.yaw), dx / std::hypot(dx, dy), 1e-6));
 		CHECK(Near(std::cos(p.yaw), dy / std::hypot(dx, dy), 1e-6));
@@ -155,4 +153,49 @@ TEST_CASE("angles wrap into (-pi, pi]")
 	CHECK(Near(WrapPi(3.0 * pi), pi, 1e-9));
 	CHECK(Near(WrapPi(2.0 * pi + 0.1), 0.1, 1e-9));
 	CHECK(Near(WrapPi(-2.0 * pi - 0.1), -0.1, 1e-9));
+}
+
+TEST_CASE("options within their limits are accepted")
+{
+	CHECK(!Validate(Options{}).has_value());
+	Options o;
+	o.distance = kMaxDistance;
+	o.distanceScale = kMaxDistanceScale;
+	o.eyeFraction = kMaxEyeFraction;
+	o.pitchRad = kMaxPitch;
+	o.aroundRad = 12.0;
+	CHECK(!Validate(o).has_value());
+}
+
+TEST_CASE("options outside their limits are rejected with the parameter named")
+{
+	const auto reject = [](Options o, const char* a_name) {
+		const auto why = Validate(o);
+		return why.has_value() && why->find(a_name) != std::string::npos;
+	};
+	Options o;
+	o.distance = 0.0;
+	CHECK(reject(o, "'distance'"));
+	o.distance = kMaxDistance * 2.0;
+	CHECK(reject(o, "'distance'"));
+	o = Options{};
+	o.distanceScale = 0.0;
+	CHECK(reject(o, "'distanceScale'"));
+	o.distanceScale = kMaxDistanceScale + 1.0;
+	CHECK(reject(o, "'distanceScale'"));
+	o = Options{};
+	o.eyeFraction = -0.1;
+	CHECK(reject(o, "'eyeHeight'"));
+	o.eyeFraction = kMaxEyeFraction + 0.1;
+	CHECK(reject(o, "'eyeHeight'"));
+	o = Options{};
+	o.pitchRad = kMaxPitch + 0.01;
+	CHECK(reject(o, "'pitchDeg'"));
+	o.pitchRad = -kMaxPitch - 0.01;
+	CHECK(reject(o, "'pitchDeg'"));
+	o = Options{};
+	o.aroundRad = std::numeric_limits<double>::infinity();
+	CHECK(reject(o, "'aroundDeg'"));
+	o.aroundRad = std::numeric_limits<double>::quiet_NaN();
+	CHECK(reject(o, "'aroundDeg'"));
 }

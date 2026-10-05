@@ -1,6 +1,7 @@
 #include "CameraFrameLogic.h"
 
 #include <cmath>
+#include <format>
 #include <numbers>
 
 namespace dvb::CameraFrame
@@ -24,6 +25,21 @@ namespace dvb::CameraFrame
 			return Side::kTop;
 		if (a_name == "bottom")
 			return Side::kBottom;
+		return std::nullopt;
+	}
+
+	std::optional<std::string> Validate(const Options& a_options)
+	{
+		if (a_options.aroundRad && !std::isfinite(*a_options.aroundRad))
+			return "'aroundDeg' must be finite";
+		if (a_options.distance && !(*a_options.distance > 0.0 && *a_options.distance <= kMaxDistance))
+			return std::format("'distance' must be > 0 and <= {}", kMaxDistance);
+		if (!(a_options.distanceScale > 0.0 && a_options.distanceScale <= kMaxDistanceScale))
+			return std::format("'distanceScale' must be > 0 and <= {}", kMaxDistanceScale);
+		if (!(a_options.eyeFraction >= 0.0 && a_options.eyeFraction <= kMaxEyeFraction))
+			return std::format("'eyeHeight' must be within 0..{} (a fraction of the reference's height)", kMaxEyeFraction);
+		if (a_options.pitchRad && !(std::fabs(*a_options.pitchRad) <= kMaxPitch))
+			return std::format("'pitchDeg' must be within -{0}..{0}", kMaxPitchDeg);
 		return std::nullopt;
 	}
 

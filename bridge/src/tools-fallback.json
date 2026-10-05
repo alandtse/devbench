@@ -325,16 +325,18 @@
           "distance": {
             "description": "frame: camera distance in world units (default 1.4 x the reference's height)",
             "exclusiveMinimum": 0,
+            "maximum": 100000.0,
             "type": "number"
           },
           "distanceScale": {
             "description": "frame: multiplier on the default distance (default 1)",
             "exclusiveMinimum": 0,
+            "maximum": 1000.0,
             "type": "number"
           },
           "eyeHeight": {
             "description": "frame: camera height as a fraction of the reference's height (default 0.85)",
-            "maximum": 2,
+            "maximum": 2.0,
             "minimum": 0,
             "type": "number"
           },

@@ -1526,10 +1526,6 @@ namespace dvb
 				});
 			}
 
-			// frame: put the free camera on one side of a placed reference, looking at it. front / back / left /
-			// right are relative to the reference's own heading (inspect refs rotation[2]), right being its clockwise
-			// side; top looks straight down with the image's up as its front, bottom straight up. The pose math lives
-			// in CameraFrameLogic; this resolves the reference, drives the camera and reports the pose it used.
 			if (action == "frame") {
 				const std::string target = a_args.value("formId", std::string{});
 				if (target.empty())
@@ -1545,31 +1541,20 @@ namespace dvb
 						throw ToolError(400, std::format("camera frame '{}' must be a finite number", a_key));
 					return a_args[a_key].get<double>();
 				};
-				constexpr double     kDegToRad = 3.14159265358979323846 / 180.0;
 				CameraFrame::Options opts;
 				opts.side = *side;
 				if (const auto v = number("aroundDeg"))
-					opts.aroundRad = *v * kDegToRad;
-				if (const auto v = number("distance")) {
-					if (*v <= 0.0)
-						throw ToolError(400, "camera frame 'distance' must be > 0");
+					opts.aroundRad = *v * CameraFrame::kDegToRad;
+				if (const auto v = number("distance"))
 					opts.distance = *v;
-				}
-				if (const auto v = number("distanceScale")) {
-					if (*v <= 0.0)
-						throw ToolError(400, "camera frame 'distanceScale' must be > 0");
+				if (const auto v = number("distanceScale"))
 					opts.distanceScale = *v;
-				}
-				if (const auto v = number("eyeHeight")) {
-					if (*v < 0.0 || *v > 2.0)
-						throw ToolError(400, "camera frame 'eyeHeight' must be within 0..2 (a fraction of the reference's height)");
+				if (const auto v = number("eyeHeight"))
 					opts.eyeFraction = *v;
-				}
-				if (const auto v = number("pitchDeg")) {
-					if (*v < -89.0 || *v > 89.0)
-						throw ToolError(400, "camera frame 'pitchDeg' must be within -89..89");
-					opts.pitchRad = *v * kDegToRad;
-				}
+				if (const auto v = number("pitchDeg"))
+					opts.pitchRad = *v * CameraFrame::kDegToRad;
+				if (const auto problem = CameraFrame::Validate(opts))
+					throw ToolError(400, std::format("camera frame {}", *problem));
 				const auto session = FreeCamera::CurrentSession();
 				return MainThread::RunAndWait([target, sideName, opts, session]() -> json {
 					auto* form = LookupFormArg(target);
@@ -2674,9 +2659,9 @@ namespace dvb
 								{ "formId", json{ { "type", "string" }, { "description", "frame: the placed reference to look at (FormID, EditorID or bare hex FormID)" } } },
 								{ "side", json{ { "type", "string" }, { "enum", json::array({ "front", "back", "left", "right", "top", "bottom" }) }, { "description", "frame: which side to look from (default front); front/back/left/right are relative to the reference's heading" } } },
 								{ "aroundDeg", json{ { "type", "number" }, { "description", "frame: degrees clockwise from the reference's front, replacing the side's horizontal angle" } } },
-								{ "distance", json{ { "type", "number" }, { "exclusiveMinimum", 0 }, { "description", "frame: camera distance in world units (default 1.4 x the reference's height)" } } },
-								{ "distanceScale", json{ { "type", "number" }, { "exclusiveMinimum", 0 }, { "description", "frame: multiplier on the default distance (default 1)" } } },
-								{ "eyeHeight", json{ { "type", "number" }, { "minimum", 0 }, { "maximum", 2 }, { "description", "frame: camera height as a fraction of the reference's height (default 0.85)" } } },
+								{ "distance", json{ { "type", "number" }, { "exclusiveMinimum", 0 }, { "maximum", CameraFrame::kMaxDistance }, { "description", "frame: camera distance in world units (default 1.4 x the reference's height)" } } },
+								{ "distanceScale", json{ { "type", "number" }, { "exclusiveMinimum", 0 }, { "maximum", CameraFrame::kMaxDistanceScale }, { "description", "frame: multiplier on the default distance (default 1)" } } },
+								{ "eyeHeight", json{ { "type", "number" }, { "minimum", 0 }, { "maximum", CameraFrame::kMaxEyeFraction }, { "description", "frame: camera height as a fraction of the reference's height (default 0.85)" } } },
 								{ "zoom", json{ { "type", "number" }, { "minimum", -1 }, { "maximum", 1 }, { "description", "orbit: the game's third-person zoom offset (omit to keep it)" } } },
 								{ "right", json{ { "type", "number" }, { "description", "orbit: camera offset to the side in units (with up; omit both to keep the game's own)" } } },
 								{ "up", json{ { "type", "number" }, { "description", "orbit: camera offset up in units" } } },
