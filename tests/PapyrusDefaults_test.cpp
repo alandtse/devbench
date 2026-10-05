@@ -31,9 +31,9 @@ TEST_CASE("papyrus defaults leave neutral and unknown parameters to the caller")
 
 TEST_CASE("papyrus defaults need a named parameter's name and position to agree")
 {
-	CHECK(!Find("ObjectReference", "PlaceAtMe", "aiCount", 2u).has_value());         // right name, wrong position
-	CHECK(!Find("ObjectReference", "PlaceAtMe", "abForcePersist", 1u).has_value());  // right position, wrong name
-	CHECK(!Find("ObjectReference", "MoveTo", "abMatchRotation", 3u).has_value());    // a signature with another shape
+	CHECK(!Find("ObjectReference", "PlaceAtMe", "aiCount", 2u).has_value());
+	CHECK(!Find("ObjectReference", "PlaceAtMe", "abForcePersist", 1u).has_value());
+	CHECK(!Find("ObjectReference", "MoveTo", "abMatchRotation", 3u).has_value());
 }
 
 TEST_CASE("papyrus defaults match a native function's unnamed parameter by position")
