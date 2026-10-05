@@ -213,6 +213,14 @@ namespace dvb::FreeCamera
 		return REL::Module::IsVR() ? IsOwnedVR() : IsOwnedFlat();
 	}
 
+	std::optional<Angles> OwnedAngles()
+	{
+		if (!IsOwned())
+			return std::nullopt;
+		const auto* state = GetFreeState(RE::PlayerCamera::GetSingleton());
+		return Angles{ state->rotation.x, state->rotation.y };
+	}
+
 	void SetEnabled(bool a_enabled, SessionToken a_session)
 	{
 		ValidateSession(a_session);

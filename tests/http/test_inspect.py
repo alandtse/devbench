@@ -128,6 +128,8 @@ def test_refs_actors_in_radius(client, inspect):
         btype = (ref.get("base", {}) or {}).get("formType", "")
         if "ACHR" in ftype or "ACHR" in btype or "NPC_" in btype:
             assert isinstance(ref.get("actor"), dict), ref
+            assert isinstance(ref["actor"].get("alive"), bool), ref
+            assert isinstance(ref["actor"].get("loaded3D"), bool), ref
 
     assert any((r.get("base", {}) or {}).get("name") for r in refs), \
         "expected at least one actor ref with a base.name"

@@ -863,6 +863,11 @@ namespace dvb
 			if (!a_ref)
 				return nullptr;
 			json j = IdentifyForm(a_ref);
+			if (!j.contains("name")) {
+				if (auto* actor = a_ref->As<RE::Actor>())
+					if (const char* n = actor->GetDisplayFullName(); n && *n)
+						j["name"] = n;
+			}
 			if (auto* base = a_ref->GetBaseObject()) {
 				j["base"] = IdentifyForm(base);
 				if (auto* model = base->As<RE::TESModel>(); model && model->GetModel() && *model->GetModel())
@@ -884,7 +889,7 @@ namespace dvb
 			}
 
 			if (auto* actor = a_ref->As<RE::Actor>()) {
-				json a{ { "level", actor->GetLevel() } };
+				json a{ { "level", actor->GetLevel() }, { "alive", !actor->IsDead() }, { "loaded3D", actor->Is3DLoaded() } };
 				if (auto* avo = actor->AsActorValueOwner()) {
 					a["health"] = avo->GetActorValue(RE::ActorValue::kHealth);
 					a["healthMax"] = avo->GetPermanentActorValue(RE::ActorValue::kHealth);
@@ -1494,7 +1499,13 @@ namespace dvb
 						if (RE::NiPoint3 e; cam->cameraRoot->world.rotate.ToEulerAnglesXYZ(e)) {
 							out["camPitch"] = e.x;
 							out["camYaw"] = e.z;
+							out["camAngles"] = "worldEuler";
 						}
+					}
+					if (const auto native = FreeCamera::OwnedAngles()) {
+						out["camPitch"] = native->pitch;
+						out["camYaw"] = native->yaw;
+						out["camAngles"] = "freeCameraState";
 					}
 					return out;
 				});
@@ -2452,10 +2463,13 @@ namespace dvb
 				"'refs' → identify reference(s) sharing one shape { formId, formType, name, "
 				"editorId, base, position, rotation, cell, model, bounds } — 'model' is the base "
 				"object's mesh (.nif) path when it has one; 'bounds' is { min, max } local extents "
-				"for framing a shot; pass 'formId' for one form, 'selected'=true for the "
+				"for framing a shot; an actor ref also carries actor { level, health, healthMax, "
+				"hostileToPlayer, playerTeammate, alive, loaded3D } and, when the ref has no name, its "
+				"display name; pass 'formId' for one form, 'selected'=true for the "
 				"console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid "
-				"(optional 'formType' filter, 'model' substring filter against the mesh path, "
-				"'radius' from player, 'limit' default 100). "
+				"(optional 'formType' filter, 'model' substring filter against the base object's mesh path, "
+				"'radius' from player, 'limit' default 100); 'model' matches statics and furniture — "
+				"actors normally have no base mesh, so list NPCs with 'formType'=Actor. "
 				"'registrants' → who has requested the C-ABI interface and what they registered "
 				"through it { consumers:[{name,atEpoch,atFrame}], registrations:[{kind,name,atEpoch,"
 				"atFrame,replaced}], capabilities:{capture,inspect,menu → [registered keys]} } — "
@@ -2480,7 +2494,7 @@ namespace dvb
 									{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form; inventory: the container ref to read (default player); effects: the actor to read (default player) (hex formId, e.g. 0x14, or EditorID)" } } },
 									{ "selected", json{ { "type", "boolean" }, { "description", "refs: identify the console-selected / crosshair ref instead" } } },
 									{ "formType", json{ { "type", "string" }, { "description", "refs/inventory: keep only entries whose type matches (e.g. Actor, Weapon, Potion)" } } },
-									{ "model", json{ { "type", "string" }, { "description", "refs enumerate: keep only refs whose base object's mesh path contains this substring (case-insensitive, e.g. 'wrcity01')" } } },
+									{ "model", json{ { "type", "string" }, { "description", "refs enumerate: keep only refs whose base object's mesh path contains this substring (case-insensitive, e.g. 'wrcity01'); matches statics and furniture, not actors" } } },
 									{ "radius", json{ { "type", "number" }, { "description", "refs enumerate: only refs within this distance of the player (0 = whole loaded grid)" } } },
 									{ "limit", json{ { "type", "integer" }, { "description", "refs/inventory: max entries to return (default 100)" } } },
 								} },
@@ -2605,7 +2619,7 @@ namespace dvb
 		camera.name = "camera";
 		camera.description =
 			"Read or set the player camera. action='get' (default) returns { pov, freeCam, camX, "
-			"camY, camZ, camPitch, camYaw, stateId, freeCamBackend, freeCamOwned, orbit } (plus thirdPersonState: heading, zoom "
+			"camY, camZ, camPitch, camYaw, camAngles, stateId, freeCamBackend, freeCamOwned, orbit } (plus thirdPersonState: heading, zoom "
 			"and offsets, while in third person) read live on the main thread, where pov is first | "
 			"third | vanity | other. stateId is the runtime-specific CameraState value; interpret it "
 			"with freeCamBackend. action='setPov' applies a switch (param 'pov': first | third "
@@ -2621,8 +2635,14 @@ namespace dvb
 			"action='drive' (params 'x','y','z','pitch','yaw', all default 0) "
 			"sets the free camera's world transform — requires free-cam mode already on. "
 			"pitch/yaw are native free-camera angles in radians on both runtimes, writing "
-			"FreeCameraState::rotation directly; completes its field writes before return, so allow "
-			"a rendered frame before capture. "
+			"FreeCameraState::rotation directly; yaw increases clockwise from +Y (north) and the view "
+			"direction is (sin yaw, cos yaw) at pitch 0, the same sense as a reference's heading in "
+			"inspect refs rotation[2] (observed on AE 1.7.104 and VR 1.4.15; VR reports a negative yaw as the equivalent angle plus 2 pi). Completes its field writes before "
+			"return, so allow a rendered frame before capture. "
+			"While devbench owns the free camera, get reports camPitch/camYaw as exactly those native "
+			"angles (camAngles='freeCameraState'); otherwise they are generic XYZ Euler angles of the "
+			"camera's world rotation (camAngles='worldEuler'), which can differ in sign and branch "
+			"from the direction the camera renders and should not be used to verify a pose. "
 			"action='orbit' (params yawDeg default 180, pitchDeg, zoom, right, up; on=false stops) holds the gameplay "
 			"third-person camera round the player on every camera update, with the player's facing held for the orbit - no "
 			"free camera, so gameplay input keeps reaching the player (a held mouseLeft keeps charging a spell, for example). "
@@ -2671,7 +2691,7 @@ namespace dvb
 								{ "y", json{ { "type", "number" }, { "description", "drive: world Y (requires free-cam mode)" } } },
 								{ "z", json{ { "type", "number" }, { "description", "drive: world Z (requires free-cam mode)" } } },
 								{ "pitch", json{ { "type", "number" }, { "description", "drive: native free-cam pitch in radians (FreeCameraState::rotation.x)" } } },
-								{ "yaw", json{ { "type", "number" }, { "description", "drive: native free-cam yaw in radians (FreeCameraState::rotation.y)" } } },
+								{ "yaw", json{ { "type", "number" }, { "description", "drive: native free-cam yaw in radians (FreeCameraState::rotation.y), clockwise from +Y; 0 looks along +Y" } } },
 							} },
 		};
 		a_registry.Register(std::move(camera), &CameraHandler);

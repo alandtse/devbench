@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 namespace dvb::FreeCamera
 {
@@ -15,6 +16,15 @@ namespace dvb::FreeCamera
 	void Drive(float a_x, float a_y, float a_z, float a_pitch, float a_yaw, SessionToken a_session);
 	/// Reconcile ownership with the current registered camera state on the main thread.
 	bool IsOwned();
+
+	/// The free camera's native pitch/yaw in radians, exactly as Drive writes them, while devbench
+	/// owns it; nullopt otherwise. Main thread.
+	struct Angles
+	{
+		float pitch;
+		float yaw;
+	};
+	std::optional<Angles> OwnedAngles();
 
 	/// Main-thread lifecycle: discard cached VR pointers and invalidate queued mutations at load
 	/// boundaries. Failed VR pre-load restoration recovers through the loaded scene's registered
