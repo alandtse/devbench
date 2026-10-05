@@ -2565,7 +2565,7 @@ namespace dvb
 			"pitch/yaw are native free-camera angles in radians on both runtimes, writing "
 			"FreeCameraState::rotation directly; yaw increases clockwise from +Y (north) and the view "
 			"direction is (sin yaw, cos yaw) at pitch 0, the same sense as a reference's heading in "
-			"inspect refs rotation[2] (observed on SE 1.6.1170; VR and AE unchecked). Completes its field writes before "
+			"inspect refs rotation[2] (observed on AE 1.7.104; VR 1.4.15 unchecked). Completes its field writes before "
 			"return, so allow a rendered frame before capture. "
 			"While devbench owns the free camera, get reports camPitch/camYaw as exactly those native "
 			"angles (camAngles='freeCameraState'); otherwise they are generic XYZ Euler angles of the "
