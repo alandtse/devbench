@@ -1639,6 +1639,8 @@ namespace dvb
 						InspectLogic::OrderScene(entries);
 						json out = json::array();
 						for (const auto& e : entries) {
+							if (out.size() >= limit)
+								break;
 							if (!budget.Emit())
 								break;
 							const RE::NiLight* light = lights[e.index];
@@ -1646,8 +1648,6 @@ namespace dvb
 							j["distance"] = e.distance ? json(*e.distance) : json(nullptr);
 							j["owner"] = IdentifyRef(OwnerOf(light, budget));
 							out.push_back(std::move(j));
-							if (out.size() >= limit)
-								break;
 						}
 						const bool limited = entries.size() > out.size();
 						json       coverage = LightsCoverage(budget);
@@ -1678,8 +1678,8 @@ namespace dvb
 					if (!ref)
 						throw ToolError(404, "inspect lights: reference not found");
 
-					// One budget and one visited set for the whole read, so the first- and third-person
-					// graphs, shared children and the hand lights are all counted once.
+					// One budget for the whole read. The visited set dedupes only the first- and third-person
+					// graphs and their shared children.
 					InspectLogic::TraversalBudget             budget(kLightNodeBudget, kLightParentStepBudget, limit);
 					std::unordered_set<const RE::NiAVObject*> visited;
 					json                                      out{ { "scope", "ref" }, { "ref", IdentifyRef(ref) }, { "observation", kLightObservation }, { "sceneActiveLights", active.size() } };
@@ -3191,8 +3191,9 @@ namespace dvb
 			"(\"postLoadGame\"/\"saveGame\"/\"newGame\"/\"preLoadGame\"/\"dataLoaded\"/\"deleteGame\", or "
 			"\"menuOpened\"/\"menuClosed\" with a \"name\"), or {\"topic\":\"…\",\"match\":{…}}; "
 			"{\"waitUntil\":\"playerLoaded\"|\"noModal\"|\"noMenu\"|\"noBlockingMenu\"|\"weaponDrawn\"|"
-			"\"castingArtLeft\"|\"castingArtRight\"|\"handsReady\"} poll live state (handsReady: weapon drawn "
-			"and every hand holding a spell shows its casting art — wait on it after EquipSpell + DrawWeapon "
+			"\"castingArtLeft\"|\"castingArtRight\"|\"handsReady\"} poll live state (handsReady: weapon settled drawn "
+			"and every spell hand finished its art attach sequence; not proof a rendered frame shows the art — "
+			"wait on it after EquipSpell + DrawWeapon "
 			"before a capture). "
 			"PREFER waitFor over a fixed wait — e.g. wait for postLoadGame to know a load truly "
 			"finished. Optional: repeat (≤1000), continueOnError, async. By default action='run' "
