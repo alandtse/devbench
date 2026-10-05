@@ -19,8 +19,13 @@ const REGISTRATION_FILES = [
   "src/Capture.cpp",
   "src/HostApi.cpp",
   "src/KeyboardInput.cpp",
-  "src/ToolRegistry.h",
 ];
+// Not every edit to this header changes what tools advertise: only its descriptor
+// shape and default schema reach tools/list, so it counts only when a changed code
+// line (comments excluded) mentions one of those.
+const DESCRIPTOR_FILE = "src/ToolRegistry.h";
+const DESCRIPTOR_TOKENS =
+  /\b(DefaultInputSchema|ToolDescriptor|inputSchema|readOnly)\b/;
 const FALLBACK_FILE = "bridge/src/tools-fallback.json";
 
 // Structural validation, independent of whether a registration file changed --
@@ -62,12 +67,31 @@ const changed = execFileSync(
   .split("\n")
   .filter(Boolean);
 
-const registrationChanged = REGISTRATION_FILES.some((f) => changed.includes(f));
+function descriptorChanged() {
+  if (!changed.includes(DESCRIPTOR_FILE)) return false;
+  const diff = execFileSync(
+    "git",
+    ["diff", "-U0", `${baseRef}...HEAD`, "--", DESCRIPTOR_FILE],
+    { encoding: "utf-8" },
+  );
+  return diff
+    .split("\n")
+    .filter((l) => /^[+-](?![+-])/.test(l))
+    .map((l) => l.slice(1).trim())
+    .filter((l) => l && !l.startsWith("//") && !l.startsWith("/*"))
+    .some((l) => DESCRIPTOR_TOKENS.test(l));
+}
+
+const touchedRegistrationFiles = [
+  ...REGISTRATION_FILES.filter((f) => changed.includes(f)),
+  ...(descriptorChanged() ? [DESCRIPTOR_FILE] : []),
+];
+const registrationChanged = touchedRegistrationFiles.length > 0;
 const fallbackChanged = changed.includes(FALLBACK_FILE);
 
 if (registrationChanged && !fallbackChanged) {
   console.error(
-    `A devbench core-tool file changed (${REGISTRATION_FILES.filter((f) => changed.includes(f)).join(", ")}) ` +
+    `A devbench core-tool file changed (${touchedRegistrationFiles.join(", ")}) ` +
       `without ${FALLBACK_FILE}. Run 'node bridge/scripts/sync-tools-fallback.mjs' against a live devbench ` +
       "and commit the result.",
   );

@@ -1,5 +1,6 @@
 #include "FreeCamera.h"
 
+#include "CameraOrbit.h"
 #include "MainThread.h"
 #include "ToolRegistry.h"
 
@@ -212,9 +213,19 @@ namespace dvb::FreeCamera
 		return REL::Module::IsVR() ? IsOwnedVR() : IsOwnedFlat();
 	}
 
+	std::optional<Angles> OwnedAngles()
+	{
+		if (!IsOwned())
+			return std::nullopt;
+		const auto* state = GetFreeState(RE::PlayerCamera::GetSingleton());
+		return Angles{ state->rotation.x, state->rotation.y };
+	}
+
 	void SetEnabled(bool a_enabled, SessionToken a_session)
 	{
 		ValidateSession(a_session);
+		if (a_enabled)
+			CameraOrbit::End(CameraOrbit::EndReason::kFreeCamera);  // VR's free camera never leaves the third-person state
 		if (REL::Module::IsVR())
 			SetEnabledVR(a_enabled);
 		else

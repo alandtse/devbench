@@ -119,3 +119,90 @@ TEST_CASE("registration listener fires for tools added after wiring")
 	CHECK(seen == 1);
 	CHECK(lastName == "late");
 }
+
+namespace
+{
+	ToolDescriptor Declared(std::string a_name, json a_schema)
+	{
+		ToolDescriptor d = Desc(std::move(a_name));
+		d.inputSchema = std::move(a_schema);
+		return d;
+	}
+
+	const json kSchema = json{ { "type", "object" }, { "properties", { { "action", json::object() }, { "args", json::object() } } } };
+
+	auto EmptyHandler()
+	{
+		return [](const json&, const ToolContext&) { return json::object(); };
+	}
+}
+
+TEST_CASE("an unknown top-level key is reported in the reply's warnings")
+{
+	ToolRegistry reg;
+	reg.Register(Declared("t", kSchema), EmptyHandler());
+
+	const ToolResult r = reg.Invoke("t", json{ { "action", "go" }, { "params", json::object() } }, ToolContext{});
+	CHECK(r.ok);
+	CHECK(r.value.contains("warnings"));
+	CHECK(r.value["warnings"].size() == 1);
+	const std::string w = r.value["warnings"][0];
+	CHECK(w.find("params") != std::string::npos);
+	CHECK(w.find("action, args") != std::string::npos);  // names the accepted keys
+}
+
+TEST_CASE("declared keys produce no warning")
+{
+	ToolRegistry reg;
+	reg.Register(Declared("t", kSchema), EmptyHandler());
+
+	const ToolResult r = reg.Invoke("t", json{ { "action", "go" }, { "args", json::object() } }, ToolContext{});
+	CHECK(r.ok);
+	CHECK(!r.value.contains("warnings"));
+}
+
+TEST_CASE("schemas that do not enumerate their keys are never checked")
+{
+	ToolRegistry reg;
+	reg.Register(Desc("schemaless"), EmptyHandler());
+	reg.Register(Declared("open", json{ { "type", "object" }, { "properties", { { "a", json::object() } } }, { "additionalProperties", true } }),
+		EmptyHandler());
+	reg.Register(Declared("composed", json{ { "type", "object" }, { "properties", { { "a", json::object() } } }, { "oneOf", json::array() } }),
+		EmptyHandler());
+
+	for (const char* name : { "schemaless", "open", "composed" }) {
+		const ToolResult r = reg.Invoke(name, json{ { "anything", 1 } }, ToolContext{});
+		CHECK(r.ok);
+		CHECK(!r.value.contains("warnings"));
+	}
+}
+
+TEST_CASE("a warning is appended to a handler's own warnings array")
+{
+	ToolRegistry reg;
+	reg.Register(Declared("t", kSchema), [](const json&, const ToolContext&) { return json{ { "warnings", json::array({ "own" }) } }; });
+
+	const ToolResult r = reg.Invoke("t", json{ { "extra", 1 } }, ToolContext{});
+	CHECK(r.value["warnings"].size() == 2);
+	CHECK(r.value["warnings"][0] == "own");
+}
+
+TEST_CASE("strict mode rejects an unknown key with 400 and does not run the handler")
+{
+	ToolRegistry reg;
+	bool         ran = false;
+	reg.Register(Declared("t", kSchema), [&](const json&, const ToolContext&) {
+		ran = true;
+		return json::object();
+	});
+	reg.SetStrictArgs(true);
+
+	const ToolResult r = reg.Invoke("t", json{ { "params", 1 } }, ToolContext{});
+	CHECK(!r.ok);
+	CHECK(r.errorCode == 400);
+	CHECK(!ran);
+
+	ToolContext internal;
+	internal.internal = true;  // scenario/replay steps are never rejected
+	CHECK(reg.Invoke("t", json{ { "params", 1 } }, internal).ok);
+}

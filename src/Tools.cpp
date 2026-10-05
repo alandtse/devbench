@@ -1,4 +1,7 @@
 #include "Tools.h"
+#include "CameraFrameLogic.h"
+#include "CameraOrbit.h"
+#include <RE/T/ThirdPersonState.h>
 
 #include "Capture.h"
 #include "ConsoleLogCapture.h"
@@ -34,6 +37,26 @@
 
 namespace dvb
 {
+	namespace
+	{
+		// Main thread. What the orbit was asked for and whether it has applied yet (it applies on the next
+		// third-person camera update).
+		json OrbitJson()
+		{
+			const auto&     s = CameraOrbit::State();
+			const auto&     r = s.Requested();
+			constexpr float kRad = 180.0f / 3.14159265f;
+			json            requested = nullptr;
+			if (s.On())
+				requested = json{ { "yawDeg", r.yawRad * kRad },
+					{ "pitchDeg", r.pitchRad ? json(*r.pitchRad * kRad) : json(nullptr) },
+					{ "zoom", r.zoom ? json(*r.zoom) : json(nullptr) },
+					{ "right", r.offset ? json(r.offset->x) : json(nullptr) },
+					{ "up", r.offset ? json(r.offset->z) : json(nullptr) } };
+			return json{ { "on", s.On() }, { "applied", s.Applied() }, { "requested", requested },
+				{ "lastEnd", CameraOrbit::EndReasonName(s.LastEnd()) }, { "session", s.Session() }, { "revision", s.Revision() } };
+		}
+	}
 	namespace
 	{
 		bool Truthy(const json& a_v)
@@ -104,8 +127,14 @@ namespace dvb
 			const std::string action = a_args.value("action", std::string("exec"));
 
 			if (action == "read") {
-				return MainThread::RunAndWait([]() -> json {
-					const auto r = ConsoleLogCapture::ReadFenced(200);
+				std::int64_t maxLines = 200;
+				try {
+					maxLines = ParseBoundedIntegerArgument(a_args, "maxLines", 200, 1, static_cast<std::int64_t>(ConsoleLogCapture::PrintCollector::kMaxLines));
+				} catch (const std::invalid_argument&) {
+					throw ToolError(400, std::format("console read: 'maxLines' must be an integer 1..{}", ConsoleLogCapture::PrintCollector::kMaxLines));
+				}
+				return MainThread::RunAndWait([maxLines]() -> json {
+					const auto r = ConsoleLogCapture::ReadFenced(static_cast<std::size_t>(maxLines));
 					json       arr = json::array();
 					for (const auto& l : r.lines)
 						arr.push_back(l);
@@ -127,6 +156,10 @@ namespace dvb
 									  { "consoleMenuExists", r.consoleMenuExists },
 									  { "consoleMenuOpen", r.consoleMenuOpen },
 									  { "consoleMode", r.consoleMode },
+									  { "printHooked", r.printHooked },
+									  { "printLines", r.printLines },
+									  { "printBytes", r.printBytes },
+									  { "printDropped", r.printDropped },
 									  { "ringLines", r.ringLines },
 									  { "samples", r.samples },
 									  { "ticks", r.ticks },
@@ -797,6 +830,31 @@ namespace dvb
 			return j;
 		}
 
+		// Resolve a form argument: an explicit 0x.. FormID, else an EditorID (tried first so an all-hex
+		// EditorID isn't misread as a FormID), else a bare hex FormID. The hex must be the whole string
+		// and fit 32 bits, so "14G" or an overflow can't truncate to a valid FormID and resolve the
+		// wrong form. Shared by 'inspect refs' formId and 'camera frame'.
+		RE::TESForm* LookupFormArg(const std::string& a_arg)
+		{
+			auto byHex = [](const std::string& s) -> RE::TESForm* {
+				std::size_t        consumed = 0;
+				unsigned long long id = 0;
+				try {
+					id = std::stoull(s, &consumed, 16);
+				} catch (...) {
+					return nullptr;
+				}
+				if (consumed != s.size() || id > 0xFFFFFFFFull)
+					return nullptr;
+				return RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
+			};
+			if (a_arg.size() > 2 && a_arg[0] == '0' && (a_arg[1] == 'x' || a_arg[1] == 'X'))
+				return byHex(a_arg.substr(2));
+			if (auto* f = RE::TESForm::LookupByEditorID(a_arg))
+				return f;
+			return byHex(a_arg);
+		}
+
 		// Identify a placed reference — the form's identity plus its base object and position.
 		// Actors get a live combat snapshot (health, level, hostility) so 'refs formType=Actor'
 		// is an actual check on the NPCs in the scene, not just their names.
@@ -805,6 +863,11 @@ namespace dvb
 			if (!a_ref)
 				return nullptr;
 			json j = IdentifyForm(a_ref);
+			if (!j.contains("name")) {
+				if (auto* actor = a_ref->As<RE::Actor>())
+					if (const char* n = actor->GetDisplayFullName(); n && *n)
+						j["name"] = n;
+			}
 			if (auto* base = a_ref->GetBaseObject()) {
 				j["base"] = IdentifyForm(base);
 				if (auto* model = base->As<RE::TESModel>(); model && model->GetModel() && *model->GetModel())
@@ -826,7 +889,7 @@ namespace dvb
 			}
 
 			if (auto* actor = a_ref->As<RE::Actor>()) {
-				json a{ { "level", actor->GetLevel() } };
+				json a{ { "level", actor->GetLevel() }, { "alive", !actor->IsDead() }, { "loaded3D", actor->Is3DLoaded() } };
 				if (auto* avo = actor->AsActorValueOwner()) {
 					a["health"] = avo->GetActorValue(RE::ActorValue::kHealth);
 					a["healthMax"] = avo->GetPermanentActorValue(RE::ActorValue::kHealth);
@@ -1273,28 +1336,8 @@ namespace dvb
 					};
 
 					if (!formId.empty()) {
-						// Explicit 0x.. → FormID; otherwise EditorID first (so an all-hex EditorID
-						// isn't misread as a FormID), then a bare hex FormID fallback.
-						// Whole-string + 32-bit-range hex, so "14G" / overflow don't truncate to a
-						// valid FormID and resolve the wrong form.
-						auto byHex = [](const std::string& s) -> RE::TESForm* {
-							std::size_t        consumed = 0;
-							unsigned long long id = 0;
-							try {
-								id = std::stoull(s, &consumed, 16);
-							} catch (...) {
-								return nullptr;
-							}
-							if (consumed != s.size() || id > 0xFFFFFFFFull)
-								return nullptr;
-							return RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
-						};
-						RE::TESForm* f = nullptr;
-						if (formId.size() > 2 && formId[0] == '0' && (formId[1] == 'x' || formId[1] == 'X'))
-							f = byHex(formId.substr(2));
-						else if (f = RE::TESForm::LookupByEditorID(formId); !f)
-							f = byHex(formId);
-						json one = (f && f->As<RE::TESObjectREFR>()) ? IdentifyRef(f->As<RE::TESObjectREFR>()) : IdentifyForm(f);
+						RE::TESForm* f = LookupFormArg(formId);
+						json         one = (f && f->As<RE::TESObjectREFR>()) ? IdentifyRef(f->As<RE::TESObjectREFR>()) : IdentifyForm(f);
 						return json{ { "count", f ? 1 : 0 }, { "refs", f ? json::array({ one }) : json::array() } };
 					}
 
@@ -1433,6 +1476,21 @@ namespace dvb
 						{ "freeCamOwned", FreeCamera::IsOwned() },
 						{ "stateId", cam->currentState ? json(static_cast<std::uint32_t>(cam->currentState->id)) : json(nullptr) },
 						{ "freeCamBackend", REL::Module::IsVR() ? "vr-state" : "engine" } };
+					if (cam->IsInThirdPerson() && !REL::Module::IsVR()) {  // VR's ThirdPersonState layout is not mapped
+						if (auto* tps = static_cast<RE::ThirdPersonState*>(cam->currentState.get())) {
+							out["thirdPersonState"] = json{
+								{ "targetYaw", tps->targetYaw },
+								{ "currentYaw", tps->currentYaw },
+								{ "targetZoomOffset", tps->targetZoomOffset },
+								{ "currentZoomOffset", tps->currentZoomOffset },
+								{ "posOffsetExpected", json::array({ tps->posOffsetExpected.x, tps->posOffsetExpected.y, tps->posOffsetExpected.z }) },
+								{ "posOffsetActual", json::array({ tps->posOffsetActual.x, tps->posOffsetActual.y, tps->posOffsetActual.z }) },
+								{ "freeRotation", json::array({ tps->freeRotation.x, tps->freeRotation.y }) },
+								{ "freeRotationEnabled", tps->freeRotationEnabled },
+							};
+						}
+					}
+					out["orbit"] = OrbitJson();
 					if (cam->cameraRoot) {
 						const auto& t = cam->cameraRoot->world.translate;
 						out["camX"] = t.x;
@@ -1441,7 +1499,13 @@ namespace dvb
 						if (RE::NiPoint3 e; cam->cameraRoot->world.rotate.ToEulerAnglesXYZ(e)) {
 							out["camPitch"] = e.x;
 							out["camYaw"] = e.z;
+							out["camAngles"] = "worldEuler";
 						}
+					}
+					if (const auto native = FreeCamera::OwnedAngles()) {
+						out["camPitch"] = native->pitch;
+						out["camYaw"] = native->yaw;
+						out["camAngles"] = "freeCameraState";
 					}
 					return out;
 				});
@@ -1452,8 +1516,9 @@ namespace dvb
 				const bool on = a_args.value("on", true);
 				const auto session = FreeCamera::CurrentSession();
 				return MainThread::RunAndWait([on, session]() {
+					const bool orbitEnded = on && CameraOrbit::State().On();
 					FreeCamera::SetEnabled(on, session);
-					return json{ { "queued", false }, { "action", "freecam" }, { "on", on }, { "freeCam", on } };
+					return json{ { "queued", false }, { "action", "freecam" }, { "on", on }, { "freeCam", on }, { "orbitEnded", orbitEnded } };
 				});
 			}
 
@@ -1472,8 +1537,125 @@ namespace dvb
 				});
 			}
 
+			if (action == "frame") {
+				const std::string target = a_args.value("formId", std::string{});
+				if (target.empty())
+					throw ToolError(400, "camera frame requires 'formId' (FormID, EditorID or bare hex FormID of a placed reference)");
+				const std::string sideName = a_args.value("side", std::string("front"));
+				const auto        side = CameraFrame::ParseSide(sideName);
+				if (!side)
+					throw ToolError(400, "camera frame 'side' must be front | back | left | right | top | bottom");
+				auto number = [&](const char* a_key) -> std::optional<double> {
+					if (!a_args.contains(a_key))
+						return std::nullopt;
+					if (!a_args[a_key].is_number() || !std::isfinite(a_args[a_key].get<double>()))
+						throw ToolError(400, std::format("camera frame '{}' must be a finite number", a_key));
+					return a_args[a_key].get<double>();
+				};
+				CameraFrame::Options opts;
+				opts.side = *side;
+				if (const auto v = number("aroundDeg"))
+					opts.aroundRad = *v * CameraFrame::kDegToRad;
+				if (const auto v = number("distance"))
+					opts.distance = *v;
+				if (const auto v = number("distanceScale"))
+					opts.distanceScale = *v;
+				if (const auto v = number("eyeHeight"))
+					opts.eyeFraction = *v;
+				if (const auto v = number("pitchDeg"))
+					opts.pitchRad = *v * CameraFrame::kDegToRad;
+				if (const auto problem = CameraFrame::Validate(opts))
+					throw ToolError(400, std::format("camera frame {}", *problem));
+				const auto session = FreeCamera::CurrentSession();
+				return MainThread::RunAndWait([target, sideName, opts, session]() -> json {
+					auto* form = LookupFormArg(target);
+					auto* ref = form ? form->As<RE::TESObjectREFR>() : nullptr;
+					if (!ref)
+						throw ToolError(404, std::format("camera frame: '{}' is not a placed reference", target));
+					const auto          position = ref->GetPosition();
+					const auto          boundMin = ref->GetBoundMin();
+					const auto          boundMax = ref->GetBoundMax();
+					CameraFrame::Target place;
+					place.x = position.x;
+					place.y = position.y;
+					place.z = position.z;
+					place.heading = ref->GetAngle().z;
+					place.boundMinZ = boundMin.z;
+					place.boundMaxZ = boundMax.z;
+					const CameraFrame::Pose pose = CameraFrame::Frame(place, opts);
+					FreeCamera::Drive(static_cast<float>(pose.x), static_cast<float>(pose.y), static_cast<float>(pose.z),
+						static_cast<float>(pose.pitch), static_cast<float>(pose.yaw), session);
+					return json{
+						{ "queued", false },
+						{ "action", "frame" },
+						{ "side", sideName },
+						{ "target", IdentifyForm(ref) },
+						{ "pose", json{ { "x", pose.x }, { "y", pose.y }, { "z", pose.z }, { "pitch", pose.pitch }, { "yaw", pose.yaw } } },
+					};
+				});
+			}
+
+			// orbit: hold the gameplay third-person camera round the player. yawDeg 0 is behind, 180 in front; pitchDeg tilts
+			// (positive looks down; omitted leaves the tilt); zoom is the game's zoom offset in [-1, 1] (omitted keeps it);
+			// right / up offset the camera (omitted keeps the game's own). No free camera is involved, so gameplay input still
+			// reaches the player. on=false hands the camera back.
+			if (action == "orbit") {
+				if (a_args.contains("on") && !a_args["on"].is_boolean())
+					throw ToolError(400, "camera orbit 'on' must be a boolean");
+				const bool on = a_args.value("on", true);
+				if (!on) {
+					return MainThread::RunAndWait([]() -> json {
+						const bool wasOn = CameraOrbit::End(CameraOrbit::EndReason::kRequested);
+						return json{ { "action", "orbit" }, { "on", false }, { "wasOn", wasOn }, { "orbit", OrbitJson() } };
+					});
+				}
+				for (const char* key : { "yawDeg", "pitchDeg", "zoom", "right", "up" })
+					if (a_args.contains(key) && !a_args[key].is_number())
+						throw ToolError(400, std::format("camera orbit '{}' must be a number", key));
+				const float yaw = a_args.value("yawDeg", 180.0f);
+				const float pitch = a_args.value("pitchDeg", 0.0f);
+				const float zoom = a_args.value("zoom", 0.0f);
+				const float right = a_args.value("right", 0.0f), up = a_args.value("up", 0.0f);
+				if (!std::isfinite(yaw) || !std::isfinite(pitch) || !std::isfinite(zoom) || !std::isfinite(right) || !std::isfinite(up))
+					throw ToolError(400, "camera orbit requires finite yawDeg / pitchDeg / zoom / right / up");
+				if (zoom < -1.0f || zoom > 1.0f)
+					throw ToolError(400, "camera orbit 'zoom' must be within [-1, 1]");
+				if (pitch < -89.0f || pitch > 89.0f)
+					throw ToolError(400, "camera orbit 'pitchDeg' must be within [-89, 89]");
+				constexpr float      kDeg = 3.14159265f / 180.0f;
+				CameraOrbit::Request request;
+				request.yawRad = yaw * kDeg;
+				if (a_args.contains("pitchDeg"))
+					request.pitchRad = pitch * kDeg;
+				if (a_args.contains("zoom"))
+					request.zoom = zoom;
+				if (a_args.contains("right") || a_args.contains("up"))
+					request.offset = CameraOrbit::Vec3{ right, 0.0f, up };
+				const auto session = CameraOrbit::CurrentSession();
+				return MainThread::RunAndWait([request, session]() -> json {
+					auto* cam = RE::PlayerCamera::GetSingleton();
+					if (!cam)
+						throw ToolError(500, "PlayerCamera unavailable");
+					switch (CameraOrbit::Enable(request, session)) {
+					case CameraOrbit::Admission::kStaleSession:
+						throw ToolError(409, "camera orbit was requested before a load or new game; request it again");
+					case CameraOrbit::Admission::kLoading:
+						throw ToolError(409, "camera orbit is unavailable while the game is loading");
+					case CameraOrbit::Admission::kFreeCamera:
+						throw ToolError(409, "camera orbit holds the third-person camera; leave the free camera first");
+					case CameraOrbit::Admission::kUnsupportedRuntime:
+						throw ToolError(501, "camera orbit is not available on VR yet");
+					default:
+						break;
+					}
+					if (!cam->IsInThirdPerson())
+						cam->ForceThirdPerson();
+					return json{ { "action", "orbit" }, { "on", true }, { "thirdPerson", cam->IsInThirdPerson() }, { "orbit", OrbitJson() } };
+				});
+			}
+
 			if (action != "setPov")
-				throw ToolError(400, std::format("unknown action '{}' (get|setPov|freecam|drive)", action));
+				throw ToolError(400, std::format("unknown action '{}' (get|setPov|freecam|drive|orbit)", action));
 
 			const std::string pov = a_args.value("pov", std::string{});
 			if (pov != "first" && pov != "third" && pov != "vanity")
@@ -1484,6 +1666,7 @@ namespace dvb
 				auto* cam = RE::PlayerCamera::GetSingleton();
 				if (!cam)
 					throw ToolError(500, "PlayerCamera unavailable");
+				const bool orbitEnded = CameraOrbit::End(CameraOrbit::EndReason::kPov);
 				if (pov == "first")
 					cam->ForceFirstPerson();
 				else if (pov == "third")
@@ -1497,7 +1680,7 @@ namespace dvb
 					applied = "third";
 				else if (cam->currentState && cam->currentState->id == RE::CameraState::kAutoVanity)
 					applied = "vanity";
-				return json{ { "action", "setPov" }, { "requestedPov", pov }, { "pov", applied } };
+				return json{ { "action", "setPov" }, { "requestedPov", pov }, { "pov", applied }, { "orbitEnded", orbitEnded } };
 			});
 		}
 
@@ -2280,10 +2463,13 @@ namespace dvb
 				"'refs' → identify reference(s) sharing one shape { formId, formType, name, "
 				"editorId, base, position, rotation, cell, model, bounds } — 'model' is the base "
 				"object's mesh (.nif) path when it has one; 'bounds' is { min, max } local extents "
-				"for framing a shot; pass 'formId' for one form, 'selected'=true for the "
+				"for framing a shot; an actor ref also carries actor { level, health, healthMax, "
+				"hostileToPlayer, playerTeammate, alive, loaded3D } and, when the ref has no name, its "
+				"display name; pass 'formId' for one form, 'selected'=true for the "
 				"console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid "
-				"(optional 'formType' filter, 'model' substring filter against the mesh path, "
-				"'radius' from player, 'limit' default 100). "
+				"(optional 'formType' filter, 'model' substring filter against the base object's mesh path, "
+				"'radius' from player, 'limit' default 100); 'model' matches statics and furniture — "
+				"actors normally have no base mesh, so list NPCs with 'formType'=Actor. "
 				"'registrants' → who has requested the C-ABI interface and what they registered "
 				"through it { consumers:[{name,atEpoch,atFrame}], registrations:[{kind,name,atEpoch,"
 				"atFrame,replaced}], capabilities:{capture,inspect,menu → [registered keys]} } — "
@@ -2308,7 +2494,7 @@ namespace dvb
 									{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form; inventory: the container ref to read (default player); effects: the actor to read (default player) (hex formId, e.g. 0x14, or EditorID)" } } },
 									{ "selected", json{ { "type", "boolean" }, { "description", "refs: identify the console-selected / crosshair ref instead" } } },
 									{ "formType", json{ { "type", "string" }, { "description", "refs/inventory: keep only entries whose type matches (e.g. Actor, Weapon, Potion)" } } },
-									{ "model", json{ { "type", "string" }, { "description", "refs enumerate: keep only refs whose base object's mesh path contains this substring (case-insensitive, e.g. 'wrcity01')" } } },
+									{ "model", json{ { "type", "string" }, { "description", "refs enumerate: keep only refs whose base object's mesh path contains this substring (case-insensitive, e.g. 'wrcity01'); matches statics and furniture, not actors" } } },
 									{ "radius", json{ { "type", "number" }, { "description", "refs enumerate: only refs within this distance of the player (0 = whole loaded grid)" } } },
 									{ "limit", json{ { "type", "integer" }, { "description", "refs/inventory: max entries to return (default 100)" } } },
 								} },
@@ -2357,11 +2543,15 @@ namespace dvb
 			"Run a Skyrim console command. action='exec' (default) queues `command` onto the main "
 			"thread (runs next tick). With capture=true it is fenced between marker commands and exec "
 			"returns once the output has landed, so a following action='read' returns the command's "
-			"output as { markersFound, lines:[...], source, lossPossible }. source='buffer' is complete, "
-			"including several lines printed in one frame (e.g. `help`). source='sampler' is used once "
-			"the Console menu has been created, when the game stops filling that buffer: it sees one "
-			"line per frame, so a command that prints SEVERAL lines in a frame keeps only the last "
-			"(lossPossible=true); getav, getgs and getpos are exact. A second capture while one is "
+			"output as { markersFound, lines:[...], source, lossPossible }. source='print' (the normal "
+			"case) comes from a hook on the console's print function and holds EVERY line printed "
+			"between the markers, from the game or any plugin, whether or not the Console menu exists "
+			"(lossPossible only past 20000 lines or 4 MiB, counted in diag.printDropped). The fallbacks, used only when that hook could not "
+			"be installed (diag.printHooked=false): source='buffer' is complete, including several "
+			"lines printed in one frame (e.g. `help`); source='sampler' is used once the Console menu "
+			"has been created, when the game stops filling that buffer: it sees one line per frame, so "
+			"a command that prints SEVERAL lines in a frame keeps only the last (lossPossible=true). "
+			"read returns the most recent 'maxLines' lines (default 200). A second capture while one is "
 			"running gets 409. exec then returns { queued:false, completed }, completed=false meaning "
 			"the end marker never arrived and `lines` may be incomplete; a capture that never sees its "
 			"begin marker gets 504 and the command is not run. "
@@ -2374,6 +2564,7 @@ namespace dvb
 								{ "action", json{ { "type", "string" }, { "enum", json::array({ "exec", "read" }) }, { "description", "'exec' (default) runs `command`; 'read' returns the fenced output and closes the window" } } },
 								{ "command", json{ { "type", "string" }, { "description", "the console command, exactly as typed after ~ (required for exec)" } } },
 								{ "capture", json{ { "type", "boolean" }, { "description", "exec: fence and capture this command's output for the next read" } } },
+								{ "maxLines", json{ { "type", "integer" }, { "description", "read: most recent lines to return (default 200, max 20000)" } } },
 							} },
 		};
 		a_registry.Register(std::move(console), &ConsoleHandler);
@@ -2428,7 +2619,8 @@ namespace dvb
 		camera.name = "camera";
 		camera.description =
 			"Read or set the player camera. action='get' (default) returns { pov, freeCam, camX, "
-			"camY, camZ, camPitch, camYaw, stateId, freeCamBackend, freeCamOwned } read live on the main thread, where pov is first | "
+			"camY, camZ, camPitch, camYaw, camAngles, stateId, freeCamBackend, freeCamOwned, orbit } (plus thirdPersonState: heading, zoom "
+			"and offsets, while in third person) read live on the main thread, where pov is first | "
 			"third | vanity | other. stateId is the runtime-specific CameraState value; interpret it "
 			"with freeCamBackend. action='setPov' applies a switch (param 'pov': first | third "
 			"| vanity) on the main thread and returns { pov: <applied>, requestedPov } read back "
@@ -2443,8 +2635,22 @@ namespace dvb
 			"action='drive' (params 'x','y','z','pitch','yaw', all default 0) "
 			"sets the free camera's world transform — requires free-cam mode already on. "
 			"pitch/yaw are native free-camera angles in radians on both runtimes, writing "
-			"FreeCameraState::rotation directly; completes its field writes before return, so allow "
-			"a rendered frame before capture. "
+			"FreeCameraState::rotation directly; yaw increases clockwise from +Y (north) and the view "
+			"direction is (sin yaw, cos yaw) at pitch 0, the same sense as a reference's heading in "
+			"inspect refs rotation[2] (observed on AE 1.7.104 and VR 1.4.15; VR reports a negative yaw as the equivalent angle plus 2 pi). Completes its field writes before "
+			"return, so allow a rendered frame before capture. "
+			"While devbench owns the free camera, get reports camPitch/camYaw as exactly those native "
+			"angles (camAngles='freeCameraState'); otherwise they are generic XYZ Euler angles of the "
+			"camera's world rotation (camAngles='worldEuler'), which can differ in sign and branch "
+			"from the direction the camera renders and should not be used to verify a pose. "
+			"action='orbit' (params yawDeg default 180, pitchDeg, zoom, right, up; on=false stops) holds the gameplay "
+			"third-person camera round the player on every camera update, with the player's facing held for the orbit - no "
+			"free camera, so gameplay input keeps reaching the player (a held mouseLeft keeps charging a spell, for example). "
+			"It is refused (409) while the free camera is on, during a load, or when requested before a load / new game. "
+			"It ends - writing back the heading, tilt, zoom and offsets it overwrote - on on=false, when the camera leaves "
+			"third person (any POV switch), on freecam on or setPov (both answer orbitEnded), and is dropped without "
+			"restoring on load / new game. get reports orbit { on, applied, requested, lastEnd, session, revision }. "
+			"Not available on VR yet (501). "
 			"enable, disable, and drive all reject an active free camera owned elsewhere; "
 			"freeCamOwned reports devbench's own ownership. "
 			"On VR, after failed pre-load restoration, freecam off retries recovery using the "
@@ -2455,18 +2661,37 @@ namespace dvb
 			"record{action:'replay'} drives it exactly via this tool's freecam+drive instead of "
 			"setPov, since head-look is a degree of freedom setpos+setPov can't reproduce, on "
 			"either runtime. Devbench's own replay always owns and releases the free camera itself "
-			"for that duration.";
+			"for that duration. "
+			"action='frame' (param 'formId' of a placed reference; optional 'side' front (default) | back | left | right | top | "
+			"bottom, 'aroundDeg', 'distance', 'distanceScale', 'eyeHeight', 'pitchDeg') drives the free camera, which must already "
+			"be on, to look at that reference from one side and returns { side, target, pose: { x, y, z, pitch, yaw } }. front, "
+			"back, left and right are relative to the reference's own heading (inspect refs rotation[2]) with right on its clockwise "
+			"side; top looks straight down with the image's up being its front, bottom straight up. The camera sits 1.4 x the "
+			"reference's height away (distanceScale scales that, distance sets units) at eyeHeight (default 0.85) of its height; "
+			"aroundDeg replaces the side's horizontal angle. Heading and bounds come from the reference, so it suits actors and "
+			"placed objects; one without bounds is framed as a 128-unit-tall target.";
 		camera.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "get", "setPov", "freecam", "drive" }) }, { "description", "get (default) | setPov | freecam | drive" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "get", "setPov", "freecam", "drive", "orbit", "frame" }) }, { "description", "get (default) | setPov | freecam | drive | orbit | frame" } } },
+								{ "yawDeg", json{ { "type", "number" }, { "description", "orbit: degrees round the player (0 behind, 180 in front; default 180)" } } },
+								{ "pitchDeg", json{ { "type", "number" }, { "minimum", -89 }, { "maximum", 89 }, { "description", "orbit: tilt in degrees, positive looks down (omit to leave it); frame: camera tilt, positive looks down (default 0; top and bottom use +-89)" } } },
+								{ "formId", json{ { "type", "string" }, { "description", "frame: the placed reference to look at (FormID, EditorID or bare hex FormID)" } } },
+								{ "side", json{ { "type", "string" }, { "enum", json::array({ "front", "back", "left", "right", "top", "bottom" }) }, { "description", "frame: which side to look from (default front); front/back/left/right are relative to the reference's heading" } } },
+								{ "aroundDeg", json{ { "type", "number" }, { "description", "frame: degrees clockwise from the reference's front, replacing the side's horizontal angle" } } },
+								{ "distance", json{ { "type", "number" }, { "exclusiveMinimum", 0 }, { "maximum", CameraFrame::kMaxDistance }, { "description", "frame: camera distance in world units (default 1.4 x the reference's height)" } } },
+								{ "distanceScale", json{ { "type", "number" }, { "exclusiveMinimum", 0 }, { "maximum", CameraFrame::kMaxDistanceScale }, { "description", "frame: multiplier on the default distance (default 1)" } } },
+								{ "eyeHeight", json{ { "type", "number" }, { "minimum", 0 }, { "maximum", CameraFrame::kMaxEyeFraction }, { "description", "frame: camera height as a fraction of the reference's height (default 0.85)" } } },
+								{ "zoom", json{ { "type", "number" }, { "minimum", -1 }, { "maximum", 1 }, { "description", "orbit: the game's third-person zoom offset (omit to keep it)" } } },
+								{ "right", json{ { "type", "number" }, { "description", "orbit: camera offset to the side in units (with up; omit both to keep the game's own)" } } },
+								{ "up", json{ { "type", "number" }, { "description", "orbit: camera offset up in units" } } },
 								{ "pov", json{ { "type", "string" }, { "enum", json::array({ "first", "third", "vanity" }) }, { "description", "setPov: target point of view" } } },
 								{ "on", json{ { "type", "boolean" }, { "description", "freecam: enable (default) or disable free-camera mode" } } },
 								{ "x", json{ { "type", "number" }, { "description", "drive: world X (requires free-cam mode)" } } },
 								{ "y", json{ { "type", "number" }, { "description", "drive: world Y (requires free-cam mode)" } } },
 								{ "z", json{ { "type", "number" }, { "description", "drive: world Z (requires free-cam mode)" } } },
 								{ "pitch", json{ { "type", "number" }, { "description", "drive: native free-cam pitch in radians (FreeCameraState::rotation.x)" } } },
-								{ "yaw", json{ { "type", "number" }, { "description", "drive: native free-cam yaw in radians (FreeCameraState::rotation.y)" } } },
+								{ "yaw", json{ { "type", "number" }, { "description", "drive: native free-cam yaw in radians (FreeCameraState::rotation.y), clockwise from +Y; 0 looks along +Y" } } },
 							} },
 		};
 		a_registry.Register(std::move(camera), &CameraHandler);

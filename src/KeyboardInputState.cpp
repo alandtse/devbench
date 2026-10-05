@@ -120,8 +120,7 @@ namespace dvb
 			KeyAlias{ 0xDB, "leftWindows", "lwin|leftWin" },
 			KeyAlias{ 0xDC, "rightWindows", "rwin|rightWin" },
 			KeyAlias{ 0xDD, "menu", "apps" },
-			// Mouse buttons: 0x100 + the engine's mouse button id (left 0, right 1, middle 2). They share the key lease
-			// table and are injected as INPUT_DEVICE::kMouse button events.
+			// Mouse buttons (see kMouseCodeBase). They share the key lease table and are injected as mouse button events.
 			KeyAlias{ 0x100, "mouseLeft", "mouse1|lmb|leftMouse|leftButton" },
 			KeyAlias{ 0x101, "mouseRight", "mouse2|rmb|rightMouse|rightButton" },
 			KeyAlias{ 0x102, "mouseMiddle", "mouse3|mmb|middleMouse|middleButton" },
@@ -172,7 +171,7 @@ namespace dvb
 
 	std::optional<KeyboardKey> ResolveKeyboardKey(int a_scancode)
 	{
-		if (a_scancode <= 0 || a_scancode > 0x102)
+		if (a_scancode <= 0 || a_scancode > kMouseCodeLast)
 			return std::nullopt;
 		for (const auto& entry : kAliases)
 			if (entry.scancode == a_scancode)
@@ -261,5 +260,28 @@ namespace dvb
 	std::vector<KeyboardLease> KeyboardLeaseTable::Snapshot() const
 	{
 		return m_leases;
+	}
+
+	EngineButton EngineButtonOf(std::uint16_t a_code)
+	{
+		if (a_code >= kMouseCodeBase)
+			return { EngineDevice::kMouse, static_cast<std::int32_t>(a_code - kMouseCodeBase) };
+		return { EngineDevice::kKeyboard, static_cast<std::int32_t>(a_code) };
+	}
+
+	const char* CodeDomainOf(std::uint16_t a_code)
+	{
+		return a_code >= kMouseCodeBase ? "mouseButton" : "directInputScanCode";
+	}
+
+	const char* EngineDeviceName(EngineDevice a_device)
+	{
+		return a_device == EngineDevice::kMouse ? "mouse" : "keyboard";
+	}
+
+	bool QueuedPressCovers(EngineButton a_queued, float a_value, std::uint16_t a_heldCode)
+	{
+		const auto held = EngineButtonOf(a_heldCode);
+		return a_value > 0.0F && a_queued.device == held.device && a_queued.id == held.id;
 	}
 }

@@ -68,6 +68,10 @@ namespace dvb
 		// covers a frozen main thread, which a `menu`/`lifecycle` event never can (those are
 		// published BY the main thread). 0 disables the watchdog.
 		int stallWatchdogMs = 5000;
+
+		// Fail a tool request carrying a top-level key its inputSchema doesn't declare (400) instead
+		// of only warning in the reply. Off by default: a tool with an incomplete schema would break.
+		bool strictToolArgs = false;
 	};
 
 	// Load Data/SKSE/Plugins/devbench/config.json. If the file is missing it is
