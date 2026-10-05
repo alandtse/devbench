@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <ctime>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <thread>
 
@@ -47,6 +48,76 @@ namespace dvb::Capture
 		std::string GenericPath(const fs::path& a_p)
 		{
 			return a_p.generic_string();  // forward slashes, per the provider contract
+		}
+
+		struct HandleCloser
+		{
+			void operator()(HANDLE a_handle) const noexcept
+			{
+				if (a_handle && a_handle != INVALID_HANDLE_VALUE)
+					CloseHandle(a_handle);
+			}
+		};
+		using UniqueHandle = std::unique_ptr<void, HandleCloser>;
+
+		// The final on-disk path behind a_p, as UTF-8 with forward slashes; empty when it cannot be resolved.
+		std::string RealPath(const fs::path& a_p)
+		{
+			UniqueHandle h(CreateFileW(a_p.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+				OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr));
+			if (!h || h.get() == INVALID_HANDLE_VALUE)
+				return {};
+			std::wstring buf(MAX_PATH, L'\0');
+			DWORD        n = GetFinalPathNameByHandleW(h.get(), buf.data(), static_cast<DWORD>(buf.size()), FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+			if (n >= buf.size()) {
+				buf.resize(n + 1);
+				n = GetFinalPathNameByHandleW(h.get(), buf.data(), static_cast<DWORD>(buf.size()), FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+			}
+			if (n == 0 || n >= buf.size())
+				return {};
+			buf.resize(n);
+			if (buf.starts_with(L"\\\\?\\UNC\\"))
+				buf = L"\\\\" + buf.substr(8);
+			else if (buf.starts_with(L"\\\\?\\"))
+				buf = buf.substr(4);
+			return Utf8(fs::path(buf).generic_wstring());
+		}
+
+		// Advisory only: never turns a capture that was written into a failure. The handle lookup is
+		// synchronous on arbitrary storage, so it runs only when the caller asks for it.
+		void AddPathInfo(json& a_result, const fs::path& a_p, bool a_resolve) noexcept
+		{
+			try {
+				const bool usvfs = GetModuleHandleW(L"usvfs_x64.dll") != nullptr;
+				a_result["usvfsLoaded"] = usvfs;
+				std::string real;
+				if (a_resolve) {
+					real = RealPath(a_p);
+					a_result["realPath"] = real.empty() ? json(nullptr) : json(real);
+				}
+				if (usvfs) {
+					std::error_code ec;
+					const fs::path  absolute = fs::absolute(a_p, ec);
+					if (real.empty() || real == Utf8(absolute.generic_wstring()))
+						a_result["pathNote"] =
+							"a usvfs module (Mod Organizer 2's virtual file system) is loaded in the game, so 'path' may be "
+							"a virtual Data path that lands elsewhere on disk (often MO2's overwrite folder)" +
+							std::string(a_resolve ? " and the handle did not reveal another place" : "; pass resolveRealPath:true to look it up") +
+							". Set captureDir (or outDir) outside the game folder for a path that is the same inside and outside the game.";
+				}
+			} catch (...) {
+				a_result["realPath"] = nullptr;
+				a_result["pathNote"] = "the capture was written; looking up where it really is on disk failed";
+			}
+		}
+
+		// Checked before any provider is chosen, so another failure never hides the corrective message.
+		void RejectMisnamedArgs(const json& a_args)
+		{
+			if (a_args.contains("id"))
+				throw ToolError(400, "capture: the file stem is 'checkpointId', not 'id'");
+			if (a_args.contains("deleteSource"))
+				throw ToolError(400, "capture: deleting the game's own screenshot is 'cleanup':true, not 'deleteSource'");
 		}
 
 		// recording/variant/checkpointId all become single path SEGMENTS under the capture
@@ -462,6 +533,7 @@ namespace dvb::Capture
 			result.update(sceneStamp);
 			ComputeInconclusive(result);
 			MaybeScoreAgainstGolden(result, a_args, dest);
+			AddPathInfo(result, dest, a_args.value("resolveRealPath", false));
 
 			WriteSidecar(dest, result);
 			PublishSaved(result);
@@ -555,6 +627,7 @@ namespace dvb::Capture
 			result.update(sceneStamp);
 			ComputeInconclusive(result);
 			MaybeScoreAgainstGolden(result, a_args, outputPath);
+			AddPathInfo(result, outputPath, a_args.value("resolveRealPath", false));
 
 			WriteSidecar(outputPath, result);
 			PublishSaved(result);
@@ -649,6 +722,8 @@ namespace dvb::Capture
 			return json{ { "extensions", std::move(out) } };
 		}
 
+		RejectMisnamedArgs(a_args);
+
 		// Past the discovery kinds a capture may actually run. It has to be taken at the speed its
 		// golden was, so a scaled game is refused rather than producing an incomparable image.
 		std::optional<Capturing> capturing;
@@ -707,7 +782,13 @@ namespace dvb::Capture
 			"directory poll — no path control, no completion signal beyond polling, format fixed by "
 			"the user's .ini, may include open UI) — NOT comparable against a provider-authored "
 			"golden image. kind='providers' lists registered provider keys; kind='extensions' lists "
-			"them with descriptors. Optional 'golden' compares the capture against a reference image "
+			"them with descriptors. The request names the file with 'checkpointId' (not 'id'); "
+			"'cleanup':true (native only; not 'deleteSource') deletes the game's own screenshot after "
+			"the copy. The result's 'path' is where the GAME sees the file. 'usvfsLoaded' says a usvfs "
+			"module (Mod Organizer 2's virtual file system) is loaded, so that path may land elsewhere "
+			"on disk; 'resolveRealPath':true adds 'realPath', the file handle's final path (advisory: a "
+			"failed lookup never fails the capture), and 'pathNote' explains when neither settles it "
+			"(set captureDir or outDir outside the game folder). Optional 'golden' compares the capture against a reference image "
 			"via SSIM and adds {ssim, threshold, passed} to the result (or 'regions' for independent "
 			"per-region scores, {name,ssim,threshold,passed} each, overall 'passed' is AND across "
 			"all — see record{action:'replay'}'s 'goldens' arg, the normal way this gets set for a "
@@ -735,6 +816,7 @@ namespace dvb::Capture
 								{ "pollMs", json{ { "type", "integer" }, { "description", "poll interval while waiting (default 100)" } } },
 								{ "subrect", json{ { "type", "object" }, { "description", "optional {x,y,w,h} in 0..1 UV — provider-only, native ignores it" } } },
 								{ "cleanup", json{ { "type", "boolean" }, { "description", "native only: delete the game's source screenshot after copying (default false)" } } },
+								{ "resolveRealPath", json{ { "type", "boolean" }, { "description", "also look up the written file's final on-disk path from its handle and add it as 'realPath' (advisory; default false)" } } },
 								{ "golden", json{ { "type", "string" }, { "description", "path to a reference image to SSIM-compare this capture against (absolute, or relative to the game root); adds {ssim,threshold,passed} to the result" } } },
 								{ "threshold", json{ { "type", "number" }, { "description", "golden: SSIM >= threshold passes (default 0.98)" } } },
 								{ "regions", json{ { "type", "array" }, { "description", "golden: optional [{name,x,y,w,h,threshold?}] in 0..1 UV — score independent regions instead of the whole frame; overall passed is AND across all" } } },

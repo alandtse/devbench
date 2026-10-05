@@ -59,6 +59,43 @@ namespace dvb::TimeScaleControl
 		return { true, static_cast<float>(a_scale), {} };
 	}
 
+	// Where one setTimeScale request stands. accepted: recorded, not yet handed to the engine;
+	// written: the engine was given (or already had) its value; reached: the engine's live multiplier
+	// is at it; expired: its lease ran out; displaced: a later request or a release replaced it.
+	enum class RequestState
+	{
+		kUnknown,
+		kAccepted,
+		kWritten,
+		kReached,
+		kExpired,
+		kDisplaced,
+	};
+
+	inline const char* RequestStateName(RequestState a_state)
+	{
+		switch (a_state) {
+		case RequestState::kAccepted:
+			return "accepted";
+		case RequestState::kWritten:
+			return "written";
+		case RequestState::kReached:
+			return "reached";
+		case RequestState::kExpired:
+			return "expired";
+		case RequestState::kDisplaced:
+			return "displaced";
+		default:
+			return "unknown";
+		}
+	}
+
+	inline bool IsTerminal(RequestState a_state)
+	{
+		return a_state == RequestState::kReached || a_state == RequestState::kExpired || a_state == RequestState::kDisplaced ||
+		       a_state == RequestState::kUnknown;
+	}
+
 	// Pure lease + reconcile state. Any thread may request; the main thread reconciles once per
 	// engine frame. Never re-issues a value the engine already has, so a ramp set in motion by an
 	// earlier write is not restarted.
@@ -71,7 +108,8 @@ namespace dvb::TimeScaleControl
 		// Reconciler ever sees also seeds m_applied from a_liveValue (the engine's actual
 		// multiplier), not the kNormalScale default — the engine may already be off-normal from
 		// an external console command before anyone ever called Set().
-		void Request(float a_value, std::string a_owner, std::int64_t a_expiresAtWallMs,
+		// Returns the request's generation, which RequestStateOf() reports on.
+		std::uint64_t Request(float a_value, std::string a_owner, std::int64_t a_expiresAtWallMs,
 			float a_liveValue = static_cast<float>(kNormalScale))
 		{
 			if (m_expiresAtWallMs == 0) {
@@ -84,6 +122,7 @@ namespace dvb::TimeScaleControl
 			m_requested = a_value;
 			m_owner = std::move(a_owner);
 			m_expiresAtWallMs = a_expiresAtWallMs;
+			return ++m_generation;
 		}
 
 		// Extends a lease only while a_owner still holds it, so an ad-hoc override that displaced a
@@ -103,6 +142,7 @@ namespace dvb::TimeScaleControl
 			m_expiresAtWallMs = 0;
 			m_owner.clear();
 			m_requested = m_restoreValue;
+			++m_generation;
 		}
 
 		// Makes the next Reconcile() actually write to the engine when a_live has drifted from
@@ -113,6 +153,9 @@ namespace dvb::TimeScaleControl
 		{
 			if (a_live != m_requested)
 				m_applied = a_live;
+			// Nothing left to write: the engine already runs at the request.
+			if (a_live == m_requested)
+				m_writtenGeneration = m_generation;
 		}
 
 		// The value the engine must be given now, or nullopt when nothing has to change.
@@ -122,12 +165,31 @@ namespace dvb::TimeScaleControl
 				m_expiresAtWallMs = 0;
 				m_owner.clear();
 				m_requested = m_restoreValue;
+				m_expiredGeneration = m_generation;
+				++m_generation;
 			}
+			m_writtenGeneration = m_generation;
 			if (m_requested == m_applied)
 				return std::nullopt;
 			m_applied = m_requested;
 			m_seeded = true;
 			return m_applied;
+		}
+
+		std::uint64_t Generation() const { return m_generation; }
+
+		// a_live is the engine's live multiplier. A generation that was never handed out is kUnknown.
+		RequestState RequestStateOf(std::uint64_t a_generation, float a_live) const
+		{
+			if (a_generation == 0 || a_generation > m_generation)
+				return RequestState::kUnknown;
+			if (a_generation == m_expiredGeneration)
+				return RequestState::kExpired;
+			if (a_generation != m_generation)
+				return RequestState::kDisplaced;
+			if (m_writtenGeneration < a_generation)
+				return RequestState::kAccepted;
+			return std::fabs(a_live - m_requested) <= kEffectiveTolerance ? RequestState::kReached : RequestState::kWritten;
 		}
 
 		float       Effective() const { return m_applied; }
@@ -145,20 +207,24 @@ namespace dvb::TimeScaleControl
 		}
 
 	private:
-		float        m_applied = static_cast<float>(kNormalScale);
-		float        m_requested = static_cast<float>(kNormalScale);
-		std::string  m_owner;
-		float        m_restoreValue = static_cast<float>(kNormalScale);
-		std::int64_t m_expiresAtWallMs = 0;
-		bool         m_seeded = false;
+		float         m_applied = static_cast<float>(kNormalScale);
+		float         m_requested = static_cast<float>(kNormalScale);
+		std::string   m_owner;
+		float         m_restoreValue = static_cast<float>(kNormalScale);
+		std::int64_t  m_expiresAtWallMs = 0;
+		bool          m_seeded = false;
+		std::uint64_t m_generation = 0;
+		std::uint64_t m_writtenGeneration = 0;
+		std::uint64_t m_expiredGeneration = 0;
 	};
 
 	// --- engine-facing (src/TimeScaleControl.cpp) ---
 
 	struct SetResult
 	{
-		bool        ok = false;
-		std::string error;
+		bool          ok = false;
+		std::string   error;
+		std::uint64_t generation = 0;  // this request, for RequestStatus()
 	};
 
 	// Shared serialization point for the moment recording start, capture start, and a
@@ -183,6 +249,12 @@ namespace dvb::TimeScaleControl
 
 	// { requested, effective, owner, leased, leaseRemainingMs }.
 	json Status();
+
+	// Where request a_generation stands now, read with the engine's live multiplier.
+	RequestState StateOf(std::uint64_t a_generation);
+
+	// One snapshot under the lock: Status() plus { generation, state } for a_generation.
+	json RequestStatus(std::uint64_t a_generation);
 
 	// A run's hold on the scale: set for the run's duration and restored when the scope ends, on
 	// any exit path. Logs every change the reconciler issues while it is open, so a run can report

@@ -68,18 +68,6 @@ namespace
 		return std::filesystem::path(buf) / "devbench" / (REL::Module::IsVR() ? "vr" : "se");
 	}
 
-	// std::filesystem::path::string() converts wide->narrow using the Windows ANSI code
-	// page, NOT UTF-8 — so a non-ASCII path (a CJK user profile, an accented install dir)
-	// produces bytes nlohmann::json rejects on insertion, throwing type_error.316. That
-	// throw is unrecoverable on the kPostLoad path: it escapes Start() into SKSE's
-	// dispatch and silently kills every later plugin's kPostLoad. u8string() is UTF-8 by
-	// definition, so copy it into a std::string for json.
-	std::string Utf8(const std::filesystem::path& a_path)
-	{
-		const std::u8string u8 = a_path.u8string();
-		return { reinterpret_cast<const char*>(u8.data()), u8.size() };
-	}
-
 	// Publish the actually-bound port so fixed-URL clients can discover a non-default
 	// choice (when auto-iteration moved off the configured port).
 	void WriteRuntimeInfo(int a_port)

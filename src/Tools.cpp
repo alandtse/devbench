@@ -9,6 +9,7 @@
 #include "GameEvents.h"
 #include "GameState.h"
 #include "HostApi.h"
+#include "InspectLogic.h"
 #include "Json.h"
 #include "KeyboardInput.h"
 #include "MainThread.h"
@@ -33,6 +34,7 @@
 #include <map>
 #include <optional>
 #include <thread>
+#include <unordered_set>
 
 namespace dvb
 {
@@ -266,6 +268,7 @@ namespace dvb
 		// game setTimeScale: how long to wait for the engine to actually reach the requested speed
 		// (the reconciler applies it on the next main-thread frame, and the engine then ramps).
 		constexpr int kScaleApplyTimeoutMs = 2000;
+		constexpr int kScaleMaxWaitMs = 30000;
 		constexpr int kScalePollMs = 5;
 
 		// A Pascal-style string in the .ess header: uint16 length + that many raw (non-UTF16,
@@ -523,21 +526,44 @@ namespace dvb
 						throw ToolError(400, std::format("game setTimeScale: 'holdMs' must be 1..{}", TimeScaleControl::kMaximumLeaseMs));
 				}
 
+				int waitMs = kScaleApplyTimeoutMs;
+				if (const auto waitArg = a_args.find("waitMs"); waitArg != a_args.end()) {
+					if (!waitArg->is_number_integer() || waitArg->get<std::int64_t>() < 0 || waitArg->get<std::int64_t>() > kScaleMaxWaitMs)
+						throw ToolError(400, std::format("game setTimeScale: 'waitMs' must be an integer 0..{}", kScaleMaxWaitMs));
+					waitMs = waitArg->get<int>();
+				}
+
+				const bool requireReached = BooleanArgument(a_args, "requireReached", false);
+
+				const auto                        admitStart = std::chrono::steady_clock::now();
 				const TimeScaleControl::SetResult set = TimeScaleControl::Set(validation.value, holdMs,
 					LeaseOwner(a_ctx), BooleanArgument(a_args, "allowTimeScale", false));
+				const auto                        admitted = std::chrono::steady_clock::now();
 				if (!set.ok)
 					throw ToolError(409, std::format("game setTimeScale: {}", set.error));
 
-				// The reconciler applies this on the next engine frame and the engine then ramps
-				// toward it, so report only once it is actually running at the requested speed.
-				const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kScaleApplyTimeoutMs);
-				while (std::fabs(TimeScaleControl::Effective() - validation.value) > TimeScaleControl::kEffectiveTolerance) {
-					if (std::chrono::steady_clock::now() >= deadline)
-						throw ToolError(504, std::format("game setTimeScale: the engine is still at {} after {}ms (requested {})", TimeScaleControl::Effective(), kScaleApplyTimeoutMs, validation.value));
+				// Admission (which samples the engine on the main thread) is reported apart from
+				// convergence; waitMs bounds only the wait for this request to settle.
+				const auto deadline = admitted + std::chrono::milliseconds(waitMs);
+				while (!TimeScaleControl::IsTerminal(TimeScaleControl::StateOf(set.generation)) &&
+					   std::chrono::steady_clock::now() < deadline)
 					std::this_thread::sleep_for(std::chrono::milliseconds(kScalePollMs));
+				const auto waited = std::chrono::steady_clock::now();
+
+				json       out = TimeScaleControl::RequestStatus(set.generation);
+				const auto state = out.value("state", std::string{});
+				const bool reached = state == "reached";
+				out["reached"] = reached;
+				out["applied"] = reached || state == "written";
+				out["admissionMs"] = std::chrono::duration_cast<std::chrono::milliseconds>(admitted - admitStart).count();
+				out["waitedMs"] = std::chrono::duration_cast<std::chrono::milliseconds>(waited - admitted).count();
+				if (!reached) {
+					const std::string note = std::format("request {} is '{}' after {}ms: the engine is at {} (requested {})", set.generation, state,
+						waitMs, out.value("effective", 0.0), validation.value);
+					if (requireReached)
+						throw ToolError(504, std::format("game setTimeScale: {}", note));
+					out["note"] = note + (state == "written" ? "; the engine ramps toward a new scale, poll getTimeScale or pass a longer waitMs" : "");
 				}
-				json out = TimeScaleControl::Status();
-				out["applied"] = true;
 				return out;
 			}
 
@@ -813,6 +839,30 @@ namespace dvb
 			});
 		}
 
+		// A "0x" prefix is a FormID only when a_prefixIsFormId; otherwise the EditorID is tried first, so an
+		// all-hex EditorID is not read as a FormID. Hex must be the whole string and fit 32 bits.
+		RE::TESForm* LookupFormArg(const std::string& a_formId, bool a_prefixIsFormId = false)
+		{
+			auto byHex = [](const std::string& s) -> RE::TESForm* {
+				std::size_t        consumed = 0;
+				unsigned long long id = 0;
+				try {
+					id = std::stoull(s, &consumed, 16);
+				} catch (...) {
+					return nullptr;
+				}
+				if (consumed != s.size() || id > 0xFFFFFFFFull)
+					return nullptr;
+				return RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
+			};
+			const bool prefixed = a_formId.size() > 2 && a_formId[0] == '0' && (a_formId[1] == 'x' || a_formId[1] == 'X');
+			if (prefixed && a_prefixIsFormId)
+				return byHex(a_formId.substr(2));
+			if (auto* f = RE::TESForm::LookupByEditorID(a_formId))
+				return f;
+			return byHex(prefixed ? a_formId.substr(2) : a_formId);
+		}
+
 		// Identify any form as { formId, formType, name, editorId } — CommonLib's RE'd accessors.
 		json IdentifyForm(const RE::TESForm* a_form)
 		{
@@ -869,6 +919,270 @@ namespace dvb
 				j["actor"] = std::move(a);
 			}
 			return j;
+		}
+
+		// ---- lights: which NiLights hang under a reference's 3D, and whether the renderer uses them ----
+
+		// One read's limits: graph nodes visited, parent links walked (paths and owners), lights emitted.
+		constexpr std::size_t kLightNodeBudget = 50000;
+		constexpr std::size_t kLightParentStepBudget = 100000;
+		constexpr std::size_t kLightPathDepth = 64;
+		constexpr std::size_t kLightOwnerDepth = 256;
+
+		constexpr const char* kLightObservation =
+			"inScene reads the world ShadowSceneNode's activeLights / activeShadowLights at the moment of this read: "
+			"'active' or 'shadow' means the renderer is lighting with that NiLight this frame, not that it visibly "
+			"lights anything; false means it is in neither list";
+
+		// NiLight -> "active" / "shadow" for every light the world ShadowSceneNode is lighting with.
+		using ActiveLightIndex = std::unordered_map<const RE::NiLight*, const char*>;
+
+		ActiveLightIndex IndexActiveLights()
+		{
+			ActiveLightIndex index;
+			auto*            ssn = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
+			if (!ssn)
+				return index;
+			auto& data = ssn->GetRuntimeData();
+			for (const auto& bl : data.activeLights)
+				if (bl && bl->light)
+					index.emplace(bl->light.get(), "active");
+			for (const auto& bl : data.activeShadowLights)
+				if (bl && bl->light)
+					index[bl->light.get()] = "shadow";
+			return index;
+		}
+
+		// "NPC Root [Root] > ... > MagicRight" from a_root (or the top of the graph) down to the
+		// light's parent node; at most kLightPathDepth names, each step charged to a_budget. A path
+		// cut short starts with "... ".
+		std::string NodePath(const RE::NiAVObject* a_object, const RE::NiAVObject* a_root, InspectLogic::TraversalBudget& a_budget)
+		{
+			std::vector<std::string> names;
+			bool                     cut = false;
+			for (const RE::NiAVObject* n = a_object->parent; n; n = n->parent) {
+				if (names.size() >= kLightPathDepth || !a_budget.StepParent()) {
+					cut = true;
+					break;
+				}
+				names.emplace_back(n->name.c_str() ? n->name.c_str() : "");
+				if (n == a_root)
+					break;
+			}
+			std::string path;
+			for (auto it = names.rbegin(); it != names.rend(); ++it)
+				path += (path.empty() ? "" : " > ") + (it->empty() ? std::string("(unnamed)") : *it);
+			return cut ? "... " + path : path;
+		}
+
+		// The reference whose 3D this object hangs under, from the nearest ancestor that carries one;
+		// nullptr when none is found within kLightOwnerDepth steps or the budget.
+		RE::TESObjectREFR* OwnerOf(const RE::NiAVObject* a_object, InspectLogic::TraversalBudget& a_budget)
+		{
+			std::size_t depth = 0;
+			for (const RE::NiAVObject* n = a_object; n; n = n->parent) {
+				if (depth++ >= kLightOwnerDepth || !a_budget.StepParent())
+					return nullptr;
+				if (auto* ref = n->GetUserData())
+					return ref;
+			}
+			return nullptr;
+		}
+
+		json DescribeLight(const RE::NiLight* a_light, const RE::NiAVObject* a_root, const ActiveLightIndex& a_active, InspectLogic::TraversalBudget& a_budget)
+		{
+			const auto& data = a_light->GetLightRuntimeData();
+			const auto  pos = a_light->world.translate;
+			const auto  scene = a_active.find(a_light);
+			json        j{
+				{ "name", a_light->name.c_str() ? a_light->name.c_str() : "" },
+				{ "type", a_light->GetRTTI() && a_light->GetRTTI()->GetName() ? a_light->GetRTTI()->GetName() : "" },
+				{ "path", NodePath(a_light, a_root, a_budget) },
+				{ "diffuse", json::array({ data.diffuse.red, data.diffuse.green, data.diffuse.blue }) },
+				{ "radius", data.radius.x },
+				{ "fade", data.fade },
+				{ "fadeAmount", a_light->fadeAmount },
+				{ "appCulled", a_light->GetAppCulled() },
+				{ "inScene", scene != a_active.end() ? json(scene->second) : json(false) },
+				{ "position", json::array({ pos.x, pos.y, pos.z }) },
+			};
+			return j;
+		}
+
+		// A node reached twice (a shared child) is read once; every node is charged to a_budget.
+		json LightsUnder(const RE::NiAVObject* a_root, const ActiveLightIndex& a_active, InspectLogic::TraversalBudget& a_budget,
+			std::unordered_set<const RE::NiAVObject*>& a_visited)
+		{
+			json                               out = json::array();
+			std::vector<const RE::NiAVObject*> stack;
+			if (a_root)
+				stack.push_back(a_root);
+			while (!stack.empty()) {
+				const RE::NiAVObject* object = stack.back();
+				stack.pop_back();
+				if (!object || !a_visited.insert(object).second)
+					continue;
+				if (!a_budget.VisitNode())
+					break;
+				if (const auto* light = netimmerse_cast<const RE::NiLight*>(object)) {
+					if (!a_budget.Emit())
+						break;
+					out.push_back(DescribeLight(light, a_root, a_active, a_budget));
+				}
+				if (auto* node = const_cast<RE::NiAVObject*>(object)->AsNode()) {
+					auto& children = node->GetChildren();
+					for (auto i = children.size(); i > 0; --i)
+						if (const auto& child = children[i - 1])
+							stack.push_back(child.get());
+				}
+			}
+			return out;
+		}
+
+		json LightsCoverage(const InspectLogic::TraversalBudget& a_budget)
+		{
+			json by = json::array();
+			for (const auto& b : a_budget.TruncatedBy())
+				by.push_back(b);
+			return json{
+				{ "truncated", a_budget.Truncated() },
+				{ "truncatedBy", std::move(by) },
+				{ "nodesVisited", a_budget.Nodes() },
+				{ "nodeBudget", a_budget.MaxNodes() },
+				{ "parentSteps", a_budget.ParentSteps() },
+				{ "parentStepBudget", a_budget.MaxParentSteps() },
+				{ "lightsEmitted", a_budget.Output() },
+				{ "outputBudget", a_budget.MaxOutput() },
+			};
+		}
+
+		// ---- hands: one main-thread snapshot of what each hand holds and what its caster shows ----
+
+		const char* WeaponStateName(RE::WEAPON_STATE a_state)
+		{
+			switch (a_state) {
+			case RE::WEAPON_STATE::kSheathed:
+				return "sheathed";
+			case RE::WEAPON_STATE::kWantToDraw:
+				return "wantToDraw";
+			case RE::WEAPON_STATE::kDrawing:
+				return "drawing";
+			case RE::WEAPON_STATE::kDrawn:
+				return "drawn";
+			case RE::WEAPON_STATE::kWantToSheathe:
+				return "wantToSheathe";
+			case RE::WEAPON_STATE::kSheathing:
+				return "sheathing";
+			default:
+				return "unknown";
+			}
+		}
+
+		const char* CasterStateName(RE::MagicCaster::State a_state)
+		{
+			switch (a_state) {
+			case RE::MagicCaster::State::kNone:
+				return "none";
+			case RE::MagicCaster::State::kReady:
+				return "ready";
+			case RE::MagicCaster::State::kCharging:
+				return "charging";
+			case RE::MagicCaster::State::kCasting:
+				return "casting";
+			default:
+				return "other";
+			}
+		}
+
+		RE::ActorMagicCaster* HandCaster(RE::Actor* a_actor, bool a_left)
+		{
+			return a_actor->GetActorRuntimeData().magicCasters[a_left ? RE::Actor::SlotTypes::kLeftHand : RE::Actor::SlotTypes::kRightHand];
+		}
+
+		// Whether a_art is the casting art of one of the spell's effects.
+		bool SpellUsesArt(const RE::SpellItem* a_spell, const RE::BGSArtObject* a_art)
+		{
+			for (const auto* effect : a_spell->effects)
+				if (effect && effect->baseEffect && effect->baseEffect->data.castingArt == a_art)
+					return true;
+			return false;
+		}
+
+		json DescribeHand(RE::Actor* a_actor, bool a_left, InspectLogic::HandObservation& a_obs, const ActiveLightIndex* a_active,
+			InspectLogic::TraversalBudget* a_budget)
+		{
+			auto* equipped = a_actor->GetEquippedObject(a_left);
+			auto* spell = equipped ? equipped->As<RE::SpellItem>() : nullptr;
+			a_obs.holdsSpell = spell != nullptr;
+			json  j{ { "equipped", IdentifyForm(equipped) } };
+			auto* caster = HandCaster(a_actor, a_left);
+			a_obs.casterPresent = caster != nullptr;
+			if (!caster) {
+				j["caster"] = nullptr;
+				return j;
+			}
+			// The engine's attach sequence: an equip clears the attached flag and names the art to attach
+			// (castingArt), a clone task loads it, then the clone is recorded and the flag set again.
+			const RE::NiNode* attached = caster->castingArtData.attachedArt.get();
+			a_obs.artAttached = caster->flags.any(RE::ActorMagicCaster::Flags::kCastingArtAttached);
+			a_obs.artLoading = caster->cloneTask.get() != nullptr;
+			a_obs.artPending = caster->castingArt != nullptr;
+			a_obs.artNodePresent = attached != nullptr;
+			if (spell && caster->castingArt)
+				a_obs.pendingMatchesEquipped = SpellUsesArt(spell, caster->castingArt);
+			json c{
+				{ "state", CasterStateName(caster->state.get()) },
+				{ "stateValue", caster->state.underlying() },
+				{ "currentSpell", IdentifyForm(caster->currentSpell) },
+				{ "castingArt", IdentifyForm(caster->castingArt) },
+				{ "castingArtPending", a_obs.artPending },
+				{ "pendingArtMatchesEquipped", a_obs.pendingMatchesEquipped ? json(*a_obs.pendingMatchesEquipped) : json(nullptr) },
+				{ "castingArtLoading", a_obs.artLoading },
+				{ "castingArtAttached", a_obs.artAttached },
+				{ "attachedArtNode", attached && attached->name.c_str() ? json(attached->name.c_str()) : json(nullptr) },
+				{ "magicNode", caster->magicNode && caster->magicNode->name.c_str() ? json(caster->magicNode->name.c_str()) : json(nullptr) },
+			};
+			// The hand light the engine gives a readied spell (its magic effect's casting light).
+			if (a_active && a_budget && caster->light && caster->light->light)
+				c["light"] = DescribeLight(caster->light->light.get(), nullptr, *a_active, *a_budget);
+			else
+				c["light"] = nullptr;
+			j["caster"] = std::move(c);
+			return j;
+		}
+
+		struct HandsSnapshot
+		{
+			InspectLogic::HandsObservation observation;
+			json                           report;
+		};
+
+		// Main thread. The JSON and the waitUntil predicates are built from the same reads.
+		HandsSnapshot SnapshotHands(RE::Actor* a_actor, const ActiveLightIndex* a_active, InspectLogic::TraversalBudget* a_budget)
+		{
+			HandsSnapshot snap;
+			snap.report["left"] = DescribeHand(a_actor, true, snap.observation.left, a_active, a_budget);
+			snap.report["right"] = DescribeHand(a_actor, false, snap.observation.right, a_active, a_budget);
+			if (auto* state = a_actor->AsActorState()) {
+				const auto weaponState = state->GetWeaponState();
+				snap.observation.settledDrawn = weaponState == RE::WEAPON_STATE::kDrawn;
+				snap.report["weaponDrawn"] = state->IsWeaponDrawn();
+				snap.report["weaponState"] = WeaponStateName(weaponState);
+				snap.report["weaponSettledDrawn"] = snap.observation.settledDrawn;
+			} else {
+				snap.report["weaponDrawn"] = nullptr;
+				snap.report["weaponState"] = nullptr;
+				snap.report["weaponSettledDrawn"] = nullptr;
+			}
+			snap.report["castingArtReady"] = InspectLogic::ArtAttachedOrNoSpell(snap.observation.left) &&
+			                                 InspectLogic::ArtAttachedOrNoSpell(snap.observation.right);
+			snap.report["handsReady"] = InspectLogic::HandsReady(snap.observation);
+			return snap;
+		}
+
+		json DescribeHands(RE::Actor* a_actor, const ActiveLightIndex& a_active, InspectLogic::TraversalBudget& a_budget)
+		{
+			return SnapshotHands(a_actor, &a_active, &a_budget).report;
 		}
 
 		// Normalize a form-type filter to a substring needle. The engine's type strings are 4-char
@@ -1069,6 +1383,9 @@ namespace dvb
 						{ "left", IdentifyForm(pc->GetEquippedObject(true)) },
 						{ "ammo", IdentifyForm(pc->GetCurrentAmmo()) },
 					};
+					const auto                    active = IndexActiveLights();
+					InspectLogic::TraversalBudget budget(kLightNodeBudget, kLightParentStepBudget, kLightNodeBudget);
+					j["hands"] = DescribeHands(pc, active, budget);
 					return j;
 				});
 			}
@@ -1091,18 +1408,7 @@ namespace dvb
 					if (formId.empty()) {
 						owner = RE::PlayerCharacter::GetSingleton();
 					} else {
-						RE::TESForm* f = RE::TESForm::LookupByEditorID(formId);
-						if (!f) {
-							std::size_t        consumed = 0;
-							unsigned long long id = 0;
-							const std::string  hex = (formId.size() > 2 && formId[0] == '0' && (formId[1] == 'x' || formId[1] == 'X')) ? formId.substr(2) : formId;
-							try {
-								id = std::stoull(hex, &consumed, 16);
-							} catch (...) {
-							}
-							if (consumed == hex.size() && id <= 0xFFFFFFFFull)
-								f = RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
-						}
+						RE::TESForm* f = LookupFormArg(formId);
 						owner = f ? f->As<RE::TESObjectREFR>() : nullptr;
 					}
 					if (!owner)
@@ -1224,18 +1530,7 @@ namespace dvb
 					if (formId.empty()) {
 						actor = RE::PlayerCharacter::GetSingleton();
 					} else {
-						RE::TESForm* f = RE::TESForm::LookupByEditorID(formId);
-						if (!f) {
-							std::size_t        consumed = 0;
-							unsigned long long id = 0;
-							const std::string  hex = (formId.size() > 2 && formId[0] == '0' && (formId[1] == 'x' || formId[1] == 'X')) ? formId.substr(2) : formId;
-							try {
-								id = std::stoull(hex, &consumed, 16);
-							} catch (...) {
-							}
-							if (consumed == hex.size() && id <= 0xFFFFFFFFull)
-								f = RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
-						}
+						RE::TESForm* f = LookupFormArg(formId);
 						actor = f ? f->As<RE::Actor>() : nullptr;
 					}
 					if (!actor)
@@ -1287,6 +1582,114 @@ namespace dvb
 			//   'selected'    → the console-selected / crosshair ref (set via prid/click)
 			//   else enumerate the loaded references in the grid (on-screen or not), with optional
 			//                   'formType' filter, 'radius' (from player), and 'limit' (default 100).
+			// lights: every NiLight under a reference's 3D (default the player, both 3rd- and
+			// 1st-person), or scope='scene' for every light the renderer is using, nearest first.
+			if (kind == "lights") {
+				const std::string formId = a_args.value("formId", std::string{});
+				const bool        selected = a_args.value("selected", false);
+				const std::string scopeArg = a_args.value("scope", std::string{});
+				const auto        scope = InspectLogic::ParseLightsScope(scopeArg);
+				if (!scope)
+					throw ToolError(400, std::format("inspect lights: unknown scope '{}' (ref|scene)", scopeArg));
+				double radius = 0.0;
+				if (const auto it = a_args.find("radius"); it != a_args.end()) {
+					if (!it->is_number() || it->get<double>() < 0.0)
+						throw ToolError(400, "inspect lights: 'radius' must be a number >= 0");
+					radius = it->get<double>();
+				}
+				std::size_t limit = 100;
+				if (const auto it = a_args.find("limit"); it != a_args.end()) {
+					if (!it->is_number_integer() || it->get<std::int64_t>() < 0 || it->get<std::int64_t>() > static_cast<std::int64_t>(kLightNodeBudget))
+						throw ToolError(400, std::format("inspect lights: 'limit' must be an integer 0..{}", kLightNodeBudget));
+					limit = it->get<std::size_t>();
+				}
+				return MainThread::RunAndWait([=]() -> json {
+					const auto active = IndexActiveLights();
+					auto*      pc = RE::PlayerCharacter::GetSingleton();
+
+					if (*scope == InspectLogic::LightsScope::kScene) {
+						const bool havePosition = pc && pc->Get3D();
+						if (radius > 0.0 && !havePosition)
+							throw ToolError(409, "inspect lights: 'radius' needs the player's position, which is not available (no player 3D)");
+						const RE::NiPoint3 origin = havePosition ? pc->GetPosition() : RE::NiPoint3{};
+
+						// The scene list is already bounded by the renderer; the budget covers the
+						// parent walks for paths and owners.
+						InspectLogic::TraversalBudget         budget(kLightNodeBudget, kLightParentStepBudget, kLightNodeBudget);
+						std::vector<const RE::NiLight*>       lights;
+						std::vector<InspectLogic::SceneEntry> entries;
+						for (const auto& entry : active) {
+							const RE::NiLight*   light = entry.first;
+							std::optional<float> distance;
+							if (havePosition)
+								distance = origin.GetDistance(light->world.translate);
+							if (radius > 0.0 && *distance > radius)
+								continue;
+							const auto pos = light->world.translate;
+							entries.push_back({ distance, light->name.c_str() ? light->name.c_str() : "", {}, pos.x, pos.y, pos.z, lights.size() });
+							lights.push_back(light);
+						}
+						InspectLogic::OrderScene(entries);
+						json out = json::array();
+						for (const auto& e : entries) {
+							if (!budget.Emit())
+								break;
+							const RE::NiLight* light = lights[e.index];
+							json               j = DescribeLight(light, nullptr, active, budget);
+							j["distance"] = e.distance ? json(*e.distance) : json(nullptr);
+							j["owner"] = IdentifyRef(OwnerOf(light, budget));
+							out.push_back(std::move(j));
+							if (out.size() >= limit)
+								break;
+						}
+						const bool limited = entries.size() > out.size();
+						json       coverage = LightsCoverage(budget);
+						coverage["truncated"] = coverage["truncated"].get<bool>() || limited;
+						if (limited && !budget.Truncated())
+							coverage["truncatedBy"].push_back("limit");
+						return json{
+							{ "scope", "scene" },
+							{ "observation", kLightObservation },
+							{ "playerPosition", havePosition },
+							{ "count", entries.size() },
+							{ "returned", out.size() },
+							{ "truncated", coverage["truncated"] },
+							{ "coverage", std::move(coverage) },
+							{ "lights", std::move(out) },
+						};
+					}
+
+					RE::TESObjectREFR* ref = nullptr;
+					if (selected) {
+						ref = RE::Console::GetSelectedRef().get();
+					} else if (!formId.empty()) {
+						RE::TESForm* f = LookupFormArg(formId);
+						ref = f ? f->As<RE::TESObjectREFR>() : nullptr;
+					} else {
+						ref = pc;
+					}
+					if (!ref)
+						throw ToolError(404, "inspect lights: reference not found");
+
+					// One budget and one visited set for the whole read, so the first- and third-person
+					// graphs, shared children and the hand lights are all counted once.
+					InspectLogic::TraversalBudget             budget(kLightNodeBudget, kLightParentStepBudget, limit);
+					std::unordered_set<const RE::NiAVObject*> visited;
+					json                                      out{ { "scope", "ref" }, { "ref", IdentifyRef(ref) }, { "observation", kLightObservation }, { "sceneActiveLights", active.size() } };
+					if (auto* actor = ref->As<RE::Actor>(); actor && actor == pc) {
+						out["thirdPerson"] = LightsUnder(pc->Get3D(false), active, budget, visited);
+						out["firstPerson"] = LightsUnder(pc->Get3D(true), active, budget, visited);
+					} else {
+						out["lights"] = LightsUnder(ref->Get3D(), active, budget, visited);
+					}
+					if (auto* actor = ref->As<RE::Actor>())
+						out["hands"] = DescribeHands(actor, active, budget);
+					out["coverage"] = LightsCoverage(budget);
+					out["truncated"] = budget.Truncated();
+					return out;
+				});
+			}
+
 			if (kind == "refs") {
 				const std::string formId = a_args.value("formId", std::string{});
 				const bool        selected = a_args.value("selected", false);
@@ -1305,28 +1708,8 @@ namespace dvb
 					};
 
 					if (!formId.empty()) {
-						// Explicit 0x.. → FormID; otherwise EditorID first (so an all-hex EditorID
-						// isn't misread as a FormID), then a bare hex FormID fallback.
-						// Whole-string + 32-bit-range hex, so "14G" / overflow don't truncate to a
-						// valid FormID and resolve the wrong form.
-						auto byHex = [](const std::string& s) -> RE::TESForm* {
-							std::size_t        consumed = 0;
-							unsigned long long id = 0;
-							try {
-								id = std::stoull(s, &consumed, 16);
-							} catch (...) {
-								return nullptr;
-							}
-							if (consumed != s.size() || id > 0xFFFFFFFFull)
-								return nullptr;
-							return RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
-						};
-						RE::TESForm* f = nullptr;
-						if (formId.size() > 2 && formId[0] == '0' && (formId[1] == 'x' || formId[1] == 'X'))
-							f = byHex(formId.substr(2));
-						else if (f = RE::TESForm::LookupByEditorID(formId); !f)
-							f = byHex(formId);
-						json one = (f && f->As<RE::TESObjectREFR>()) ? IdentifyRef(f->As<RE::TESObjectREFR>()) : IdentifyForm(f);
+						RE::TESForm* f = LookupFormArg(formId, true);
+						json         one = (f && f->As<RE::TESObjectREFR>()) ? IdentifyRef(f->As<RE::TESObjectREFR>()) : IdentifyForm(f);
 						return json{ { "count", f ? 1 : 0 }, { "refs", f ? json::array({ one }) : json::array() } };
 					}
 
@@ -1437,7 +1820,7 @@ namespace dvb
 			if (auto entry = ToolExtensions::Find("inspect", kind))
 				return entry->handler(a_args, a_ctx);
 
-			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|inventory|quests|effects|refs|registrants|screenshots|extensions, or a registered kind — see inspect kind=extensions)", kind));
+			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|inventory|quests|effects|refs|lights|registrants|screenshots|extensions, or a registered kind — see inspect kind=extensions)", kind));
 		}
 
 		// camera: read or set the player camera point of view, so a recording can capture the
@@ -1849,11 +2232,31 @@ namespace dvb
 						return false;
 				return true;
 			}
+			if (a_cond == "weaponDrawn" || a_cond == "handsReady" || a_cond == "castingArtLeft" || a_cond == "castingArtRight") {
+				try {
+					const json r = MainThread::RunAndWait([a_cond]() -> json {
+						auto* pc = RE::PlayerCharacter::GetSingleton();
+						if (!pc || !pc->Get3D())
+							return false;
+						const auto snap = SnapshotHands(pc, nullptr, nullptr);
+						if (a_cond == "weaponDrawn")
+							return snap.observation.settledDrawn;
+						if (a_cond == "handsReady")
+							return InspectLogic::HandsReady(snap.observation);
+						const auto& hand = a_cond == "castingArtLeft" ? snap.observation.left : snap.observation.right;
+						return hand.casterPresent && hand.artAttached;
+					},
+						milliseconds(2000));
+					return r.get<bool>();
+				} catch (const ToolError&) {
+					return false;
+				}
+			}
 			if (a_cond == "noMenu")
 				return GetOpenMenus().empty();
 			if (a_cond == "noBlockingMenu")
 				return BlockingMenus().empty();
-			throw ToolError(400, std::format("unknown waitUntil condition '{}' (playerLoaded|noModal|noMenu|noBlockingMenu)", a_cond));
+			throw ToolError(400, std::format("unknown waitUntil condition '{}' (playerLoaded|noModal|noMenu|noBlockingMenu|weaponDrawn|handsReady|castingArtLeft|castingArtRight)", a_cond));
 		}
 
 		// Caller must already know a_args["runId"] is present. A bare get<uint64_t>() on a
@@ -2378,7 +2781,23 @@ namespace dvb
 				"'scene' → player context { cell, worldspace, location, position, gameHour, daysPassed, "
 				"weather }; 'mods' → active load order { count, lightCount, total, plugins:[{index, name}], "
 				"lightPlugins:[…] }; 'player' → player snapshot { name, level, sex, gold, race, "
-				"actorValues:{health,magicka,stamina,carryWeight each {current,max}}, equipped:{right,left,ammo} }; "
+				"actorValues:{health,magicka,stamina,carryWeight each {current,max}}, equipped:{right,left,ammo}, "
+				"hands:{weaponDrawn (broad: drawn or about to sheathe), weaponState, weaponSettledDrawn (exactly drawn), "
+				"castingArtReady (every spell hand's caster flags its art attached; says nothing about which art), "
+				"handsReady (settled drawn, and every spell hand's attach sequence finished: no art pending, no clone task, "
+				"the attached flag set and an attached art node recorded; it does not compare the model with the spell and "
+				"is not proof a rendered frame shows it), left/right:{equipped, caster:{state, currentSpell, castingArt (the "
+				"art still to attach; null once attached), castingArtPending, pendingArtMatchesEquipped (null when nothing "
+				"is pending), castingArtLoading, castingArtAttached, attachedArtNode, light}}} (caster, light and "
+				"attachedArtNode null when absent) }; "
+				"'lights' → every NiLight under a reference's 3D (default the player: thirdPerson + firstPerson; "
+				"or 'formId' / 'selected') as {name, type, path, diffuse, radius, fade, fadeAmount, appCulled, "
+				"inScene:'active'|'shadow'|false, position}, plus an actor's hands (each hand's casting light); "
+				"scope='scene' instead lists every light the renderer is using, nearest first (ties by name, path, "
+				"position), each with its 'owner' reference and 'distance' (null when the player's position is "
+				"unknown; 'radius' then refused with 409), ('radius', 'limit'). Every lights read has one budget "
+				"for nodes visited, parent steps and lights emitted, reports it under 'coverage' with 'truncated' "
+				"and 'truncatedBy', and names its 'observation' source; "
 				"'inventory' → items held by the player (or a container 'formId') { owner, count, items:[{formId, "
 				"name, formType, count, value, weight, equipped}] } (filters: 'formType', 'limit'); "
 				"'quests' → journal (running/completed) { count, quests:[{formId, name, stage, type, active, "
@@ -2406,19 +2825,20 @@ namespace dvb
 				"'extensions' lists those registered kinds + descriptors, and kind=<registered> dispatches.";
 			inspect.description += RegisteredExtensionSummary("inspect", "kinds");
 			inspect.readOnly = true;
-			json kinds = json::array({ "state", "health", "vm", "scene", "mods", "player", "inventory", "quests", "effects", "refs", "registrants", "screenshots", "extensions" });
+			json kinds = json::array({ "state", "health", "vm", "scene", "mods", "player", "inventory", "quests", "effects", "refs", "lights", "registrants", "screenshots", "extensions" });
 			for (const auto& k : ToolExtensions::Keys("inspect"))
 				kinds.push_back(k);
 			inspect.inputSchema = json{
 				{ "type", "object" },
 				{ "properties", json{
-									{ "kind", json{ { "type", "string" }, { "enum", kinds }, { "description", "state | health | vm | scene | mods | player | inventory | quests | effects | refs | registrants | screenshots | extensions (health answers off-thread for liveness+identity; or a registered mod kind — listed here + via kind=extensions)" } } },
-									{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form; inventory: the container ref to read (default player); effects: the actor to read (default player) (hex formId, e.g. 0x14, or EditorID)" } } },
-									{ "selected", json{ { "type", "boolean" }, { "description", "refs: identify the console-selected / crosshair ref instead" } } },
+									{ "kind", json{ { "type", "string" }, { "enum", kinds }, { "description", "state | health | vm | scene | mods | player | inventory | quests | effects | refs | lights | registrants | screenshots | extensions (health answers off-thread for liveness+identity; or a registered mod kind — listed here + via kind=extensions)" } } },
+									{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form; inventory: the container ref to read (default player); effects: the actor to read (default player); lights: the reference whose 3D to read (default player) (hex formId, e.g. 0x14, or EditorID)" } } },
+									{ "selected", json{ { "type", "boolean" }, { "description", "refs/lights: use the console-selected / crosshair ref instead" } } },
+									{ "scope", json{ { "type", "string" }, { "enum", json::array({ "ref", "scene" }) }, { "description", "lights: 'ref' (default) reads one reference's 3D; 'scene' lists every light the renderer is using, nearest the player first, each with the reference it hangs under; any other value is refused (400)" } } },
 									{ "formType", json{ { "type", "string" }, { "description", "refs/inventory: keep only entries whose type matches (e.g. Actor, Weapon, Potion)" } } },
 									{ "model", json{ { "type", "string" }, { "description", "refs enumerate: keep only refs whose base object's mesh path contains this substring (case-insensitive, e.g. 'wrcity01')" } } },
-									{ "radius", json{ { "type", "number" }, { "description", "refs enumerate: only refs within this distance of the player (0 = whole loaded grid)" } } },
-									{ "limit", json{ { "type", "integer" }, { "description", "refs/inventory: max entries to return (default 100)" } } },
+									{ "radius", json{ { "type", "number" }, { "description", "refs enumerate: only refs within this distance of the player (0 = whole loaded grid); lights scope=scene: only lights within it (0 = no limit)" } } },
+									{ "limit", json{ { "type", "integer" }, { "description", "refs/inventory/lights: max entries to return (default 100; lights: lights emitted, 0..50000)" } } },
 								} },
 			};
 			return inspect;
@@ -2513,11 +2933,16 @@ namespace dvb
 			"'scale', or 'freeze':true for 0) speeds up or slows down the game itself for "
 			"'holdMs' (default 60000) — which is what makes a replay or scenario run faster in wall "
 			"time — then restores the previous scale; 0.1..3.0, up to 10.0 with 'allowHigh':true, and "
-			"it returns { requested, effective, applied, owner, leaseRemainingMs } only once the "
-			"engine is actually running at the requested scale (the reconciler applies it on the next "
-			"frame and the engine then ramps). It is refused (409) while a recording or a capture is "
-			"in flight, unless 'allowTimeScale':true. 'getTimeScale' returns the same object without "
-			"changing anything.";
+			"every request gets a 'generation' and one terminal snapshot { generation, state, requested, "
+			"effective, owner, leased, leaseRemainingMs, reached, applied, admissionMs, waitedMs }. state is "
+			"accepted (recorded, not yet handed to the engine), written (the engine has its value but is still "
+			"ramping toward it), reached, expired (its lease ran out) or displaced (a later request or a release "
+			"replaced it); applied = written or reached. It waits up to 'waitMs' (default 2000, 0..30000) after "
+			"admission for reached / expired / displaced; admissionMs and waitedMs are reported apart. A request "
+			"that has not reached is an answer, not an error, unless 'requireReached':true (504, the old "
+			"behaviour). It is refused (409) while a recording or a capture is "
+			"in flight, unless 'allowTimeScale':true. 'getTimeScale' returns { requested, effective, owner, "
+			"leased, leaseRemainingMs } without changing anything.";
 		game.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
@@ -2533,6 +2958,8 @@ namespace dvb
 								{ "freeze", json{ { "type", "boolean" }, { "description", "setTimeScale: confirm scale 0 (freeze); required with a 0 scale" } } },
 								{ "allowHigh", json{ { "type", "boolean" }, { "description", "setTimeScale: permit a scale above 3.0, up to 10.0" } } },
 								{ "allowTimeScale", json{ { "type", "boolean" }, { "description", "setTimeScale: change the scale even while a recording or capture is in flight (default false)" } } },
+								{ "waitMs", json{ { "type", "integer" }, { "description", "setTimeScale: how long to wait, after admission, for this request to settle (reached, expired or displaced) before answering (default 2000, 0..30000)" } } },
+								{ "requireReached", json{ { "type", "boolean" }, { "description", "setTimeScale: answer 504 when the request has not reached the engine within waitMs, as before waitMs existed (default false: answer with its state)" } } },
 							} },
 		};
 		a_registry.Register(std::move(game), &GameHandler);
@@ -2661,7 +3088,10 @@ namespace dvb
 			"{\"waitFor\":<event>,…} block on a Skyrim EVENT — string shorthand "
 			"(\"postLoadGame\"/\"saveGame\"/\"newGame\"/\"preLoadGame\"/\"dataLoaded\"/\"deleteGame\", or "
 			"\"menuOpened\"/\"menuClosed\" with a \"name\"), or {\"topic\":\"…\",\"match\":{…}}; "
-			"{\"waitUntil\":\"playerLoaded\"|\"noModal\"|\"noMenu\"|\"noBlockingMenu\"} poll live state. "
+			"{\"waitUntil\":\"playerLoaded\"|\"noModal\"|\"noMenu\"|\"noBlockingMenu\"|\"weaponDrawn\"|"
+			"\"castingArtLeft\"|\"castingArtRight\"|\"handsReady\"} poll live state (handsReady: weapon drawn "
+			"and every hand holding a spell shows its casting art — wait on it after EquipSpell + DrawWeapon "
+			"before a capture). "
 			"PREFER waitFor over a fixed wait — e.g. wait for postLoadGame to know a load truly "
 			"finished. Optional: repeat (≤1000), continueOnError, async. By default action='run' "
 			"BLOCKS the request for the run's duration and returns the transcript directly — the "

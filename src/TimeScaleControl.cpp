@@ -95,6 +95,7 @@ namespace dvb::TimeScaleControl
 		}
 
 		std::optional<bool> engagement;
+		std::uint64_t       generation = 0;
 		{
 			// The admission check and the reservation it gates must be atomic with respect to
 			// Recording::start/Capture::Handle's own check-and-commit (same mutex) — otherwise a
@@ -112,9 +113,9 @@ namespace dvb::TimeScaleControl
 				// Request kNormalScale directly rather than Release()'s lease-restore baseline:
 				// an explicit "set scale to 1" means exactly that, not "whatever it was before
 				// devbench's current hold started".
-				g_reconciler.Request(static_cast<float>(kNormalScale), {}, 0, liveNow);
+				generation = g_reconciler.Request(static_cast<float>(kNormalScale), {}, 0, liveNow);
 			else
-				g_reconciler.Request(a_scale, a_owner, now + holdMs, liveNow);
+				generation = g_reconciler.Request(a_scale, a_owner, now + holdMs, liveNow);
 			// Catches a scale that drifted externally (console sgtm, another mod) while our own
 			// bookkeeping still matches the new request, which would otherwise make Reconcile
 			// think there's nothing to write.
@@ -122,7 +123,7 @@ namespace dvb::TimeScaleControl
 			engagement = LatchEngagement(NeedsPump(now));
 		}
 		ApplyEngagement(engagement);
-		return { true, {} };
+		return { true, {}, generation };
 	}
 
 	void Reconcile()
@@ -175,6 +176,30 @@ namespace dvb::TimeScaleControl
 		return json{
 			{ "requested", g_reconciler.Requested() },
 			{ "effective", Effective() },
+			{ "owner", g_reconciler.Owner() },
+			{ "leased", g_reconciler.Leased(now) },
+			{ "leaseRemainingMs", g_reconciler.LeaseRemainingMs(now) },
+		};
+	}
+
+	RequestState StateOf(std::uint64_t a_generation)
+	{
+		const float     live = Effective();
+		std::lock_guard lock(g_mutex);
+		return g_reconciler.RequestStateOf(a_generation, live);
+	}
+
+	json RequestStatus(std::uint64_t a_generation)
+	{
+		const std::int64_t now = NowWallMs();
+		const float        live = Effective();
+		std::lock_guard    lock(g_mutex);
+		return json{
+			{ "generation", a_generation },
+			{ "currentGeneration", g_reconciler.Generation() },
+			{ "state", RequestStateName(g_reconciler.RequestStateOf(a_generation, live)) },
+			{ "requested", g_reconciler.Requested() },
+			{ "effective", live },
 			{ "owner", g_reconciler.Owner() },
 			{ "leased", g_reconciler.Leased(now) },
 			{ "leaseRemainingMs", g_reconciler.LeaseRemainingMs(now) },
