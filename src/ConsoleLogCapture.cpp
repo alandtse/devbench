@@ -102,6 +102,11 @@ namespace dvb::ConsoleLogCapture
 				}
 				KeepPrint(window, &text);
 			} catch (...) {
+				// A print lost here still counts toward lossPossible; nothing in the print path may log.
+				try {
+					KeepPrint(window, nullptr);
+				} catch (...) {
+				}
 			}
 		}
 
