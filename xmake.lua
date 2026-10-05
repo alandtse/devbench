@@ -15,7 +15,7 @@ includes("xmake/cpp-mcp.lua")
 set_project("devbench")
 set_license("GPL-3.0")
 
-local version = "1.24.0"
+local version = "1.25.0"
 local ver = version:split("%.")
 set_version(version)
 
@@ -169,7 +169,9 @@ add_files("src/Ssim.cpp") -- exercised directly; pure logic, no game deps
 add_files("src/KeyboardInputState.cpp") -- key resolution + lease ownership; pure logic
 add_files("src/VRInputState.cpp") -- atomic tracked-set validation/encoding; pure logic
 add_files("src/ConsoleCaptureLogic.cpp") -- console capture slicing + line sampler; pure logic
+add_files("src/PapyrusDefaults.cpp") -- declared optional-parameter defaults for papyrus call; pure logic
 add_files("src/CameraOrbitLogic.cpp") -- camera orbit admission, baseline and restoration; pure logic
+add_files("src/CameraFrameLogic.cpp") -- camera frame pose math; pure logic
 add_files("src/PrologueScan.cpp") -- relocatable-prologue check for the console print hook; pure logic
 add_files("src/InspectLogic.cpp") -- lights scope/budget/ordering and the handsReady predicate; pure logic
 add_files("src/ReplayTrajectory.cpp") -- pose keyframe sampling/interpolation; pure logic

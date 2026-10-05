@@ -2,6 +2,7 @@
 
 #include "Json.h"
 #include "MainThread.h"
+#include "PapyrusDefaults.h"
 #include "ToolRegistry.h"
 
 #include <algorithm>
@@ -248,6 +249,52 @@ namespace dvb::Papyrus
 			return v;  // object / array → leave as None
 		}
 
+		// The table's value when script, function, position, name and type all match; else a
+		// type-neutral one only when the caller allowed it, or nothing (the parameter is named in
+		// a_missing). Records each fill in a_filled so the caller can see what was sent in its place.
+		std::optional<BSScript::Variable> FillOmitted(const BSScript::IFunction* a_fn, std::uint32_t a_index, bool a_allowNeutral, json& a_filled, std::string& a_missing)
+		{
+			RE::BSFixedString  name;
+			BSScript::TypeInfo type;
+			a_fn->GetParam(a_index, name, type);
+			const char*        script = a_fn->GetObjectTypeName().c_str();
+			const char*        param = name.c_str();
+			json               entry{ { "name", Str(param) }, { "type", type.TypeAsString() } };
+			BSScript::Variable v;
+			const auto         declared = PapyrusDefaults::Find(script ? script : "", a_fn->GetName().c_str() ? a_fn->GetName().c_str() : "", param ? param : "", a_index);
+			const auto         kind = type.IsBool()  ? PapyrusDefaults::ParamType::kBool :
+			                          type.IsInt()   ? PapyrusDefaults::ParamType::kInt :
+			                          type.IsFloat() ? PapyrusDefaults::ParamType::kFloat :
+			                                           PapyrusDefaults::ParamType::kOther;
+			const auto         fill = PapyrusDefaults::Choose(declared, kind, a_allowNeutral);
+			if (fill == PapyrusDefaults::Fill::kTable) {
+				if (type.IsBool()) {
+					v.SetBool(declared->number != 0.0);
+					entry["value"] = declared->number != 0.0;
+				} else if (type.IsInt()) {
+					v.SetSInt(static_cast<std::int32_t>(declared->number));
+					entry["value"] = static_cast<std::int32_t>(declared->number);
+				} else {
+					v.SetFloat(static_cast<float>(declared->number));
+					entry["value"] = declared->number;
+				}
+				entry["source"] = "table";
+				entry["from"] = std::format("{}.{} ({} .psc)", Str(script), Str(a_fn->GetName().c_str()), declared->source);
+			} else if (fill == PapyrusDefaults::Fill::kRefuse) {
+				a_missing += std::format("{}{} ({})", a_missing.empty() ? "" : ", ", Str(param), type.TypeAsString());
+				return std::nullopt;
+			} else {
+				v = DefaultVariable(type);
+				entry["value"] = type.IsBool() ? json(false) : type.IsInt() ? json(0) :
+				                                           type.IsFloat()   ? json(0.0) :
+				                                           type.IsString()  ? json("") :
+				                                                              json(nullptr);
+				entry["source"] = "neutral";
+			}
+			a_filled.push_back(std::move(entry));
+			return v;
+		}
+
 		// Find a function by name on a type, walking the parent chain for member functions
 		// (globals/statics are not inherited). Case-insensitive (Papyrus names are). For resolving
 		// param types so form args can be packed to the declared (possibly base) param class.
@@ -308,8 +355,10 @@ namespace dvb::Papyrus
 			std::mutex              m;
 			std::condition_variable cv;
 			bool                    done = false;
-			int                     status = 400;  // HTTP status to surface when `error` is set
-			std::string             error;         // non-empty → arg-build / bind / dispatch failed
+			bool                    dispatched = false;  // the VM accepted the call; it may still run after a timeout
+			std::string             filledNames;         // omitted args that were filled, as of dispatch
+			int                     status = 400;        // HTTP status to surface when `error` is set
+			std::string             error;               // non-empty → arg-build / bind / dispatch failed
 			BSScript::Variable      result;
 		};
 
@@ -460,6 +509,20 @@ namespace dvb::Papyrus
 			return true;
 		}
 
+		// Lists the omitted arguments that were filled, and warns when any was a guess.
+		void AddFilledDefaults(json& a_out, const json& a_filled)
+		{
+			if (a_filled.empty())
+				return;
+			a_out["filledArgs"] = a_filled;
+			std::string guessed;
+			for (const auto& f : a_filled)
+				if (f.value("source", std::string{}) == "neutral")
+					guessed += (guessed.empty() ? "" : ", ") + f.value("name", std::string{});
+			if (!guessed.empty())
+				a_out["warning"] = std::format("omitted argument(s) {} were sent as None/0/false/\"\" because their Papyrus defaults are not known at run time; if the result is wrong, pass them explicitly", guessed);
+		}
+
 		json HandleCall(const json& a_args, bool a_waitForResult)
 		{
 			const std::string script = a_args.value("script", std::string{});
@@ -471,6 +534,9 @@ namespace dvb::Papyrus
 			if (!argsJson.is_array())
 				throw ToolError(400, "papyrus call: 'args' must be an array");
 			const json selfJson = a_args.contains("self") ? a_args["self"] : json();
+			if (a_args.contains("fillNeutral") && !a_args["fillNeutral"].is_boolean())
+				throw ToolError(400, "papyrus call: 'fillNeutral' must be a boolean");
+			const bool fillNeutral = a_args.value("fillNeutral", false);
 			const bool hasSelf = !selfJson.is_null();
 
 			auto* task = SKSE::GetTaskInterface();
@@ -480,7 +546,8 @@ namespace dvb::Papyrus
 			const RE::BSFixedString cls(script.c_str());
 			const RE::BSFixedString fn(function.c_str());
 
-			auto dispatch = [cls, fn, argsJson, selfJson, hasSelf](RE::BSTSmartPointer<BSScript::IStackCallbackFunctor> a_callback) {
+			auto filled = std::make_shared<json>(json::array());
+			auto dispatch = [cls, fn, argsJson, selfJson, hasSelf, fillNeutral, filled](RE::BSTSmartPointer<BSScript::IStackCallbackFunctor> a_callback) {
 				auto* vm = BSScript::Internal::VirtualMachine::GetSingleton();
 				if (!vm)
 					throw ToolError(503, "Papyrus VM unavailable");
@@ -516,7 +583,8 @@ namespace dvb::Papyrus
 					paramTypes.push_back(pt);
 				}
 
-				auto* rawArgs = new RuntimeArgs();
+				// Owned until the dispatch takes it.
+				auto rawArgs = std::make_unique<RuntimeArgs>();
 				try {
 					std::size_t i = 0;
 					for (const auto& a : argsJson) {
@@ -525,27 +593,33 @@ namespace dvb::Papyrus
 						++i;
 					}
 				} catch (const ToolError&) {
-					delete rawArgs;
 					throw;
 				} catch (const std::exception& e) {
-					delete rawArgs;
 					throw ToolError(400, e.what());
 				}
 
-				// Pad omitted trailing optionals with their type default — the VM won't, and a
-				// short arg list makes reference ops (MoveTo/Disable/Kill) run yet do nothing.
-				for (std::size_t p = rawArgs->args.size(); p < paramTypes.size(); ++p)
-					rawArgs->args.push_back(DefaultVariable(paramTypes[p]));
+				// Pad omitted trailing optionals — the VM won't, and a short arg list makes reference ops run yet do nothing.
+				// Papyrus defaults are compiled into call sites; the VM cannot report them.
+				std::string missing;
+				for (std::size_t p = rawArgs->args.size(); p < paramTypes.size(); ++p) {
+					auto v = FillOmitted(ifn, static_cast<std::uint32_t>(p), fillNeutral, *filled, missing);
+					if (v)
+						rawArgs->args.push_back(std::move(*v));
+				}
+				if (!missing.empty())
+					throw ToolError(400, std::format("omitted argument(s) {} have no known default and the VM cannot say whether they are optional; the call was not run. Pass them explicitly, or set 'fillNeutral':true to send None/0/0.0/false/\"\" in their place", missing));
 
-				const bool ok = hasSelf ? vm->DispatchMethodCall(selfObj, fn, rawArgs, a_callback) : vm->DispatchStaticCall(cls, fn, rawArgs, a_callback);
+				const bool ok = hasSelf ? vm->DispatchMethodCall(selfObj, fn, rawArgs.release(), a_callback) : vm->DispatchStaticCall(cls, fn, rawArgs.release(), a_callback);
 				if (!ok)
 					throw ToolError(400, hasSelf ? "method dispatch refused — unknown function, wrong arg count, or not a member of that object's script" : "dispatch refused — unknown function, wrong arg count, or not a global/native function");
 			};
 
 			if (!a_waitForResult) {
-				return MainThread::RunAndWait([dispatch]() -> json {
+				return MainThread::RunAndWait([dispatch, filled]() -> json {
 					dispatch(nullptr);
-					return json{ { "queued", true } };
+					json out{ { "queued", true } };
+					AddFilledDefaults(out, *filled);
+					return out;
 				});
 			}
 
@@ -557,9 +631,15 @@ namespace dvb::Papyrus
 				state->done = true;
 				state->cv.notify_all();
 			};
-			task->AddTask([dispatch, state, fail]() {
+			task->AddTask([dispatch, state, fail, filled]() {
 				try {
 					dispatch(RE::BSTSmartPointer<BSScript::IStackCallbackFunctor>(new CallFunctor(state)));
+					std::string names;
+					for (const auto& f : *filled)
+						names += std::format("{}{}={} ({})", names.empty() ? "" : ", ", f.value("name", std::string{}), f.value("value", json()).dump(), f.value("source", std::string{}));
+					std::lock_guard<std::mutex> lk(state->m);
+					state->dispatched = true;
+					state->filledNames = std::move(names);
 				} catch (const ToolError& e) {
 					fail(e.code, e.what());
 				}
@@ -568,21 +648,27 @@ namespace dvb::Papyrus
 			std::unique_lock<std::mutex> lk(state->m);
 			const bool                   completed = state->cv.wait_for(lk, std::chrono::milliseconds(timeoutMs),
 				[&] { return state->done; });
-			if (!completed)
-				throw ToolError(504, std::format("papyrus call '{}.{}' did not complete within {}ms (latent call or VM stalled?)", script, function, timeoutMs));
+			if (!completed) {
+				if (!state->dispatched)
+					throw ToolError(504, std::format("papyrus call '{}.{}' was not dispatched within {}ms (main thread busy?); it may still be dispatched later", script, function, timeoutMs));
+				throw ToolError(504, std::format("papyrus call '{}.{}' was dispatched but did not complete within {}ms (latent call or VM stalled?); it may still run, so check its effect before calling again{}",
+										 script, function, timeoutMs, state->filledNames.empty() ? std::string{} : "; omitted args filled: " + state->filledNames));
+			}
 			if (!state->error.empty())
 				throw ToolError(state->status, std::format("papyrus call '{}.{}': {}", script, function, state->error));
 
 			BSScript::Variable result = state->result;
 			lk.unlock();
 
-			return MainThread::RunAndWait([result]() -> json {
+			return MainThread::RunAndWait([result, filled]() -> json {
 				auto* vm = GetVM();
-				return json{
+				json  out{
 					{ "called", true },
 					{ "returned", VariableToJson(vm, result) },
 					{ "returnedType", result.GetType().TypeAsString() },
 				};
+				AddFilledDefaults(out, *filled);
+				return out;
 			});
 		}
 	}
