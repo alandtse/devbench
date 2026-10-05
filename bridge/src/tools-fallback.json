@@ -310,12 +310,36 @@
     },
     {
       "name": "camera",
-      "description": "Read or set the player camera. action='get' (default) returns { pov, freeCam, camX, camY, camZ, camPitch, camYaw, stateId, freeCamBackend, freeCamOwned, orbit } (plus thirdPersonState: heading, zoom and offsets, while in third person) read live on the main thread, where pov is first | third | vanity | other. stateId is the runtime-specific CameraState value; interpret it with freeCamBackend. action='setPov' applies a switch (param 'pov': first | third | vanity) on the main thread and returns { pov: <applied>, requestedPov } read back the same tick — Skyrim's idle-vanity timer can still override it a few ticks later while the player is stationary, so poll action='get' if you need certainty after idling. action='freecam' (param 'on', default true) enables or disables free camera on either runtime: activation and restoration complete before return (queued=false) and read back the same tick, without changing freeze time. freeCamBackend reports which mechanism is in play: VR ('vr-state') hand-drives the transition, since the engine's own toggle never installs free-cam as the current state on VR 1.4.15; flat ('engine') uses the engine's own toggle, which enters and restores correctly there. action='drive' (params 'x','y','z','pitch','yaw', all default 0) sets the free camera's world transform — requires free-cam mode already on. pitch/yaw are native free-camera angles in radians on both runtimes, writing FreeCameraState::rotation directly; completes its field writes before return, so allow a rendered frame before capture. action='orbit' (params yawDeg default 180, pitchDeg, zoom, right, up; on=false stops) holds the gameplay third-person camera round the player on every camera update, with the player's facing held for the orbit - no free camera, so gameplay input keeps reaching the player (a held mouseLeft keeps charging a spell, for example). It is refused (409) while the free camera is on, during a load, or when requested before a load / new game. It ends - writing back the heading, tilt, zoom and offsets it overwrote - on on=false, when the camera leaves third person (any POV switch), on freecam on or setPov (both answer orbitEnded), and is dropped without restoring on load / new game. get reports orbit { on, applied, requested, lastEnd, session, revision }. Not available on VR yet (501). enable, disable, and drive all reject an active free camera owned elsewhere; freeCamOwned reports devbench's own ownership. On VR, after failed pre-load restoration, freecam off retries recovery using the loaded scene's normal VR state; unavailable or rejected recovery returns HTTP 500. Recordings capture the POV per sample and replay restores it via this tool, since what is rendered (and benchmarked) differs by POV. A recording also captures the camera's own world transform per sample, on whichever runtime recorded it; record{action:'replay'} drives it exactly via this tool's freecam+drive instead of setPov, since head-look is a degree of freedom setpos+setPov can't reproduce, on either runtime. Devbench's own replay always owns and releases the free camera itself for that duration.",
+      "description": "Read or set the player camera. action='get' (default) returns { pov, freeCam, camX, camY, camZ, camPitch, camYaw, stateId, freeCamBackend, freeCamOwned, orbit } (plus thirdPersonState: heading, zoom and offsets, while in third person) read live on the main thread, where pov is first | third | vanity | other. stateId is the runtime-specific CameraState value; interpret it with freeCamBackend. action='setPov' applies a switch (param 'pov': first | third | vanity) on the main thread and returns { pov: <applied>, requestedPov } read back the same tick — Skyrim's idle-vanity timer can still override it a few ticks later while the player is stationary, so poll action='get' if you need certainty after idling. action='freecam' (param 'on', default true) enables or disables free camera on either runtime: activation and restoration complete before return (queued=false) and read back the same tick, without changing freeze time. freeCamBackend reports which mechanism is in play: VR ('vr-state') hand-drives the transition, since the engine's own toggle never installs free-cam as the current state on VR 1.4.15; flat ('engine') uses the engine's own toggle, which enters and restores correctly there. action='drive' (params 'x','y','z','pitch','yaw', all default 0) sets the free camera's world transform — requires free-cam mode already on. pitch/yaw are native free-camera angles in radians on both runtimes, writing FreeCameraState::rotation directly; completes its field writes before return, so allow a rendered frame before capture. action='orbit' (params yawDeg default 180, pitchDeg, zoom, right, up; on=false stops) holds the gameplay third-person camera round the player on every camera update, with the player's facing held for the orbit - no free camera, so gameplay input keeps reaching the player (a held mouseLeft keeps charging a spell, for example). It is refused (409) while the free camera is on, during a load, or when requested before a load / new game. It ends - writing back the heading, tilt, zoom and offsets it overwrote - on on=false, when the camera leaves third person (any POV switch), on freecam on or setPov (both answer orbitEnded), and is dropped without restoring on load / new game. get reports orbit { on, applied, requested, lastEnd, session, revision }. Not available on VR yet (501). enable, disable, and drive all reject an active free camera owned elsewhere; freeCamOwned reports devbench's own ownership. On VR, after failed pre-load restoration, freecam off retries recovery using the loaded scene's normal VR state; unavailable or rejected recovery returns HTTP 500. Recordings capture the POV per sample and replay restores it via this tool, since what is rendered (and benchmarked) differs by POV. A recording also captures the camera's own world transform per sample, on whichever runtime recorded it; record{action:'replay'} drives it exactly via this tool's freecam+drive instead of setPov, since head-look is a degree of freedom setpos+setPov can't reproduce, on either runtime. Devbench's own replay always owns and releases the free camera itself for that duration. action='frame' (param 'formId' of a placed reference; optional 'side' front (default) | back | left | right | top | bottom, 'aroundDeg', 'distance', 'distanceScale', 'eyeHeight', 'pitchDeg') drives the free camera, which must already be on, to look at that reference from one side and returns { side, target, pose: { x, y, z, pitch, yaw } }. front, back, left and right are relative to the reference's own heading (inspect refs rotation[2]) with right on its clockwise side; top looks straight down with the image's up being its front, bottom straight up. The camera sits 1.4 x the reference's height away (distanceScale scales that, distance sets units) at eyeHeight (default 0.85) of its height; aroundDeg replaces the side's horizontal angle. Heading and bounds come from the reference, so it suits actors and placed objects; one without bounds is framed as a 128-unit-tall target.",
       "inputSchema": {
         "properties": {
           "action": {
-            "description": "get (default) | setPov | freecam | drive | orbit",
-            "enum": ["get", "setPov", "freecam", "drive", "orbit"],
+            "description": "get (default) | setPov | freecam | drive | orbit | frame",
+            "enum": ["get", "setPov", "freecam", "drive", "orbit", "frame"],
+            "type": "string"
+          },
+          "aroundDeg": {
+            "description": "frame: degrees clockwise from the reference's front, replacing the side's horizontal angle",
+            "type": "number"
+          },
+          "distance": {
+            "description": "frame: camera distance in world units (default 1.4 x the reference's height)",
+            "exclusiveMinimum": 0,
+            "type": "number"
+          },
+          "distanceScale": {
+            "description": "frame: multiplier on the default distance (default 1)",
+            "exclusiveMinimum": 0,
+            "type": "number"
+          },
+          "eyeHeight": {
+            "description": "frame: camera height as a fraction of the reference's height (default 0.85)",
+            "maximum": 2,
+            "minimum": 0,
+            "type": "number"
+          },
+          "formId": {
+            "description": "frame: the placed reference to look at (FormID, EditorID or bare hex FormID)",
             "type": "string"
           },
           "on": {
@@ -326,34 +350,29 @@
             "description": "drive: native free-cam pitch in radians (FreeCameraState::rotation.x)",
             "type": "number"
           },
-          "yawDeg": {
-            "type": "number",
-            "description": "orbit: degrees round the player (0 behind, 180 in front; default 180)"
-          },
           "pitchDeg": {
-            "type": "number",
-            "minimum": -89,
+            "description": "orbit: tilt in degrees, positive looks down (omit to leave it); frame: camera tilt, positive looks down (default 0; top and bottom use +-89)",
             "maximum": 89,
-            "description": "orbit: tilt in degrees, positive looks down (omit to leave it)"
-          },
-          "zoom": {
-            "type": "number",
-            "minimum": -1,
-            "maximum": 1,
-            "description": "orbit: the game's third-person zoom offset (omit to keep it)"
-          },
-          "right": {
-            "type": "number",
-            "description": "orbit: camera offset to the side in units (with up; omit both to keep the game's own)"
-          },
-          "up": {
-            "type": "number",
-            "description": "orbit: camera offset up in units"
+            "minimum": -89,
+            "type": "number"
           },
           "pov": {
             "description": "setPov: target point of view",
             "enum": ["first", "third", "vanity"],
             "type": "string"
+          },
+          "right": {
+            "description": "orbit: camera offset to the side in units (with up; omit both to keep the game's own)",
+            "type": "number"
+          },
+          "side": {
+            "description": "frame: which side to look from (default front); front/back/left/right are relative to the reference's heading",
+            "enum": ["front", "back", "left", "right", "top", "bottom"],
+            "type": "string"
+          },
+          "up": {
+            "description": "orbit: camera offset up in units",
+            "type": "number"
           },
           "x": {
             "description": "drive: world X (requires free-cam mode)",
@@ -367,8 +386,18 @@
             "description": "drive: native free-cam yaw in radians (FreeCameraState::rotation.y)",
             "type": "number"
           },
+          "yawDeg": {
+            "description": "orbit: degrees round the player (0 behind, 180 in front; default 180)",
+            "type": "number"
+          },
           "z": {
             "description": "drive: world Z (requires free-cam mode)",
+            "type": "number"
+          },
+          "zoom": {
+            "description": "orbit: the game's third-person zoom offset (omit to keep it)",
+            "maximum": 1,
+            "minimum": -1,
             "type": "number"
           }
         },

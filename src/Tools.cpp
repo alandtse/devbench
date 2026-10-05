@@ -1,4 +1,5 @@
 #include "Tools.h"
+#include "CameraFrameLogic.h"
 #include "CameraOrbit.h"
 #include <RE/T/ThirdPersonState.h>
 
@@ -829,6 +830,31 @@ namespace dvb
 			return j;
 		}
 
+		// Resolve a form argument: an explicit 0x.. FormID, else an EditorID (tried first so an all-hex
+		// EditorID isn't misread as a FormID), else a bare hex FormID. The hex must be the whole string
+		// and fit 32 bits, so "14G" or an overflow can't truncate to a valid FormID and resolve the
+		// wrong form. Shared by 'inspect refs' formId and 'camera frame'.
+		RE::TESForm* LookupFormArg(const std::string& a_arg)
+		{
+			auto byHex = [](const std::string& s) -> RE::TESForm* {
+				std::size_t        consumed = 0;
+				unsigned long long id = 0;
+				try {
+					id = std::stoull(s, &consumed, 16);
+				} catch (...) {
+					return nullptr;
+				}
+				if (consumed != s.size() || id > 0xFFFFFFFFull)
+					return nullptr;
+				return RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
+			};
+			if (a_arg.size() > 2 && a_arg[0] == '0' && (a_arg[1] == 'x' || a_arg[1] == 'X'))
+				return byHex(a_arg.substr(2));
+			if (auto* f = RE::TESForm::LookupByEditorID(a_arg))
+				return f;
+			return byHex(a_arg);
+		}
+
 		// Identify a placed reference — the form's identity plus its base object and position.
 		// Actors get a live combat snapshot (health, level, hostility) so 'refs formType=Actor'
 		// is an actual check on the NPCs in the scene, not just their names.
@@ -1305,28 +1331,8 @@ namespace dvb
 					};
 
 					if (!formId.empty()) {
-						// Explicit 0x.. → FormID; otherwise EditorID first (so an all-hex EditorID
-						// isn't misread as a FormID), then a bare hex FormID fallback.
-						// Whole-string + 32-bit-range hex, so "14G" / overflow don't truncate to a
-						// valid FormID and resolve the wrong form.
-						auto byHex = [](const std::string& s) -> RE::TESForm* {
-							std::size_t        consumed = 0;
-							unsigned long long id = 0;
-							try {
-								id = std::stoull(s, &consumed, 16);
-							} catch (...) {
-								return nullptr;
-							}
-							if (consumed != s.size() || id > 0xFFFFFFFFull)
-								return nullptr;
-							return RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
-						};
-						RE::TESForm* f = nullptr;
-						if (formId.size() > 2 && formId[0] == '0' && (formId[1] == 'x' || formId[1] == 'X'))
-							f = byHex(formId.substr(2));
-						else if (f = RE::TESForm::LookupByEditorID(formId); !f)
-							f = byHex(formId);
-						json one = (f && f->As<RE::TESObjectREFR>()) ? IdentifyRef(f->As<RE::TESObjectREFR>()) : IdentifyForm(f);
+						RE::TESForm* f = LookupFormArg(formId);
+						json         one = (f && f->As<RE::TESObjectREFR>()) ? IdentifyRef(f->As<RE::TESObjectREFR>()) : IdentifyForm(f);
 						return json{ { "count", f ? 1 : 0 }, { "refs", f ? json::array({ one }) : json::array() } };
 					}
 
@@ -1517,6 +1523,79 @@ namespace dvb
 				return MainThread::RunAndWait([x, y, z, pitch, yaw, session]() {
 					FreeCamera::Drive(x, y, z, pitch, yaw, session);
 					return json{ { "queued", false }, { "action", "drive" } };
+				});
+			}
+
+			// frame: put the free camera on one side of a placed reference, looking at it. front / back / left /
+			// right are relative to the reference's own heading (inspect refs rotation[2]), right being its clockwise
+			// side; top looks straight down with the image's up as its front, bottom straight up. The pose math lives
+			// in CameraFrameLogic; this resolves the reference, drives the camera and reports the pose it used.
+			if (action == "frame") {
+				const std::string target = a_args.value("formId", std::string{});
+				if (target.empty())
+					throw ToolError(400, "camera frame requires 'formId' (FormID, EditorID or bare hex FormID of a placed reference)");
+				const std::string sideName = a_args.value("side", std::string("front"));
+				const auto        side = CameraFrame::ParseSide(sideName);
+				if (!side)
+					throw ToolError(400, "camera frame 'side' must be front | back | left | right | top | bottom");
+				auto number = [&](const char* a_key) -> std::optional<double> {
+					if (!a_args.contains(a_key))
+						return std::nullopt;
+					if (!a_args[a_key].is_number() || !std::isfinite(a_args[a_key].get<double>()))
+						throw ToolError(400, std::format("camera frame '{}' must be a finite number", a_key));
+					return a_args[a_key].get<double>();
+				};
+				constexpr double     kDegToRad = 3.14159265358979323846 / 180.0;
+				CameraFrame::Options opts;
+				opts.side = *side;
+				if (const auto v = number("aroundDeg"))
+					opts.aroundRad = *v * kDegToRad;
+				if (const auto v = number("distance")) {
+					if (*v <= 0.0)
+						throw ToolError(400, "camera frame 'distance' must be > 0");
+					opts.distance = *v;
+				}
+				if (const auto v = number("distanceScale")) {
+					if (*v <= 0.0)
+						throw ToolError(400, "camera frame 'distanceScale' must be > 0");
+					opts.distanceScale = *v;
+				}
+				if (const auto v = number("eyeHeight")) {
+					if (*v < 0.0 || *v > 2.0)
+						throw ToolError(400, "camera frame 'eyeHeight' must be within 0..2 (a fraction of the reference's height)");
+					opts.eyeFraction = *v;
+				}
+				if (const auto v = number("pitchDeg")) {
+					if (*v < -89.0 || *v > 89.0)
+						throw ToolError(400, "camera frame 'pitchDeg' must be within -89..89");
+					opts.pitchRad = *v * kDegToRad;
+				}
+				const auto session = FreeCamera::CurrentSession();
+				return MainThread::RunAndWait([target, sideName, opts, session]() -> json {
+					auto* form = LookupFormArg(target);
+					auto* ref = form ? form->As<RE::TESObjectREFR>() : nullptr;
+					if (!ref)
+						throw ToolError(404, std::format("camera frame: '{}' is not a placed reference", target));
+					const auto          position = ref->GetPosition();
+					const auto          boundMin = ref->GetBoundMin();
+					const auto          boundMax = ref->GetBoundMax();
+					CameraFrame::Target place;
+					place.x = position.x;
+					place.y = position.y;
+					place.z = position.z;
+					place.heading = ref->GetAngle().z;
+					place.boundMinZ = boundMin.z;
+					place.boundMaxZ = boundMax.z;
+					const CameraFrame::Pose pose = CameraFrame::Frame(place, opts);
+					FreeCamera::Drive(static_cast<float>(pose.x), static_cast<float>(pose.y), static_cast<float>(pose.z),
+						static_cast<float>(pose.pitch), static_cast<float>(pose.yaw), session);
+					return json{
+						{ "queued", false },
+						{ "action", "frame" },
+						{ "side", sideName },
+						{ "target", IdentifyForm(ref) },
+						{ "pose", json{ { "x", pose.x }, { "y", pose.y }, { "z", pose.z }, { "pitch", pose.pitch }, { "yaw", pose.yaw } } },
+					};
 				});
 			}
 
@@ -2577,13 +2656,27 @@ namespace dvb
 			"record{action:'replay'} drives it exactly via this tool's freecam+drive instead of "
 			"setPov, since head-look is a degree of freedom setpos+setPov can't reproduce, on "
 			"either runtime. Devbench's own replay always owns and releases the free camera itself "
-			"for that duration.";
+			"for that duration. "
+			"action='frame' (param 'formId' of a placed reference; optional 'side' front (default) | back | left | right | top | "
+			"bottom, 'aroundDeg', 'distance', 'distanceScale', 'eyeHeight', 'pitchDeg') drives the free camera, which must already "
+			"be on, to look at that reference from one side and returns { side, target, pose: { x, y, z, pitch, yaw } }. front, "
+			"back, left and right are relative to the reference's own heading (inspect refs rotation[2]) with right on its clockwise "
+			"side; top looks straight down with the image's up being its front, bottom straight up. The camera sits 1.4 x the "
+			"reference's height away (distanceScale scales that, distance sets units) at eyeHeight (default 0.85) of its height; "
+			"aroundDeg replaces the side's horizontal angle. Heading and bounds come from the reference, so it suits actors and "
+			"placed objects; one without bounds is framed as a 128-unit-tall target.";
 		camera.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "get", "setPov", "freecam", "drive", "orbit" }) }, { "description", "get (default) | setPov | freecam | drive | orbit" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "get", "setPov", "freecam", "drive", "orbit", "frame" }) }, { "description", "get (default) | setPov | freecam | drive | orbit | frame" } } },
 								{ "yawDeg", json{ { "type", "number" }, { "description", "orbit: degrees round the player (0 behind, 180 in front; default 180)" } } },
-								{ "pitchDeg", json{ { "type", "number" }, { "minimum", -89 }, { "maximum", 89 }, { "description", "orbit: tilt in degrees, positive looks down (omit to leave it)" } } },
+								{ "pitchDeg", json{ { "type", "number" }, { "minimum", -89 }, { "maximum", 89 }, { "description", "orbit: tilt in degrees, positive looks down (omit to leave it); frame: camera tilt, positive looks down (default 0; top and bottom use +-89)" } } },
+								{ "formId", json{ { "type", "string" }, { "description", "frame: the placed reference to look at (FormID, EditorID or bare hex FormID)" } } },
+								{ "side", json{ { "type", "string" }, { "enum", json::array({ "front", "back", "left", "right", "top", "bottom" }) }, { "description", "frame: which side to look from (default front); front/back/left/right are relative to the reference's heading" } } },
+								{ "aroundDeg", json{ { "type", "number" }, { "description", "frame: degrees clockwise from the reference's front, replacing the side's horizontal angle" } } },
+								{ "distance", json{ { "type", "number" }, { "exclusiveMinimum", 0 }, { "description", "frame: camera distance in world units (default 1.4 x the reference's height)" } } },
+								{ "distanceScale", json{ { "type", "number" }, { "exclusiveMinimum", 0 }, { "description", "frame: multiplier on the default distance (default 1)" } } },
+								{ "eyeHeight", json{ { "type", "number" }, { "minimum", 0 }, { "maximum", 2 }, { "description", "frame: camera height as a fraction of the reference's height (default 0.85)" } } },
 								{ "zoom", json{ { "type", "number" }, { "minimum", -1 }, { "maximum", 1 }, { "description", "orbit: the game's third-person zoom offset (omit to keep it)" } } },
 								{ "right", json{ { "type", "number" }, { "description", "orbit: camera offset to the side in units (with up; omit both to keep the game's own)" } } },
 								{ "up", json{ { "type", "number" }, { "description", "orbit: camera offset up in units" } } },
