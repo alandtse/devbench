@@ -1,5 +1,5 @@
 // Host-independent coverage for the camera frame pose math. The expected poses for the four
-// horizontal sides are the ones driven on SE 1.6.1170 around Balgruuf (heading 1.6715 rad, bounds
+// horizontal sides are the ones driven on AE 1.7.104 around Balgruuf (heading 1.6715 rad, bounds
 // 0..128, camera 180 units out at 0.85 of his height): front showed his face, right and left
 // his profile, back his back.
 
