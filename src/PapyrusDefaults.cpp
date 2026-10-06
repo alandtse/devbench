@@ -20,7 +20,6 @@ namespace dvb::PapyrusDefaults
 		constexpr Value Int(int a_value, std::string_view a_source = "vanilla") { return { Value::Kind::kInt, static_cast<double>(a_value), a_source }; }
 		constexpr Value Float(double a_value, std::string_view a_source = "vanilla") { return { Value::Kind::kFloat, a_value, a_source }; }
 
-		// Only non-neutral defaults; a neutral one is what an unlisted parameter gets anyway.
 		constexpr Entry kEntries[] = {
 			{ "ObjectReference", "PlaceAtMe", "aiCount", 1, Int(1) },
 			{ "ObjectReference", "PlaceActorAtMe", "aiLevelMod", 1, Int(4) },
