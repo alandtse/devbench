@@ -1171,6 +1171,8 @@ namespace dvb
 					std::vector<const RE::NiLight*> lights;
 					CollectLightObjects(node, lights, *a_budget);
 					for (const auto* light : lights) {
+						if (!a_budget->Emit())
+							break;  // the read's output limit covers held lights too; a refusal leaves the search incomplete
 						const auto scene = a_active->find(light);
 						entries.push_back({ reinterpret_cast<std::uintptr_t>(light), HeldLights::MembershipOf(scene == a_active->end() ? nullptr : scene->second) });
 						json entry = DescribeLight(light, node, *a_active, *a_budget);
