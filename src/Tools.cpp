@@ -9,6 +9,7 @@
 #include "FreeCamera.h"
 #include "GameEvents.h"
 #include "GameState.h"
+#include "HeldLightsLogic.h"
 #include "HostApi.h"
 #include "InspectLogic.h"
 #include "Json.h"
@@ -1046,6 +1047,30 @@ namespace dvb
 			return out;
 		}
 
+		// Every NiLight under a_root, each node charged to a_budget.
+		void CollectLightObjects(const RE::NiAVObject* a_root, std::vector<const RE::NiLight*>& a_out, InspectLogic::TraversalBudget& a_budget)
+		{
+			std::vector<const RE::NiAVObject*> stack;
+			if (a_root)
+				stack.push_back(a_root);
+			while (!stack.empty()) {
+				const RE::NiAVObject* object = stack.back();
+				stack.pop_back();
+				if (!object)
+					continue;
+				if (!a_budget.VisitNode())
+					return;
+				if (const auto* light = netimmerse_cast<const RE::NiLight*>(object))
+					a_out.push_back(light);
+				if (auto* node = const_cast<RE::NiAVObject*>(object)->AsNode()) {
+					auto& children = node->GetChildren();
+					for (auto i = children.size(); i > 0; --i)
+						if (const auto& child = children[i - 1])
+							stack.push_back(child.get());
+				}
+			}
+		}
+
 		json LightsCoverage(const InspectLogic::TraversalBudget& a_budget)
 		{
 			json by = json::array();
@@ -1121,7 +1146,42 @@ namespace dvb
 			auto* equipped = a_actor->GetEquippedObject(a_left);
 			auto* spell = equipped ? equipped->As<RE::SpellItem>() : nullptr;
 			a_obs.holdsSpell = spell != nullptr;
-			json  j{ { "equipped", IdentifyForm(equipped) } };
+			json j{ { "equipped", IdentifyForm(equipped) } };
+			if (a_active && a_budget) {
+				// Lights hung on what the hand holds (a weapon or staff light, an enchantment light), from both 3D trees.
+				// Each entry says which scene list it is in; that is not proof it is visible.
+				const char*                     nodeName = a_left ? "SHIELD" : "WEAPON";
+				json                            held = json::array();
+				std::vector<HeldLights::Search> searches;
+				std::vector<HeldLights::Entry>  entries;
+				auto*                           thirdRoot = a_actor->Get3D(false);
+				for (const bool firstPerson : { false, true }) {
+					auto* root = firstPerson ? a_actor->Get3D(true) : thirdRoot;
+					// Only the player has a separate first-person tree; an NPC's Get3D(true) returns its third-person
+					// root, which would list each of its lights twice.
+					if (firstPerson && (!root || root == thirdRoot))
+						continue;
+					HeldLights::Search search{ firstPerson ? "firstPerson" : "thirdPerson", nodeName };
+					search.rootLoaded = root != nullptr;
+					auto* node = root ? root->GetObjectByName(nodeName) : nullptr;
+					search.nodeFound = node != nullptr;
+					searches.push_back(search);
+					if (!node)
+						continue;
+					std::vector<const RE::NiLight*> lights;
+					CollectLightObjects(node, lights, *a_budget);
+					for (const auto* light : lights) {
+						const auto scene = a_active->find(light);
+						entries.push_back({ reinterpret_cast<std::uintptr_t>(light), HeldLights::MembershipOf(scene == a_active->end() ? nullptr : scene->second) });
+						json entry = DescribeLight(light, node, *a_active, *a_budget);
+						entry["view"] = search.view;
+						entry["lightId"] = std::format("{:X}", reinterpret_cast<std::uintptr_t>(light));
+						held.push_back(std::move(entry));
+					}
+				}
+				j["heldLights"] = std::move(held);
+				j.update(HeldLights::SummaryFields(searches, HeldLights::Summarize(searches, entries), a_budget->Truncated()));
+			}
 			auto* caster = HandCaster(a_actor, a_left);
 			a_obs.casterPresent = caster != nullptr;
 			if (!caster) {
@@ -1679,7 +1739,8 @@ namespace dvb
 						throw ToolError(404, "inspect lights: reference not found");
 
 					// One budget for the whole read. The visited set dedupes only the first- and third-person
-					// graphs and their shared children.
+					// graphs and their shared children; the hand search re-walks WEAPON/SHIELD and charges those
+					// nodes again.
 					InspectLogic::TraversalBudget             budget(kLightNodeBudget, kLightParentStepBudget, limit);
 					std::unordered_set<const RE::NiAVObject*> visited;
 					json                                      out{ { "scope", "ref" }, { "ref", IdentifyRef(ref) }, { "observation", kLightObservation }, { "sceneActiveLights", active.size() } };
@@ -2857,7 +2918,12 @@ namespace dvb
 				"castingArtReady (every spell hand's caster flags its art attached; says nothing about which art), "
 				"handsReady (settled drawn, and every spell hand's attach sequence finished: no art pending, no clone task, "
 				"the attached flag set and an attached art node recorded; it does not compare the model with the spell and "
-				"is not proof a rendered frame shows it), left/right:{equipped, caster:{state, currentSpell, castingArt (the "
+				"is not proof a rendered frame shows it), left/right:{equipped, heldLights (every light under the hand's first "
+				"WEAPON/SHIELD node in each view, with view, lightId and inScene), heldLightEntriesInScene (entries in the "
+				"scene's active/shadow lists - not proof a light is visible), heldLightsUnique, heldLightsUniqueInScene, "
+				"heldLightSearch [{view, node, match, rootLoaded, nodeFound}], heldLightSearchComplete (false: an empty list "
+				"does not prove the hand holds no light; firstPerson is searched only when the actor has its own first-person 3D), "
+				"caster:{state, currentSpell, castingArt (the "
 				"art still to attach; null once attached), castingArtPending, pendingArtMatchesEquipped (null when nothing "
 				"is pending), castingArtLoading, castingArtAttached, attachedArtNode, light}}} (caster, light and "
 				"attachedArtNode null when absent) }; "
