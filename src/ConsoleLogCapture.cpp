@@ -343,7 +343,7 @@ namespace dvb::ConsoleLogCapture
 		logs::info("devbench: console print hook installed ({} byte prologue)", length);
 	}
 
-	bool RunFencedCapture(const std::string& a_command)
+	bool RunFencedCapture(const std::string& a_command, Result* a_out, std::size_t a_maxLines)
 	{
 		std::unique_lock<std::mutex> owned(g_captureMutex, std::try_to_lock);
 		if (!owned.owns_lock())
@@ -387,13 +387,20 @@ namespace dvb::ConsoleLogCapture
 				g_timedOut.store(true);
 			}
 		}
-		// The print window is closed; take every source's view at this one point.
+		// The print window is closed; take every source's view at this one point, and the caller's
+		// copy with it while this call still owns the capture. A shared result: a task that starts
+		// late, after the timeout below, must not write into this frame.
+		const auto output = a_out ? std::make_shared<Result>() : nullptr;
 		try {
-			MainThread::RunAndWait([source]() -> json {
+			MainThread::RunAndWait([source, output, a_maxLines]() -> json {
 				TakeSnapshot(source);
+				if (output)
+					*output = ReadFenced(a_maxLines);
 				return true;
 			},
 				kLookTimeout);
+			if (output)
+				*a_out = *output;
 		} catch (const ToolError& e) {
 			logs::warn("devbench: console capture could not snapshot its output: {}", e.what());
 		}

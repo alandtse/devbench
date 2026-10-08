@@ -122,16 +122,16 @@
     },
     {
       "name": "console",
-      "description": "Run a Skyrim console command. action='exec' (default) queues `command` onto the main thread (runs next tick). With capture=true it is fenced between marker commands and exec returns once the output has landed, so a following action='read' returns the command's output as { markersFound, lines:[...], source, lossPossible }. source='print' (the normal case) comes from a hook on the console's print function and holds EVERY line printed between the markers, from the game or any plugin, whether or not the Console menu exists (lossPossible only past 20000 lines or 4 MiB, counted in diag.printDropped). The fallbacks, used only when that hook could not be installed (diag.printHooked=false): source='buffer' is complete, including several lines printed in one frame (e.g. `help`); source='sampler' is used once the Console menu has been created, when the game stops filling that buffer: it sees one line per frame, so a command that prints SEVERAL lines in a frame keeps only the last (lossPossible=true). read returns the most recent 'maxLines' lines (default 200). A second capture while one is running gets 409. exec then returns { queued:false, completed }, completed=false meaning the end marker never arrived and `lines` may be incomplete; a capture that never sees its begin marker gets 504 and the command is not run. `save <name>`/`load <name>` are rerouted to the `game` tool's save/load path and return { redirected:'game' } — saves use SKSE's queued request to avoid synchronous save deadlocks (SkyrimVM::Freeze vs blocked main loop).",
+      "description": "Run a Skyrim console command. action='exec' (default) queues `command` onto the main thread (runs next tick). With capture=true it is fenced between marker commands and exec returns once the output has landed, with the command's output as lines:[...]; action='read' returns that output again as { markersFound, lines:[...], source, lossPossible } (plus diag). source='print' (the normal case) comes from a hook on the console's print function and holds EVERY line printed between the markers, from the game or any plugin, whether or not the Console menu exists (lossPossible only past 20000 lines or 4 MiB, counted in diag.printDropped). The fallbacks, used only when that hook could not be installed (diag.printHooked=false): source='buffer' is complete, including several lines printed in one frame (e.g. `help`); source='sampler' is used once the Console menu has been created, when the game stops filling that buffer: it sees one line per frame, so a command that prints SEVERAL lines in a frame keeps only the last (lossPossible=true). Both return the most recent 'maxLines' lines (default 200). A second capture while one is running gets 409. exec then returns { queued:false, completed, lines, lossPossible }, completed=false meaning the end marker never arrived and `lines` may be incomplete (no `lines` when the main thread was too busy to take the output; 'read' has none then either); a capture that never sees its begin marker gets 504 and the command is not run. `save <name>`/`load <name>` are rerouted to the `game` tool's save/load path and return { redirected:'game' } — saves use SKSE's queued request to avoid synchronous save deadlocks (SkyrimVM::Freeze vs blocked main loop).",
       "inputSchema": {
         "properties": {
           "action": {
-            "description": "'exec' (default) runs `command`; 'read' returns the fenced output and closes the window",
+            "description": "'exec' (default) runs `command`; 'read' returns the last capture's fenced output",
             "enum": ["exec", "read"],
             "type": "string"
           },
           "capture": {
-            "description": "exec: fence and capture this command's output for the next read",
+            "description": "exec: fence and capture this command's output; exec returns it as `lines`, and 'read' returns it again",
             "type": "boolean"
           },
           "command": {
@@ -139,7 +139,7 @@
             "type": "string"
           },
           "maxLines": {
-            "description": "read: most recent lines to return (default 200, max 20000)",
+            "description": "exec with capture, read: most recent lines to return (default 200, max 20000)",
             "type": "integer"
           }
         },

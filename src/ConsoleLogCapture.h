@@ -51,7 +51,9 @@ namespace dvb::ConsoleLogCapture
 
 	/// Runs `a_command` fenced; false if the end marker never arrived. Throws 409 if a capture is
 	/// running and 504 if the begin marker never appeared (the command was not run). Listener thread only.
-	bool RunFencedCapture(const std::string& a_command);
+	/// `a_out` gets this capture's ReadFenced(a_maxLines), read while the capture is still owned, so a
+	/// later capture can't replace it; it keeps source "none" when the closing snapshot couldn't be taken.
+	bool RunFencedCapture(const std::string& a_command, Result* a_out = nullptr, std::size_t a_maxLines = 200);
 
 	/// Slices the last capture's output from the source it used. Main thread.
 	Result ReadFenced(std::size_t a_maxLines = 200);
