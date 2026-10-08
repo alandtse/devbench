@@ -3229,8 +3229,8 @@ namespace dvb
 			"'self' to call a MEMBER function on a target: { \"form\": \"0x14 | EditorID\" } targets "
 			"any form, or \"selected\" uses the console/crosshair ref (set via prid); without 'self' "
 			"only global/native functions are callable. args and returns support bool/number/string, "
-			"{ \"form\": … } (a form return resolves to { formId, formType, editorId, name }), and "
-			"arrays of scalars.";
+			"{ \"form\": … } (a form return resolves to { formId, formType, editorId, name }), "
+			"arrays of scalars, and null for None (object and array params).";
 		papyrus.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
@@ -3238,7 +3238,7 @@ namespace dvb
 								{ "script", json{ { "type", "string" }, { "description", "describe/call: the Papyrus script class name, e.g. Utility, Game, Actor" } } },
 								{ "function", json{ { "type", "string" }, { "description", "call: the function name, e.g. GetCurrentGameTime or GetActorValue" } } },
 								{ "self", json{ { "description", "call: target a member function — { \"form\": \"0x14 | EditorID\" } or \"selected\" (console/crosshair ref). Omit for global/native functions." } } },
-								{ "args", json{ { "type", "array" }, { "description", "call: arguments; each a bool/number/string, { \"form\": \"0x14 | EditorID\" }, or an array of scalars" } } },
+								{ "args", json{ { "type", "array" }, { "description", "call: arguments; each a bool/number/string, { \"form\": \"0x14 | EditorID\" }, an array of scalars, or null for None (object and array params)" } } },
 								{ "filter", json{ { "type", "string" }, { "description", "list: case-insensitive substring to match class names" } } },
 								{ "limit", json{ { "type", "integer" }, { "description", "list: max class names to return (default 200)" } } },
 								{ "timeoutMs", json{ { "type", "integer" }, { "description", "call: ms to wait for the result before 504 (default 3000)" } } },

@@ -200,12 +200,16 @@ namespace dvb::Papyrus
 
 		// One JSON arg → one Variable. Scalars are direct; { "form": "0x14" | "EditorID" } resolves
 		// a TESForm and packs it to the declared param type (a_paramType) so base-typed params bind,
-		// else to its native type; a JSON array becomes a typed Papyrus array. Touches the VM (form
-		// handles / array alloc) — call on the main thread.
+		// else to its native type; a JSON array becomes a typed Papyrus array; null is None (an
+		// object or array param only, as in Papyrus). Touches the VM (form handles / array alloc) —
+		// call on the main thread.
 		BSScript::Variable JsonToVariable(BSScript::Internal::VirtualMachine* a_vm, const json& a_arg, const BSScript::TypeInfo* a_paramType)
 		{
-			BSScript::Variable v;
-			if (a_arg.is_boolean()) {
+			BSScript::Variable v;  // default-constructed → None
+			if (a_arg.is_null()) {
+				if (a_paramType && !a_paramType->IsObject() && !a_paramType->IsArray())
+					throw ToolError(400, std::format("papyrus call: null (None) passed for a param of type {}; None fits only object and array params", a_paramType->TypeAsString()));
+			} else if (a_arg.is_boolean()) {
 				v.SetBool(a_arg.get<bool>());
 			} else if (a_arg.is_number_float()) {
 				v.SetFloat(static_cast<float>(a_arg.get<double>()));
@@ -225,7 +229,7 @@ namespace dvb::Papyrus
 				else
 					BSScript::PackHandle(&v, form, static_cast<RE::VMTypeID>(form->GetFormType()));
 			} else {
-				throw ToolError(400, "papyrus call: each arg must be a bool, number, string, array, or { \"form\": \"0x.. | EditorID\" }");
+				throw ToolError(400, "papyrus call: each arg must be a bool, number, string, array, null (None), or { \"form\": \"0x.. | EditorID\" }");
 			}
 			return v;
 		}
