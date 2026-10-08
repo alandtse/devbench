@@ -53,6 +53,12 @@ namespace dvb
 		// nothing on SE/AE, instead of the AddEvent<ButtonEvent> template every runtime uses.
 		std::uint32_t IdCodeOf(std::uint16_t a_code) { return static_cast<std::uint32_t>(EngineButtonOf(a_code).id); }
 
+		const RE::BSFixedString& DeviceUserEvent()
+		{
+			static const auto* empty = new RE::BSFixedString("");
+			return *empty;
+		}
+
 		std::int64_t NowMs()
 		{
 			return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
@@ -159,7 +165,7 @@ namespace dvb
 				}
 				if (!queued) {
 					const float heldSecs = HeldDownSeconds(key.pressedAtGameMs, gameNow);
-					queue->AddButtonEvent(DeviceOf(key.scancode), 0, IdCodeOf(key.scancode), 1.0F, heldSecs);
+					queue->AddButtonEvent(DeviceOf(key.scancode), 0, IdCodeOf(key.scancode), 1.0F, heldSecs, DeviceUserEvent());
 				}
 			}
 		}
@@ -564,7 +570,7 @@ namespace dvb
 							DisengageForHold();
 					}
 					queue->AddButtonEvent(DeviceOf(a_lease.key.scancode), 0, IdCodeOf(a_lease.key.scancode),
-						a_down ? 1.0F : 0.0F, a_down ? 0.0F : a_heldSecs);
+						a_down ? 1.0F : 0.0F, a_down ? 0.0F : a_heldSecs, DeviceUserEvent());
 					return json{ { "frame", game::CurrentFrame() } };
 				});
 				if (completion.wait_for(milliseconds(0)) != std::future_status::ready)
