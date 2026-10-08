@@ -883,7 +883,7 @@ namespace dvb
 		}
 
 		// Identify a placed reference — the form's identity plus its base object and position.
-		// Actors get a live combat snapshot (health, level, hostility) so 'refs formType=Actor'
+		// Actors get a live combat snapshot (health, stamina, attack state, level, hostility) so 'refs formType=Actor'
 		// is an actual check on the NPCs in the scene, not just their names.
 		json IdentifyRef(RE::TESObjectREFR* a_ref)
 		{
@@ -920,7 +920,12 @@ namespace dvb
 				if (auto* avo = actor->AsActorValueOwner()) {
 					a["health"] = avo->GetActorValue(RE::ActorValue::kHealth);
 					a["healthMax"] = avo->GetPermanentActorValue(RE::ActorValue::kHealth);
+					a["stamina"] = avo->GetActorValue(RE::ActorValue::kStamina);
+					a["staminaMax"] = avo->GetPermanentActorValue(RE::ActorValue::kStamina);
 				}
+				// The console's GetAttackState: 0 none, 1 draw, 2 swing, 3 hit, 4 next attack, 5 follow-through, 6 bash, 8-13 bow.
+				if (auto* state = actor->AsActorState())
+					a["attackState"] = static_cast<int>(state->GetAttackState());
 				if (auto* pc = RE::PlayerCharacter::GetSingleton(); pc && actor != pc)
 					a["hostileToPlayer"] = actor->IsHostileToActor(pc);
 				a["playerTeammate"] = actor->IsPlayerTeammate();
@@ -2947,7 +2952,8 @@ namespace dvb
 				"editorId, base, position, rotation, cell, model, bounds } — 'model' is the base "
 				"object's mesh (.nif) path when it has one; 'bounds' is { min, max } local extents "
 				"for framing a shot; an actor ref also carries actor { level, health, healthMax, "
-				"hostileToPlayer, playerTeammate, alive, loaded3D } and, when the ref has no name, its "
+				"stamina, staminaMax, attackState (the console's GetAttackState: 0 none, 2 swing, 3 hit, "
+				"...), hostileToPlayer, playerTeammate, alive, loaded3D } and, when the ref has no name, its "
 				"display name; pass 'formId' for one form, 'selected'=true for the "
 				"console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid "
 				"(optional 'formType' filter, 'model' substring filter against the base object's mesh path, "

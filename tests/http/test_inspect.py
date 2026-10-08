@@ -79,6 +79,16 @@ def test_refs_player_by_formid(client, inspect):
 
 
 @pytest.mark.requires_player
+def test_refs_actor_reports_attack_state_and_stamina(client, inspect):
+    require_enum(inspect, "kind", "refs")
+    body = client.ok("inspect", {"kind": "refs", "formId": "0x14"})
+    actor = body["refs"][0].get("actor")
+    state = actor.get("attackState")  # a reused game's player may be mid-attack: any state, not only 0
+    assert isinstance(state, int) and not isinstance(state, bool) and state >= 0, actor
+    assert _is_number(actor.get("stamina")) and _is_number(actor.get("staminaMax")), actor
+
+
+@pytest.mark.requires_player
 def test_refs_enumerate_reports_cell_and_model(client, inspect):
     require_enum(inspect, "kind", "refs")
     body = client.ok("inspect", {"kind": "refs", "formType": "Static", "radius": 5000, "limit": 50})
