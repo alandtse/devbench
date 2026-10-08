@@ -62,6 +62,36 @@ def test_call_game_getplayer(client, papyrus):
     assert body.get("returnedType") == "Actor", body
 
 
+# Skyrim.esm's TGNightingalePowerHandler carries two scripts: its stage fragments and
+# TGNQuestScript, whose CanIAward() only reads the game time.
+TGN_QUEST = "0x0010B0E0"
+
+
+@pytest.mark.requires_player
+def test_call_returns_form_behind_attached_script(client, papyrus):
+    require_enum(papyrus, "action", "call")
+    body = client.ok(
+        "papyrus",
+        {"action": "call", "script": "Quest", "function": "GetQuest", "args": ["TGNightingalePowerHandler"]},
+    )
+    assert body.get("returned", {}).get("formId") == TGN_QUEST, body
+
+
+@pytest.mark.requires_player
+def test_call_member_of_named_attached_script(client, papyrus):
+    require_enum(papyrus, "action", "call")
+    body = client.ok(
+        "papyrus",
+        {
+            "action": "call",
+            "script": "TGNQuestScript",
+            "function": "CanIAward",
+            "self": {"form": TGN_QUEST},
+        },
+    )
+    assert isinstance(body.get("returned"), bool), body
+
+
 def test_call_game_getgamesettingfloat(client, papyrus):
     require_enum(papyrus, "action", "call")
     body = client.ok(

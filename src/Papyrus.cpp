@@ -60,9 +60,14 @@ namespace dvb::Papyrus
 			if (!formBacked)
 				return out;
 
+			// Only native classes have a VM type id; a form's attached custom script resolves
+			// through its nearest native ancestor (TGNQuestScript → Quest).
 			RE::VMTypeID typeID{};
-			auto*        policy = a_vm->GetObjectHandlePolicy();
-			if (policy && a_vm->GetTypeIDForScriptObject(cls.c_str(), typeID)) {
+			auto*        native = typeInfo;
+			while (native && !a_vm->GetTypeIDForScriptObject(native->GetName(), typeID))
+				native = native->GetParent();
+			auto* policy = a_vm->GetObjectHandlePolicy();
+			if (policy && native) {
 				if (auto* form = static_cast<RE::TESForm*>(policy->GetObjectForHandle(typeID, obj->GetHandle()))) {
 					out["formId"] = std::format("0x{:08X}", form->GetFormID());
 					out["formType"] = std::format("{}", static_cast<int>(form->GetFormType()));
@@ -494,7 +499,11 @@ namespace dvb::Papyrus
 			auto*             policy = a_vm->GetObjectHandlePolicy();
 			RE::VMTypeID      reqTypeID{};
 			const auto        handle = policy ? policy->GetHandleForObject(static_cast<RE::VMTypeID>(form->GetFormType()), form) : RE::VMHandle{};
-			const bool        isRequestedType = policy && a_vm->GetTypeIDForScriptObject(a_className, reqTypeID) && policy->HandleIsType(reqTypeID, handle);
+			// Only native classes have a VM type id, so an attached custom script never passes the
+			// check below; look it up by name among the scripts bound to the form first.
+			if (policy && handle != policy->EmptyHandle() && a_vm->FindBoundObject(handle, a_className.c_str(), a_out) && a_out)
+				return true;
+			const bool isRequestedType = policy && a_vm->GetTypeIDForScriptObject(a_className, reqTypeID) && policy->HandleIsType(reqTypeID, handle);
 			if (!isRequestedType) {
 				RE::BSTSmartPointer<BSScript::ObjectTypeInfo> nativeType;
 				if (a_vm->GetScriptObjectType(static_cast<RE::VMTypeID>(form->GetFormType()), nativeType) && nativeType && nativeType->GetName())
