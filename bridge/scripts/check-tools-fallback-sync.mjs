@@ -14,6 +14,8 @@ if (!baseRef) {
   throw new Error("usage: check-tools-fallback-sync.mjs <base-ref>");
 }
 
+// A core-tool file counts only when a changed code line (comments excluded) holds a string
+// literal of three or more characters: tool text and schema keys are always literals.
 const REGISTRATION_FILES = [
   "src/Tools.cpp",
   "src/Capture.cpp",
@@ -26,6 +28,7 @@ const REGISTRATION_FILES = [
 const DESCRIPTOR_FILE = "src/ToolRegistry.h";
 const DESCRIPTOR_TOKENS =
   /\b(DefaultInputSchema|ToolDescriptor|inputSchema|readOnly)\b/;
+const STRING_LITERAL = /"(?:[^"\\]|\\.){3,}"/;
 const FALLBACK_FILE = "bridge/src/tools-fallback.json";
 
 // Structural validation, independent of whether a registration file changed --
@@ -67,24 +70,27 @@ const changed = execFileSync(
   .split("\n")
   .filter(Boolean);
 
-function descriptorChanged() {
-  if (!changed.includes(DESCRIPTOR_FILE)) return false;
+function changedCodeLines(file) {
+  if (!changed.includes(file)) return [];
   const diff = execFileSync(
     "git",
-    ["diff", "-U0", `${baseRef}...HEAD`, "--", DESCRIPTOR_FILE],
+    ["diff", "-U0", `${baseRef}...HEAD`, "--", file],
     { encoding: "utf-8" },
   );
   return diff
     .split("\n")
     .filter((l) => /^[+-](?![+-])/.test(l))
     .map((l) => l.slice(1).trim())
-    .filter((l) => l && !l.startsWith("//") && !l.startsWith("/*"))
-    .some((l) => DESCRIPTOR_TOKENS.test(l));
+    .filter((l) => l && !l.startsWith("//") && !l.startsWith("/*"));
 }
 
 const touchedRegistrationFiles = [
-  ...REGISTRATION_FILES.filter((f) => changed.includes(f)),
-  ...(descriptorChanged() ? [DESCRIPTOR_FILE] : []),
+  ...REGISTRATION_FILES.filter((f) =>
+    changedCodeLines(f).some((l) => STRING_LITERAL.test(l)),
+  ),
+  ...(changedCodeLines(DESCRIPTOR_FILE).some((l) => DESCRIPTOR_TOKENS.test(l))
+    ? [DESCRIPTOR_FILE]
+    : []),
 ];
 const registrationChanged = touchedRegistrationFiles.length > 0;
 const fallbackChanged = changed.includes(FALLBACK_FILE);
