@@ -172,19 +172,40 @@ def test_call_refuses_null_for_scalar_param(client, papyrus):
     assert isinstance(body, dict) and body.get("code") == 400, body
 
 
-def test_call_pads_omitted_optional_args(client, papyrus):
-    # DispatchStaticCall/MethodCall don't fill Papyrus optional-param defaults, so
-    # omitting them makes the native read unset slots and no-op (e.g. MoveTo/Disable
-    # with their optional flag omitted ran but did nothing). devbench pads omitted
-    # trailing optionals with the type's neutral value. Utility.RandomInt(0, 100)
-    # called with no args therefore pads to RandomInt(0, 0) -> a deterministic 0,
-    # proving the padding happened and the call no longer no-ops.
+def test_call_fills_a_known_default_from_the_table(client, papyrus):
     require_enum(papyrus, "action", "call")
-    body = client.ok("papyrus", {"action": "call", "script": "Utility", "function": "RandomInt"})
+    body = client.ok(
+        "papyrus", {"action": "call", "script": "Utility", "function": "RandomInt", "args": [0]}
+    )
     assert body.get("called") is True, body
-    returned = body.get("returned")
-    assert isinstance(returned, int) and not isinstance(returned, bool), body
-    assert returned == 0, body  # padded to RandomInt(0, 0)
+    assert 0 <= body.get("returned") <= 100, body
+    filled = body.get("filledArgs")
+    assert isinstance(filled, list) and len(filled) == 1, body
+    assert filled[0]["source"] == "table" and filled[0]["value"] == 100, body
+    assert "warning" not in body, body
+
+
+def test_call_refuses_an_omitted_arg_with_no_known_default(client, papyrus):
+    require_enum(papyrus, "action", "call")
+    status, body = client.call(
+        "papyrus", {"action": "call", "script": "Utility", "function": "RandomInt"}
+    )
+    assert status == 400, (status, body)
+    assert "no known default" in body.get("error", ""), body
+
+
+def test_call_fill_neutral_guesses_and_warns(client, papyrus):
+    require_enum(papyrus, "action", "call")
+    body = client.ok(
+        "papyrus",
+        {"action": "call", "script": "Utility", "function": "RandomInt", "fillNeutral": True},
+    )
+    assert body.get("called") is True, body
+    assert 0 <= body.get("returned") <= 100, body
+    sources = [f["source"] for f in body.get("filledArgs", [])]
+    assert sources == ["neutral", "table"], body
+    assert body.get("filledArgs")[0]["value"] == 0, body
+    assert "warning" in body, body
 
 
 def test_call_bogus_function_errors(client, papyrus):
