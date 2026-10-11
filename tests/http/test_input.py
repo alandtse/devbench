@@ -26,7 +26,18 @@ def test_input_capability_contract(client, tool_schema):
     ), body
     keys = keyboard.get("keys")
     assert isinstance(keys, list) and keys, body
-    assert {"key": "enter", "scancode": 0x1C} in keys, body
+    by_name = {k.get("key"): k for k in keys}
+    enter = by_name.get("enter")
+    assert enter is not None, body
+    assert enter["scancode"] == 0x1C, enter
+    assert enter["codeDomain"] == "directInputScanCode", enter
+    assert enter["engineDevice"] == "keyboard", enter
+    left = by_name.get("mouseLeft")
+    assert left is not None, body
+    assert left["scancode"] == 256, left
+    assert left["codeDomain"] == "mouseButton", left
+    assert left["engineDevice"] == "mouse", left
+    assert {"mouseRight", "mouseMiddle"} <= set(by_name), body
     vr_set = body.get("capabilities", {}).get("vrTrackedSet", {})
     assert vr_set.get("atomicDevices") == ["hmd", "left", "right"], body
     assert vr_set.get("passThroughWhenInactive") is True, body
