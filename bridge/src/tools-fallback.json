@@ -647,7 +647,7 @@
     },
     {
       "name": "wait",
-      "description": "Advance time by waiting `hours`, synchronously and without touching the Wait menu's UI at all: starts the wait, then drives its completion (autosave, script events) to done before returning — no polling needed. Refuses with { completed:false, reason } on the same gate the menu itself enforces (combat, trespassing, midair, hostiles nearby, etc.).",
+      "description": "Advance time by waiting `hours`, synchronously and without touching the Wait menu's UI at all: starts the wait and returns once the game has run it to the end, one tick per frame as with the menu open (no autosave) — no polling needed. Refuses with { completed:false, reason } on the same gate the menu itself enforces (combat, trespassing, midair, hostiles nearby, etc.).",
       "inputSchema": {
         "properties": {
           "hours": {
