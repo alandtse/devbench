@@ -223,6 +223,7 @@ namespace dvb::DrawStats
 				auto& f = g_ring[g_cur];
 				Collect(f);
 				f.spans = 0;
+				f.window = g_window.load(std::memory_order_acquire);
 				g_ctx->Begin(f.disjoint);
 				g_ctx->End(f.start);
 				g_inFrame = true;
@@ -237,7 +238,6 @@ namespace dvb::DrawStats
 				auto& f = g_ring[g_cur];
 				g_ctx->End(f.stop);
 				g_ctx->End(f.disjoint);
-				f.window = g_window.load(std::memory_order_acquire);
 				f.pending = true;
 				g_inFrame = false;
 			}
