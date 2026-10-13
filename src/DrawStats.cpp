@@ -104,6 +104,7 @@ namespace dvb::DrawStats
 				std::array<int, kMaxSpans>              bucket{};
 				std::size_t                             spans = 0;
 				bool                                    pending = false;
+				std::uint32_t                           window = 0;
 			};
 
 			std::array<Frame, kRing> g_ring{};
@@ -113,6 +114,8 @@ namespace dvb::DrawStats
 			bool                     g_ok = false;
 			bool                     g_inFrame = false;
 			int                      g_open = -1;
+			// A frame issued before the last reset is dropped when it resolves.
+			std::atomic<std::uint32_t> g_window{ 0 };
 
 			bool Ready(ID3D11Query* a_query, std::uint64_t& a_out)
 			{
@@ -124,6 +127,8 @@ namespace dvb::DrawStats
 				if (!a_frame.pending)
 					return;
 				a_frame.pending = false;
+				if (a_frame.window != g_window.load(std::memory_order_acquire))
+					return;
 				D3D11_QUERY_DATA_TIMESTAMP_DISJOINT dj{};
 				std::uint64_t                       t0 = 0;
 				std::uint64_t                       t1 = 0;
@@ -232,6 +237,7 @@ namespace dvb::DrawStats
 				auto& f = g_ring[g_cur];
 				g_ctx->End(f.stop);
 				g_ctx->End(f.disjoint);
+				f.window = g_window.load(std::memory_order_acquire);
 				f.pending = true;
 				g_inFrame = false;
 			}
@@ -526,6 +532,8 @@ namespace dvb::DrawStats
 			out["started"] = true;
 			return out;
 		}
+		if (a_reset)
+			Gpu::g_window.fetch_add(1, std::memory_order_acq_rel);
 		const Counts now = Take();
 		json         out = Report(g_windowStart, now);
 		if (a_reset)
