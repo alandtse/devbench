@@ -1890,10 +1890,7 @@ namespace dvb
 				return Capture::ListScreenshots(a_args);
 
 			if (kind == "draws") {
-				const auto reset = a_args.find("reset");
-				if (reset != a_args.end() && !reset->is_boolean())
-					throw ToolError(400, "inspect draws: 'reset' must be a boolean");
-				const bool doReset = reset != a_args.end() && reset->get<bool>();
+				const bool doReset = BooleanArgument(a_args, "reset", false);
 				return MainThread::RunAndWait([doReset]() { return DrawStats::Read(doReset); });
 			}
 

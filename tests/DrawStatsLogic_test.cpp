@@ -65,7 +65,7 @@ TEST_CASE("draws: a reading's shape and per-frame numbers")
 	b.targetGpuNs[1] = 80 * 2'000'000ull;
 	const std::vector<Target> targets{ { 1920, 1080, 10, 1, false }, { 1920, 1080, 40, 1, true } };
 
-	const auto r = Reading(a, b, targets, 1920, 1080, true, 1000.0);
+	const auto r = Reading(a, b, targets, false, 1920, 1080, true, 1000.0);
 	CHECK(r["frames"] == 100);
 	CHECK(r["seconds"] == 2.0);
 	CHECK(r["fps"] == 50.0);
@@ -105,10 +105,19 @@ TEST_CASE("draws: a reading's shape and per-frame numbers")
 TEST_CASE("draws: an empty window reads zeros, never a division by zero")
 {
 	const Counts c{};
-	const auto   r = Reading(c, c, {}, 0, 0, false, 1000.0);
+	const auto   r = Reading(c, c, {}, false, 0, 0, false, 1000.0);
 	CHECK(r["frames"] == 0);
 	CHECK(r["fps"] == 0.0);
 	CHECK(r["cpuFrameMs"] == 0.0);
 	CHECK(r["gpu"]["frameMs"] == 0.0);
 	CHECK(r["mainPassTargets"].empty());
+}
+
+TEST_CASE("draws: a full target list is capped only once a target was refused")
+{
+	const Counts              c{};
+	const std::vector<Target> full(kMaxTargets, Target{ 1920, 1080, 10, 1, false });
+	CHECK(Reading(c, c, full, false, 1920, 1080, false, 1000.0)["mainPassTargetsCapped"] == false);
+	CHECK(Reading(c, c, full, true, 1920, 1080, false, 1000.0)["mainPassTargetsCapped"] == true);
+	CHECK(Reading(c, c, full, false, 1920, 1080, false, 1000.0)["mainPassTargets"].size() == kMaxTargets);
 }

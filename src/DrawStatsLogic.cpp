@@ -71,8 +71,8 @@ namespace dvb::DrawStatsLogic
 		double NsToMs(std::uint64_t a_from, std::uint64_t a_to, std::uint64_t a_frames) { return PerFrame(a_from, a_to, a_frames) / 1.0e6; }
 	}
 
-	json Reading(const Counts& a, const Counts& b, const std::vector<Target>& a_targets, std::uint32_t a_screenWidth,
-		std::uint32_t a_screenHeight, bool a_gpuTimed, double a_ticksPerSecond)
+	json Reading(const Counts& a, const Counts& b, const std::vector<Target>& a_targets, bool a_targetsDropped,
+		std::uint32_t a_screenWidth, std::uint32_t a_screenHeight, bool a_gpuTimed, double a_ticksPerSecond)
 	{
 		const std::uint64_t frames = b.frames - a.frames;
 		const std::uint64_t gpuFrames = b.gpuFrames - a.gpuFrames;
@@ -160,7 +160,7 @@ namespace dvb::DrawStatsLogic
 		for (auto& row : rows)
 			targets.push_back(std::move(row.body));
 		out["mainPassTargets"] = std::move(targets);
-		out["mainPassTargetsCapped"] = a_targets.size() >= kMaxTargets;
+		out["mainPassTargetsCapped"] = a_targetsDropped;
 		return out;
 	}
 }

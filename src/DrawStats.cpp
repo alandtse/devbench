@@ -119,7 +119,7 @@ namespace dvb::DrawStats
 				return a_query && g_ctx->GetData(a_query, &a_out, sizeof(a_out), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK;
 			}
 
-			// A slot is read when it comes round again; answers not back by then count the frame as lost.
+			// Runs kRing frames after the slot was issued so GetData never stalls the render thread.
 			void Collect(Frame& a_frame)
 			{
 				if (!a_frame.pending)
@@ -157,6 +157,23 @@ namespace dvb::DrawStats
 				return SUCCEEDED(a_device->CreateQuery(&desc, &q)) ? q : nullptr;
 			}
 
+			void ReleaseQueries()
+			{
+				const auto drop = [](ID3D11Query*& a_query) {
+					if (a_query) {
+						a_query->Release();
+						a_query = nullptr;
+					}
+				};
+				for (auto& f : g_ring) {
+					drop(f.disjoint);
+					drop(f.start);
+					drop(f.stop);
+					for (auto& m : f.marks)
+						drop(m);
+				}
+			}
+
 			bool Init(ID3D11Device* a_device, ID3D11DeviceContext* a_context)
 			{
 				g_ctx = a_context;
@@ -168,8 +185,10 @@ namespace dvb::DrawStats
 					f.stop = MakeQuery(a_device, D3D11_QUERY_TIMESTAMP);
 					for (auto& m : f.marks)
 						m = MakeQuery(a_device, D3D11_QUERY_TIMESTAMP);
-					if (!f.disjoint || !f.start || !f.stop || std::ranges::any_of(f.marks, [](ID3D11Query* q) { return q == nullptr; }))
+					if (!f.disjoint || !f.start || !f.stop || std::ranges::any_of(f.marks, [](ID3D11Query* q) { return q == nullptr; })) {
+						ReleaseQueries();
 						return false;
+					}
 				}
 				g_ok = true;
 				return true;
@@ -221,7 +240,8 @@ namespace dvb::DrawStats
 
 		std::mutex                              g_targetLock;
 		std::vector<Target>                     g_targets;
-		std::unordered_map<const void*, int>    g_viewTarget;  // render thread only; emptied every Present, so a reused view address is looked up again
+		bool                                    g_targetsDropped = false;  // guarded by g_targetLock
+		std::unordered_map<const void*, int>    g_viewTarget;              // render thread only; emptied every Present, so a reused view address is looked up again
 		std::pair<std::uint32_t, std::uint32_t> g_screen{ 0, 0 };
 		void*                                   g_immediate = nullptr;
 		std::int64_t                            g_lastPresent = 0;
@@ -356,7 +376,8 @@ namespace dvb::DrawStats
 				else if (g_targets.size() < kMaxTargets) {
 					g_targets.push_back(info);
 					index = static_cast<int>(g_targets.size()) - 1;
-				}
+				} else
+					g_targetsDropped = true;
 			}
 			g_viewTarget.emplace(a_view, index);
 			return index;
@@ -480,11 +501,13 @@ namespace dvb::DrawStats
 		json Report(const Counts& a_from, const Counts& a_to)
 		{
 			std::vector<Target> targets;
+			bool                dropped = false;
 			{
 				std::scoped_lock lock{ g_targetLock };
 				targets = g_targets;
+				dropped = g_targetsDropped;
 			}
-			json out = Reading(a_from, a_to, targets, g_screen.first, g_screen.second, Gpu::g_ok, TicksPerSecond());
+			json out = Reading(a_from, a_to, targets, dropped, g_screen.first, g_screen.second, Gpu::g_ok, TicksPerSecond());
 			json lost = json::array();
 			for (const auto& s : g_slots)
 				if (*s.at != s.ours)

@@ -80,7 +80,7 @@ namespace dvb::DrawStatsLogic
 	};
 
 	/// The `inspect kind=draws` reading of the frames between two counts, per frame. Targets come highest GPU time first,
-	/// then most objects.
-	json Reading(const Counts& a_from, const Counts& a_to, const std::vector<Target>& a_targets, std::uint32_t a_screenWidth,
-		std::uint32_t a_screenHeight, bool a_gpuTimed, double a_ticksPerSecond);
+	/// then most objects. `a_targetsDropped`: the collector refused a target because the list was full.
+	json Reading(const Counts& a_from, const Counts& a_to, const std::vector<Target>& a_targets, bool a_targetsDropped,
+		std::uint32_t a_screenWidth, std::uint32_t a_screenHeight, bool a_gpuTimed, double a_ticksPerSecond);
 }
