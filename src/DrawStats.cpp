@@ -119,7 +119,6 @@ namespace dvb::DrawStats
 				return a_query && g_ctx->GetData(a_query, &a_out, sizeof(a_out), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK;
 			}
 
-			// Runs kRing frames after the slot was issued so GetData never stalls the render thread.
 			void Collect(Frame& a_frame)
 			{
 				if (!a_frame.pending)
