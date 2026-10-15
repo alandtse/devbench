@@ -3,6 +3,7 @@
 #include "DrawStatsLogic.h"
 
 using namespace dvb::DrawStatsLogic;
+using dvb::json;
 
 TEST_CASE("draws: pass names")
 {
@@ -111,6 +112,30 @@ TEST_CASE("draws: an empty window reads zeros, never a division by zero")
 	CHECK(r["cpuFrameMs"] == 0.0);
 	CHECK(r["gpu"]["frameMs"] == 0.0);
 	CHECK(r["mainPassTargets"].empty());
+}
+
+TEST_CASE("draws: every reply names its source")
+{
+	const Counts c{};
+	const auto   own = WithSource(Reading(c, c, {}, false, 0, 0, false, 1000.0), kOwnSource);
+	for (const auto* key : { "frames", "seconds", "fps", "cpuFrameMs", "gpu", "passes", "mainPassTargets", "mainPassTargetsCapped", "source" })
+		CHECK(own.contains(key));
+	CHECK(own["source"] == "devbench");
+
+	CHECK(WithSource(json{ { "frames", 3 }, { "source", "spoofed" } }, "Open Shaders")["source"] == "Open Shaders");
+	CHECK(WithSource(json{ { "frames", 3 } }, "Open Shaders")["frames"] == 3);
+	const auto wrapped = WithSource(json("not an object"), "Open Shaders");
+	CHECK(wrapped["source"] == "Open Shaders");
+	CHECK(wrapped["reading"] == "not an object");
+}
+
+TEST_CASE("draws: a provider is named by its descriptor")
+{
+	CHECK(ProviderSource(json{ { "description", "draws" }, { "source", "Open Shaders" } }) == "Open Shaders");
+	CHECK(ProviderSource(json{ { "description", "draws" } }) == "extension");
+	CHECK(ProviderSource(json{ { "source", "" } }) == "extension");
+	CHECK(ProviderSource(json{ { "source", 3 } }) == "extension");
+	CHECK(ProviderSource(json::array()) == "extension");
 }
 
 TEST_CASE("draws: a full target list is capped only once a target was refused")

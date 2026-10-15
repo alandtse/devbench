@@ -83,4 +83,14 @@ namespace dvb::DrawStatsLogic
 	/// then most objects. `a_targetsDropped`: the collector refused a target because the list was full.
 	json Reading(const Counts& a_from, const Counts& a_to, const std::vector<Target>& a_targets, bool a_targetsDropped,
 		std::uint32_t a_screenWidth, std::uint32_t a_screenHeight, bool a_gpuTimed, double a_ticksPerSecond);
+
+	/// The `source` of a reading taken by devbench's own hooks.
+	inline constexpr std::string_view kOwnSource = "devbench";
+
+	/// A provider's `source`: its descriptor's non-empty "source" string, else "extension".
+	std::string ProviderSource(const json& a_descriptor);
+
+	/// The reading with "source" set (a provider's own "source" key is overwritten); a reading that is not an object is
+	/// kept under "reading".
+	json WithSource(json a_reading, std::string_view a_source);
 }

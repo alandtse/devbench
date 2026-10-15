@@ -163,4 +163,22 @@ namespace dvb::DrawStatsLogic
 		out["mainPassTargetsCapped"] = a_targetsDropped;
 		return out;
 	}
+
+	std::string ProviderSource(const json& a_descriptor)
+	{
+		if (a_descriptor.is_object()) {
+			const auto it = a_descriptor.find("source");
+			if (it != a_descriptor.end() && it->is_string() && !it->get_ref<const std::string&>().empty())
+				return it->get<std::string>();
+		}
+		return "extension";
+	}
+
+	json WithSource(json a_reading, std::string_view a_source)
+	{
+		if (!a_reading.is_object())
+			a_reading = json{ { "reading", std::move(a_reading) } };
+		a_reading["source"] = std::string(a_source);
+		return a_reading;
+	}
 }

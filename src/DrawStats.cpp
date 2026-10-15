@@ -251,7 +251,11 @@ namespace dvb::DrawStats
 		void*                                   g_immediate = nullptr;
 		std::int64_t                            g_lastPresent = 0;
 
-		thread_local Pass  t_pass = Pass::kMain;
+		thread_local Pass t_pass = Pass::kMain;
+		std::atomic<bool> g_stoodDown{ false };
+
+		bool StoodDown() { return g_stoodDown.load(std::memory_order_relaxed); }
+
 		thread_local Pass  t_accumulating = Pass::kMain;
 		thread_local int   t_cascade = -1;
 		thread_local void* t_lastDsv = nullptr;
@@ -267,6 +271,8 @@ namespace dvb::DrawStats
 		{
 			static void thunk(RE::BSShadowLight* a_light, std::uint32_t& a_index)
 			{
+				if (StoodDown())
+					return func(a_light, a_index);
 				const Pass  prevPass = t_pass;
 				const int   prevCascade = t_cascade;
 				void* const prevDsv = t_lastDsv;
@@ -291,6 +297,8 @@ namespace dvb::DrawStats
 		{
 			static void thunk(RE::BSShadowLight* a_light, std::uint32_t& a_count, std::uint32_t a_channel, RE::NiAVObject* a_scene, std::uint8_t a_vr)
 			{
+				if (StoodDown())
+					return func(a_light, a_count, a_channel, a_scene, a_vr);
 				if (auto* cam = RE::PlayerCamera::GetSingleton(); cam && cam->cameraRoot)
 					g_cameraPos = cam->cameraRoot->world.translate;
 				const Pass prev = t_accumulating;
@@ -317,7 +325,8 @@ namespace dvb::DrawStats
 		{
 			static void thunk(RE::BSBatchRenderer* a_batch, RE::BSRenderPass* a_pass, std::uint32_t a_technique)
 			{
-				NoteCaster(a_pass);
+				if (!StoodDown())
+					NoteCaster(a_pass);
 				func(a_batch, a_pass, a_technique);
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
@@ -328,6 +337,8 @@ namespace dvb::DrawStats
 		{
 			static void thunk(RE::BSShader* a_shader, RE::BSRenderPass* a_pass, std::uint32_t a_flags)
 			{
+				if (StoodDown())
+					return func(a_shader, a_pass, a_flags);
 				g_live.objects[Idx(t_pass)][S].fetch_add(1, std::memory_order_relaxed);
 				if (t_pass == Pass::kSun && t_cascade >= 0 && t_cascade < static_cast<int>(kMaxCascades))
 					g_live.cascadeObjects[static_cast<std::size_t>(t_cascade)].fetch_add(1, std::memory_order_relaxed);
@@ -416,6 +427,8 @@ namespace dvb::DrawStats
 
 		void HkOMSetRenderTargets(ID3D11DeviceContext* a_ctx, UINT a_count, ID3D11RenderTargetView* const* a_rtvs, ID3D11DepthStencilView* a_dsv)
 		{
+			if (StoodDown())
+				return g_omSetRenderTargets(a_ctx, a_count, a_rtvs, a_dsv);
 			// Inside the sun's Render each newly bound depth target is the next cascade.
 			if (t_pass == Pass::kSun && a_dsv && a_dsv != t_lastDsv) {
 				t_lastDsv = a_dsv;
@@ -432,6 +445,8 @@ namespace dvb::DrawStats
 
 		HRESULT HkPresent(IDXGISwapChain* a_swap, UINT a_sync, UINT a_flags)
 		{
+			if (StoodDown())
+				return g_present(a_swap, a_sync, a_flags);
 			Gpu::FrameEnd();
 			const auto now = Now();
 			if (g_lastPresent)
@@ -479,7 +494,7 @@ namespace dvb::DrawStats
 
 		void Arm()
 		{
-			if (g_armed)
+			if (g_armed || StoodDown())
 				return;
 			g_armed = true;
 			HookShadowLight<Pass::kSun>(RE::VTABLE_BSShadowDirectionalLight[0]);
@@ -522,6 +537,11 @@ namespace dvb::DrawStats
 				out["error"] = g_armError;
 			return out;
 		}
+	}
+
+	void StandDown()
+	{
+		g_stoodDown.store(true, std::memory_order_relaxed);
 	}
 
 	json Read(bool a_reset)

@@ -6,6 +6,7 @@
 #include "Capture.h"
 #include "ConsoleLogCapture.h"
 #include "DrawStats.h"
+#include "DrawStatsLogic.h"
 #include "EventBus.h"
 #include "FreeCamera.h"
 #include "GameEvents.h"
@@ -1890,8 +1891,10 @@ namespace dvb
 				return Capture::ListScreenshots(a_args);
 
 			if (kind == "draws") {
+				if (auto provider = ToolExtensions::Find("inspect", "draws"))
+					return DrawStatsLogic::WithSource(provider->handler(a_args, a_ctx), DrawStatsLogic::ProviderSource(provider->descriptor));
 				const bool doReset = BooleanArgument(a_args, "reset", false);
-				return MainThread::RunAndWait([doReset]() { return DrawStats::Read(doReset); });
+				return MainThread::RunAndWait([doReset]() { return DrawStatsLogic::WithSource(DrawStats::Read(doReset), DrawStatsLogic::kOwnSource); });
 			}
 
 			// 'extensions' lists consumer-registered inspect kinds (C-ABI RegisterToolExtension).
@@ -2984,6 +2987,9 @@ namespace dvb
 				"window with started=true; 'reset'=true begins a new window after the reading. GPU times are D3D11 timestamp "
 				"queries read a few frames late without stalling; frames whose answers are late count as framesLost. A target's "
 				"GPU span runs to the next bind, so work issued between binds (compute passes included) counts toward it. "
+				"devbench's hooks are installed by the first draws call; a renderer mod that registers inspect key 'draws' "
+				"(RegisterToolExtension) answers instead, and devbench's hooks are then never installed or pass every call "
+				"through. Every reply names its source: 'devbench', or the provider's descriptor 'source'. "
 				"'registrants' → who has requested the C-ABI interface and what they registered "
 				"through it { consumers:[{name,atEpoch,atFrame}], registrations:[{kind,name,atEpoch,"
 				"atFrame,replaced}], capabilities:{capture,inspect,menu → [registered keys]} } — "
@@ -3000,7 +3006,8 @@ namespace dvb
 			inspect.readOnly = true;
 			json kinds = json::array({ "state", "health", "vm", "scene", "mods", "player", "inventory", "quests", "effects", "refs", "lights", "draws", "registrants", "screenshots", "extensions" });
 			for (const auto& k : ToolExtensions::Keys("inspect"))
-				kinds.push_back(k);
+				if (std::find(kinds.begin(), kinds.end(), json(k)) == kinds.end())
+					kinds.push_back(k);
 			inspect.inputSchema = json{
 				{ "type", "object" },
 				{ "properties", json{
@@ -3234,9 +3241,11 @@ namespace dvb
 		ToolExtensions::SetChangeListener([reg = &a_registry](const std::string& a_baseTool) {
 			std::string base = a_baseTool;
 			std::transform(base.begin(), base.end(), base.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-			if (base == "inspect")
+			if (base == "inspect") {
+				if (ToolExtensions::Find("inspect", "draws"))
+					DrawStats::StandDown();
 				reg->Register(BuildInspectDescriptor(), &InspectHandler);
-			else if (base == "menu")
+			} else if (base == "menu")
 				reg->Register(BuildMenuDescriptor(), &MenuHandler);
 			else if (base == "capture")
 				reg->Register(Capture::BuildCaptureDescriptor(), &Capture::Handle);
