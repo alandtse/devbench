@@ -5,6 +5,7 @@
 
 #include "Capture.h"
 #include "ConsoleLogCapture.h"
+#include "DifficultyLogic.h"
 #include "EventBus.h"
 #include "FreeCamera.h"
 #include "GameEvents.h"
@@ -514,6 +515,30 @@ namespace dvb
 			if (action == "getTimeScale")
 				return TimeScaleControl::Status();
 
+			if (action == "getDifficulty" || action == "setDifficulty") {
+				std::optional<int> level;
+				if (action == "setDifficulty") {
+					const auto levelArg = a_args.find("level");
+					if (levelArg == a_args.end())
+						throw ToolError(400, "game setDifficulty: 'level' is required (0-5 or Novice|Apprentice|Adept|Expert|Master|Legendary)");
+					level = DifficultyLogic::ParseLevel(*levelArg);
+					if (!level)
+						throw ToolError(400, std::format("game setDifficulty: invalid level '{}' (0-5 or Novice|Apprentice|Adept|Expert|Master|Legendary)", levelArg->dump()));
+				}
+				return MainThread::RunAndWait([level]() -> json {
+					auto* pc = RE::PlayerCharacter::GetSingleton();
+					if (!pc)
+						throw ToolError(503, "PlayerCharacter unavailable (no loaded world?)");
+					auto& state = pc->GetGameStatsData();
+					if (level) {
+						state.difficulty = *level;
+						if (auto* setting = RE::GetINISetting("iDifficulty:GamePlay"))
+							setting->data.i = *level;
+					}
+					return json{ { "level", state.difficulty }, { "name", DifficultyLogic::LevelName(state.difficulty) } };
+				});
+			}
+
 			if (action == "setTimeScale") {
 				const auto scaleArg = a_args.find("scale");
 				const bool freeze = BooleanArgument(a_args, "freeze", false);
@@ -633,7 +658,7 @@ namespace dvb
 					out["note"] = kLoadNote;
 				return out;
 			}
-			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|advanceTime|getTimeScale|setTimeScale)", action));
+			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|advanceTime|getTimeScale|setTimeScale|getDifficulty|setDifficulty)", action));
 		}
 
 		bool ContainsCI(const std::string& a_hay, const std::string& a_needle);  // defined below (near CheckState)
@@ -3101,11 +3126,13 @@ namespace dvb
 			"that has not reached is an answer, not an error, unless 'requireReached':true (504, the old "
 			"behaviour). It is refused (409) while a recording or a capture is "
 			"in flight, unless 'allowTimeScale':true. 'getTimeScale' returns { requested, effective, owner, "
-			"leased, leaseRemainingMs } without changing anything.";
+			"leased, leaseRemainingMs } without changing anything. 'getDifficulty' returns { level, name } "
+			"(0 Novice .. 5 Legendary); 'setDifficulty' (param 'level': 0-5 or the name, any case) sets it "
+			"on the loaded player, as the Settings menu would, and returns the same read back.";
 		game.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast", "advanceTime", "getTimeScale", "setTimeScale" }) }, { "description", "list | save | load | loadLast | advanceTime | getTimeScale | setTimeScale" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast", "advanceTime", "getTimeScale", "setTimeScale", "getDifficulty", "setDifficulty" }) }, { "description", "list | save | load | loadLast | advanceTime | getTimeScale | setTimeScale | getDifficulty | setDifficulty" } } },
 								{ "name", json{ { "type", "string" }, { "description", "save file name (required for save/load; from action='list')" } } },
 								{ "dir", json{ { "type", "string" }, { "description", "list/load/loadLast: override the saves directory (default resolves from sLocalSavePath)" } } },
 								{ "filter", json{ { "type", "string" }, { "description", "list only: case-insensitive substring to match against save names" } } },
@@ -3118,6 +3145,7 @@ namespace dvb
 								{ "allowHigh", json{ { "type", "boolean" }, { "description", "setTimeScale: permit a scale above 3.0, up to 10.0" } } },
 								{ "allowTimeScale", json{ { "type", "boolean" }, { "description", "setTimeScale: change the scale even while a recording or capture is in flight (default false)" } } },
 								{ "waitMs", json{ { "type", "integer" }, { "description", "setTimeScale: how long to wait, after admission, for this request to settle (reached, expired or displaced) before answering (default 2000, 0..30000)" } } },
+								{ "level", json{ { "description", "setDifficulty: 0-5 (Novice, Apprentice, Adept, Expert, Master, Legendary) or the level name, any case" } } },
 								{ "requireReached", json{ { "type", "boolean" }, { "description", "setTimeScale: answer 504 when the request has not reached the engine within waitMs, as before waitMs existed (default false: answer with its state)" } } },
 							} },
 		};
