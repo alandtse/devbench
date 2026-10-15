@@ -2531,8 +2531,9 @@ namespace dvb
 
 		/// Execute a scenario step list and return its complete transcript.
 		// a_beforeStep, when set, is called with each step's index right before it runs.
+		// a_replay marks a record.replay run, whose trajectory may be v1 setpos console steps.
 		json ScenarioHandler(const json& a_args, const ToolContext& a_ctx,
-			const ToolRegistry& a_registry, EventBus& a_events,
+			const ToolRegistry& a_registry, EventBus& a_events, bool a_replay = false,
 			const std::function<void(std::size_t)>& a_beforeStep = {})
 		{
 			if (!a_args.contains("steps") || !a_args["steps"].is_array())
@@ -2559,12 +2560,20 @@ namespace dvb
 			// Mark replaying for the whole run: if a recording is active (composition — recording
 			// a session that plays back a recipe), the pose sampler must not re-capture the
 			// teleported path; the issued setpos commands (seen by the console hook) are the
-			// trajectory. RAII so the flag clears on any return/throw.
-			Recording::SetReplaying(true);
+			// trajectory. RAII so the flag clears on any return/throw. Any other scenario leaves
+			// the flag alone, so a recording started in or alongside it keeps sampling poses.
+			const bool replaying = a_replay || ScenarioPolicy::ReplaysTrajectory(steps);
+			if (replaying)
+				Recording::SetReplaying(true);
 			struct ReplayGuard
 			{
-				~ReplayGuard() { Recording::SetReplaying(false); }
-			} replayGuard;
+				bool armed;
+				~ReplayGuard()
+				{
+					if (armed)
+						Recording::SetReplaying(false);
+				}
+			} replayGuard{ replaying };
 
 			Recording::ReplayDriver::Playback playback(steps, a_args.value("smoothPose", false));
 
@@ -3588,7 +3597,7 @@ namespace dvb
 							bool cameraActivated = false;
 							bool scaleEscalated = false;
 							result = ScenarioHandler(json{ { "steps", steps }, { "runId", runId }, { "smoothPose", interpolate } },
-								a_ctx, a_registry, a_events,
+								a_ctx, a_registry, a_events, true,
 								[&cameraActivated, cameraHold, trajectoryStepCount, &scaleEscalated,
 									scaleHold, replayScale, setupStepCount, allowTimeScale](std::size_t a_index) {
 									if (!cameraActivated && a_index == trajectoryStepCount) {

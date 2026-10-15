@@ -51,3 +51,28 @@ TEST_CASE("semantic waiter outcomes remain successful tool steps")
 
 	CHECK(!dvb::ScenarioPolicy::IsEmbeddedToolFailure(result));
 }
+
+TEST_CASE("a scenario without pose steps leaves recording sampling on")
+{
+	const json steps = json::array({
+		{ { "tool", "record" }, { "args", { { "action", "start" } } } },
+		{ { "wait", 2000 } },
+		{ { "tool", "console" }, { "args", { { "action", "exec" }, { "command", "player.setpos x 0" } } } },
+		{ { "waitUntil", "playerLoaded" } },
+		{ { "tool", "record" }, { "args", { { "action", "stop" } } } },
+	});
+
+	CHECK(!dvb::ScenarioPolicy::ReplaysTrajectory(steps));
+	CHECK(!dvb::ScenarioPolicy::ReplaysTrajectory(json::array()));
+	CHECK(!dvb::ScenarioPolicy::ReplaysTrajectory(json{ { "pose", json::array({ 0, 0, 0, 0, 0 }) } }));
+}
+
+TEST_CASE("a pose step marks a scenario as a trajectory replay")
+{
+	const json steps = json::array({
+		{ { "tool", "console" }, { "args", { { "action", "exec" }, { "command", "coc QASmoke" } } } },
+		{ { "pose", json::array({ 1.0, 2.0, 3.0, 90.0, 0.0 }) }, { "wait", 10 } },
+	});
+
+	CHECK(dvb::ScenarioPolicy::ReplaysTrajectory(steps));
+}

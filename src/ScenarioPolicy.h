@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <string>
 
 #include "Json.h"
@@ -7,6 +8,14 @@
 namespace dvb::ScenarioPolicy
 {
 	inline constexpr int kEmbeddedToolFallbackErrorCode = 422;
+
+	/// True if the step list moves the player along a recorded trajectory (a `pose` step).
+	/// Only such a run may stop an active recording's pose sampler; tool/wait steps must not.
+	[[nodiscard]] inline bool ReplaysTrajectory(const json& a_steps)
+	{
+		return a_steps.is_array() &&
+		       std::any_of(a_steps.begin(), a_steps.end(), [](const json& a_step) { return a_step.contains("pose"); });
+	}
 
 	/// Extension tools report domain failures in their JSON payload. A scenario
 	/// must treat those as failed steps even when transport dispatch succeeded.
