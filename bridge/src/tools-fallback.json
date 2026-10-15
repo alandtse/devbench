@@ -250,11 +250,11 @@
     },
     {
       "name": "game",
-      "description": "Save/load and list saves. action='list' returns { count, returned, truncated, saves: [{name, mtimeUnix}, ...] }, sorted newest-first (saves[0] is what 'loadLast' loads) — count is post-filter (how many matched), returned/saves are post-limit. 'filter' keeps only names containing a substring (case-insensitive; save names embed the location, e.g. 'Whiterun'), 'limit' caps how many are returned, 'detail'=true adds a 'meta' object per matched save (characterName, location, race, level, experience, playTime, saveNumber, saveType [inferred from the filename], screenshot, fileTimeUnix — read directly from the save's own .ess header, same bytes the vanilla Load menu shows, so it works even before anything has loaded) plus top-level metaAvailable/metaNote if none parsed; 'loadLast' loads the most recent save (a settled real-game state — avoids coc's heavy new-game init); 'load'/'save' take a 'name' ('load' skips the mod-mismatch confirmation modal). All but 'list' are fire-and-forget; watch lifecycle events / inspect playerLoaded for completion. 'advanceTime' (param 'hours', non-zero, may be negative) jumps the calendar directly — no need to fall back to console 'set timescale to N' and waiting real time — and returns { gameHour, daysPassed, day, month, year } read back the same tick; runs synchronously on the main thread. 'setTimeScale' (param 'scale', or 'freeze':true for 0) speeds up or slows down the game itself for 'holdMs' (default 60000) — which is what makes a replay or scenario run faster in wall time — then restores the previous scale; 0.1..3.0, up to 10.0 with 'allowHigh':true, and every request gets a 'generation' and one terminal snapshot { generation, state, requested, effective, owner, leased, leaseRemainingMs, reached, applied, admissionMs, waitedMs }. state is accepted (recorded, not yet handed to the engine), written (the engine has its value but is still ramping toward it), reached, expired (its lease ran out) or displaced (a later request or a release replaced it); applied = written or reached. It waits up to 'waitMs' (default 2000, 0..30000) after admission for reached / expired / displaced; admissionMs and waitedMs are reported apart. A request that has not reached is an answer, not an error, unless 'requireReached':true (504, the old behaviour). It is refused (409) while a recording or a capture is in flight, unless 'allowTimeScale':true. 'getTimeScale' returns { requested, effective, owner, leased, leaseRemainingMs } without changing anything.",
+      "description": "Save/load and list saves. action='list' returns { count, returned, truncated, saves: [{name, mtimeUnix}, ...] }, sorted newest-first (saves[0] is what 'loadLast' loads) — count is post-filter (how many matched), returned/saves are post-limit. 'filter' keeps only names containing a substring (case-insensitive; save names embed the location, e.g. 'Whiterun'), 'limit' caps how many are returned, 'detail'=true adds a 'meta' object per matched save (characterName, location, race, level, experience, playTime, saveNumber, saveType [inferred from the filename], screenshot, fileTimeUnix — read directly from the save's own .ess header, same bytes the vanilla Load menu shows, so it works even before anything has loaded) plus top-level metaAvailable/metaNote if none parsed; 'loadLast' loads the most recent save (a settled real-game state — avoids coc's heavy new-game init); 'load'/'save' take a 'name' ('load' skips the mod-mismatch confirmation modal). All but 'list' are fire-and-forget; watch lifecycle events / inspect playerLoaded for completion. 'advanceTime' (param 'hours', non-zero, may be negative) jumps the calendar directly — no need to fall back to console 'set timescale to N' and waiting real time — and returns { gameHour, daysPassed, day, month, year } read back the same tick; runs synchronously on the main thread. 'setTimeScale' (param 'scale', or 'freeze':true for 0) speeds up or slows down the game itself for 'holdMs' (default 60000) — which is what makes a replay or scenario run faster in wall time — then restores the previous scale; 0.1..3.0, up to 10.0 with 'allowHigh':true, and every request gets a 'generation' and one terminal snapshot { generation, state, requested, effective, owner, leased, leaseRemainingMs, reached, applied, admissionMs, waitedMs }. state is accepted (recorded, not yet handed to the engine), written (the engine has its value but is still ramping toward it), reached, expired (its lease ran out) or displaced (a later request or a release replaced it); applied = written or reached. It waits up to 'waitMs' (default 2000, 0..30000) after admission for reached / expired / displaced; admissionMs and waitedMs are reported apart. A request that has not reached is an answer, not an error, unless 'requireReached':true (504, the old behaviour). It is refused (409) while a recording or a capture is in flight, unless 'allowTimeScale':true. 'getTimeScale' returns { requested, effective, owner, leased, leaseRemainingMs } without changing anything. 'getDifficulty' returns { level, name } (0 Novice .. 5 Legendary); 'setDifficulty' (param 'level': 0-5 or the name, any case) sets it on the loaded player, as the Settings menu would, and returns the same read back.",
       "inputSchema": {
         "properties": {
           "action": {
-            "description": "list | save | load | loadLast | advanceTime | getTimeScale | setTimeScale",
+            "description": "list | save | load | loadLast | advanceTime | getTimeScale | setTimeScale | getDifficulty | setDifficulty",
             "enum": [
               "list",
               "save",
@@ -262,7 +262,9 @@
               "loadLast",
               "advanceTime",
               "getTimeScale",
-              "setTimeScale"
+              "setTimeScale",
+              "getDifficulty",
+              "setDifficulty"
             ],
             "type": "string"
           },
@@ -301,6 +303,9 @@
           "limit": {
             "description": "list only: cap the number of saves returned (newest-first); must be > 0 if given",
             "type": "integer"
+          },
+          "level": {
+            "description": "setDifficulty: 0-5 (Novice, Apprentice, Adept, Expert, Master, Legendary) or the level name, any case"
           },
           "name": {
             "description": "save file name (required for save/load; from action='list')",
