@@ -448,6 +448,16 @@ fragile path the dispatcher existed to avoid. `RegisterToolExtension` keeps the 
 but that's not free if the extension's job doesn't semantically match the base tool it hides under —
 register a new top-level tool instead when it doesn't.
 
+**A renderer can provide `inspect kind=draws`.** Register the `inspect` key `draws` with a `"source"` naming your
+mod; devbench then answers `kind=draws` with your handler's object (any `reset` arg passed through) and never installs
+its own draw hooks (hooks a client already armed pass every call straight through from then on). devbench sets `"source"` on every draws reply — `"devbench"` for its own hooks, else your
+descriptor's `source` — so a reader knows whose numbers they are.
+
+```cpp
+dvb->RegisterToolExtension("inspect", "draws",
+                           R"({"description":"draw counts from the renderer","source":"Your Renderer 1.2"})", &DrawsHandler, ctx);
+```
+
 ### Design your tools the agentic-renderdoc way
 
 devbench follows the **[agentic-renderdoc](https://github.com/EdenLabs/agentic-renderdoc#why-this-design)**
@@ -479,7 +489,8 @@ interface is shared), so **namespace your topics** the way you namespace tool na
 devbench publishes semantic **`EventBus` events** — `record.started`/`record.stopped`,
 `scene.cellLoaded`, `menu`, `lifecycle`, and `health.stalled`/`health.resumed` — so a client can align a capture to those
 boundaries (and the `scenario` tool returns per-step timings synchronously) — but devbench does
-not collect or serve profiling data itself.
+not collect or serve profiling data itself, except `inspect kind=draws`: a registered renderer provider answers it,
+and only when none is registered does devbench install its own draw hooks, on the first call.
 Frametime and GPU metrics are left to dedicated clients: pair devbench with a Tracy-instrumented
 mod (using the `tracy` MCP) or any other profiler to annotate captures with what the bench was
 doing.
