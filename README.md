@@ -489,8 +489,8 @@ interface is shared), so **namespace your topics** the way you namespace tool na
 devbench publishes semantic **`EventBus` events** — `record.started`/`record.stopped`,
 `scene.cellLoaded`, `menu`, `lifecycle`, and `health.stalled`/`health.resumed` — so a client can align a capture to those
 boundaries (and the `scenario` tool returns per-step timings synchronously) — but devbench does
-not collect or serve profiling data itself, except `inspect kind=draws`, whose hooks are installed only when it is
-first called (or a renderer mod provides it).
+not collect or serve profiling data itself, except `inspect kind=draws`: a registered renderer provider answers it,
+and only when none is registered does devbench install its own draw hooks, on the first call.
 Frametime and GPU metrics are left to dedicated clients: pair devbench with a Tracy-instrumented
 mod (using the `tracy` MCP) or any other profiler to annotate captures with what the bench was
 doing.
