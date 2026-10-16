@@ -2529,12 +2529,22 @@ namespace dvb
 			std::map<uint64_t, State> m_runs;
 		};
 
+		/// Which steps of a scenario run hold the recorder's replay mark.
+		enum class ReplayMarking
+		{
+			TrajectorySpan,  // the run's pose / player.setpos span only (ScenarioPolicy::TrajectorySpan)
+			WholeRun,        // record.replay: its injected input and VR stream must not be re-captured either
+		};
+
+		struct ScenarioRunOptions
+		{
+			ReplayMarking                    replayMarking = ReplayMarking::TrajectorySpan;
+			std::function<void(std::size_t)> beforeStep;  // called with each step's index right before it runs
+		};
+
 		/// Execute a scenario step list and return its complete transcript.
-		// a_beforeStep, when set, is called with each step's index right before it runs.
-		// a_replay marks a record.replay run, whose trajectory may be v1 setpos console steps.
 		json ScenarioHandler(const json& a_args, const ToolContext& a_ctx,
-			const ToolRegistry& a_registry, EventBus& a_events, bool a_replay = false,
-			const std::function<void(std::size_t)>& a_beforeStep = {})
+			const ToolRegistry& a_registry, EventBus& a_events, const ScenarioRunOptions& a_options = {})
 		{
 			if (!a_args.contains("steps") || !a_args["steps"].is_array())
 				throw ToolError(400, "scenario requires a 'steps' array");
@@ -2557,14 +2567,12 @@ namespace dvb
 			bool       anyFailure = false;
 			bool       aborted = false;
 
-			// Mark replaying for the whole run: if a recording is active (composition — recording
-			// a session that plays back a recipe), the pose sampler must not re-capture the
-			// teleported path; the issued setpos commands (seen by the console hook) are the
-			// trajectory. The hold is released on any return/throw and leaves an overlapping
-			// run's hold engaged. Any other scenario leaves the mark alone, so a recording
-			// started in or alongside it keeps sampling poses.
-			Recording::ReplayMark replayMark;
-			if (a_replay || ScenarioPolicy::ReplaysTrajectory(steps))
+			// While the player is teleported along a trajectory, a recording running beside it must
+			// not re-sample the path: the issued setpos commands (seen by the console hook) carry it.
+			Recording::ReplayMark                         replayMark;
+			const std::optional<ScenarioPolicy::StepSpan> trajectorySpan = ScenarioPolicy::TrajectorySpan(steps);
+			const bool                                    markWholeRun = a_options.replayMarking == ReplayMarking::WholeRun;
+			if (markWholeRun)
 				replayMark.Engage();
 
 			Recording::ReplayDriver::Playback playback(steps, a_args.value("smoothPose", false));
@@ -2575,8 +2583,10 @@ namespace dvb
 				// captures if rep N+1's own scene assert succeeds.
 				bool runSceneMismatch = false;
 				for (size_t i = 0; i < steps.size() && !aborted; ++i) {
-					if (a_beforeStep)
-						a_beforeStep(i);
+					if (a_options.beforeStep)
+						a_options.beforeStep(i);
+					if (trajectorySpan && i == trajectorySpan->first)
+						replayMark.Engage();
 					const json& step = steps[i];
 					json        r{ { "index", i } };
 					if (repeat > 1)
@@ -2866,6 +2876,8 @@ namespace dvb
 
 					r["elapsedMs"] = duration_cast<milliseconds>(steady_clock::now() - stepStart).count();
 					results.push_back(std::move(r));
+					if (!markWholeRun && trajectorySpan && i == trajectorySpan->last)
+						replayMark.Release();
 
 					if (stepFailed) {
 						anyFailure = true;
@@ -3589,20 +3601,21 @@ namespace dvb
 							bool cameraActivated = false;
 							bool scaleEscalated = false;
 							result = ScenarioHandler(json{ { "steps", steps }, { "runId", runId }, { "smoothPose", interpolate } },
-								a_ctx, a_registry, a_events, true,
-								[&cameraActivated, cameraHold, trajectoryStepCount, &scaleEscalated,
-									scaleHold, replayScale, setupStepCount, allowTimeScale](std::size_t a_index) {
-									if (!cameraActivated && a_index == trajectoryStepCount) {
-										cameraActivated = true;
-										// No-op off VR; on VR, a failure here must abort the replay.
-										cameraHold->Activate();
-									}
-									if (!scaleEscalated && a_index == setupStepCount &&
-										replayScale != static_cast<float>(TimeScaleControl::kNormalScale)) {
-										scaleEscalated = true;
-										scaleHold->Escalate(replayScale, TimeScaleControl::kDefaultLeaseMs, allowTimeScale);
-									}
-								});
+								a_ctx, a_registry, a_events,
+								{ .replayMarking = ReplayMarking::WholeRun,
+									.beforeStep = [&cameraActivated, cameraHold, trajectoryStepCount, &scaleEscalated,
+													  scaleHold, replayScale, setupStepCount, allowTimeScale](std::size_t a_index) {
+										if (!cameraActivated && a_index == trajectoryStepCount) {
+											cameraActivated = true;
+											// No-op off VR; on VR, a failure here must abort the replay.
+											cameraHold->Activate();
+										}
+										if (!scaleEscalated && a_index == setupStepCount &&
+											replayScale != static_cast<float>(TimeScaleControl::kNormalScale)) {
+											scaleEscalated = true;
+											scaleHold->Escalate(replayScale, TimeScaleControl::kDefaultLeaseMs, allowTimeScale);
+										}
+									} });
 						} catch (const std::exception& e) {
 							const json cleanup = releaseRecordedInput();
 							a_events.Publish("replay.finished", json{ { "runId", runId }, { "ok", false }, { "error", e.what() } });
