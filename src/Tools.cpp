@@ -2560,20 +2560,12 @@ namespace dvb
 			// Mark replaying for the whole run: if a recording is active (composition — recording
 			// a session that plays back a recipe), the pose sampler must not re-capture the
 			// teleported path; the issued setpos commands (seen by the console hook) are the
-			// trajectory. RAII so the flag clears on any return/throw. Any other scenario leaves
-			// the flag alone, so a recording started in or alongside it keeps sampling poses.
-			const bool replaying = a_replay || ScenarioPolicy::ReplaysTrajectory(steps);
-			if (replaying)
-				Recording::SetReplaying(true);
-			struct ReplayGuard
-			{
-				bool armed;
-				~ReplayGuard()
-				{
-					if (armed)
-						Recording::SetReplaying(false);
-				}
-			} replayGuard{ replaying };
+			// trajectory. The hold is released on any return/throw and leaves an overlapping
+			// run's hold engaged. Any other scenario leaves the mark alone, so a recording
+			// started in or alongside it keeps sampling poses.
+			Recording::ReplayMark replayMark;
+			if (a_replay || ScenarioPolicy::ReplaysTrajectory(steps))
+				replayMark.Engage();
 
 			Recording::ReplayDriver::Playback playback(steps, a_args.value("smoothPose", false));
 
