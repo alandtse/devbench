@@ -5,6 +5,7 @@
 
 #include "Capture.h"
 #include "ConsoleLogCapture.h"
+#include "DifficultyLogic.h"
 #include "DrawStats.h"
 #include "DrawStatsLogic.h"
 #include "EventBus.h"
@@ -516,6 +517,30 @@ namespace dvb
 			if (action == "getTimeScale")
 				return TimeScaleControl::Status();
 
+			if (action == "getDifficulty" || action == "setDifficulty") {
+				std::optional<int> level;
+				if (action == "setDifficulty") {
+					const auto levelArg = a_args.find("level");
+					if (levelArg == a_args.end())
+						throw ToolError(400, "game setDifficulty: 'level' is required (0-5 or Novice|Apprentice|Adept|Expert|Master|Legendary)");
+					level = DifficultyLogic::ParseLevel(*levelArg);
+					if (!level)
+						throw ToolError(400, std::format("game setDifficulty: invalid level '{}' (0-5 or Novice|Apprentice|Adept|Expert|Master|Legendary)", levelArg->dump()));
+				}
+				return MainThread::RunAndWait([level]() -> json {
+					auto* pc = RE::PlayerCharacter::GetSingleton();
+					if (!pc)
+						throw ToolError(503, "PlayerCharacter unavailable (no loaded world?)");
+					auto& state = pc->GetGameStatsData();
+					if (level) {
+						state.difficulty = *level;
+						if (auto* setting = RE::GetINISetting("iDifficulty:GamePlay"))
+							setting->data.i = *level;
+					}
+					return json{ { "level", state.difficulty }, { "name", DifficultyLogic::LevelName(state.difficulty) } };
+				});
+			}
+
 			if (action == "setTimeScale") {
 				const auto scaleArg = a_args.find("scale");
 				const bool freeze = BooleanArgument(a_args, "freeze", false);
@@ -635,7 +660,7 @@ namespace dvb
 					out["note"] = kLoadNote;
 				return out;
 			}
-			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|advanceTime|getTimeScale|setTimeScale)", action));
+			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|advanceTime|getTimeScale|setTimeScale|getDifficulty|setDifficulty)", action));
 		}
 
 		bool ContainsCI(const std::string& a_hay, const std::string& a_needle);  // defined below (near CheckState)
@@ -780,8 +805,8 @@ namespace dvb
 		}
 
 		constexpr long long kMaxWaitHours = 100000;
-		// AdvanceSleepWaitTick() runs synchronously on the main thread once per tick, so an
-		// unbounded tick count hangs the game rather than just delaying it.
+		// The engine advances a wait one AdvanceSleepWaitTick() per frame, so the cap bounds how
+		// long the call blocks (20000 ticks = ~6 min at 60 fps).
 		constexpr long long kMaxWaitTicks = 20000;
 
 		// StartWaiting/StartSleeping's synchronous autosave (bSaveOnWait/bSaveOnRest) deadlocks
@@ -823,33 +848,47 @@ namespace dvb
 			if (hours > kMaxWaitHours)
 				throw ToolError(400, std::format("'hours' must be <= {}", kMaxWaitHours));
 
-			return MainThread::RunAndWait([hours, a_sleep]() -> json {
+			const json start = MainThread::RunAndWait([hours, a_sleep]() -> json {
 				auto* pc = RE::PlayerCharacter::GetSingleton();
 				if (!pc)
 					return json{ { "completed", false }, { "reason", "no PlayerCharacter" } };
 				if (!pc->CanSleepWait(nullptr))
 					return json{ { "completed", false }, { "reason", "blocked (see the in-game HUD message just shown)" } };
 
-				// SleepWaitMenu's own Update loop reads back its AS3 slider's displayed value each
-				// tick, so a native-only caller can't drive it to completion this way; call the
-				// tick function directly instead, bounded by how many ticks this duration needs.
 				using namespace RE::literals;
 				std::int32_t secondsPerTick = "iSecondsToSleepPerUpdate"_gs.value_or(900);
 				if (secondsPerTick <= 0)
 					secondsPerTick = 900;
-				const long long maxTicks = (hours * 3600 / secondsPerTick) + 1;
-				if (maxTicks > kMaxWaitTicks)
-					throw ToolError(400, std::format("'hours' needs {} ticks at the current {}s/tick rate (> {} limit)", maxTicks, secondsPerTick, kMaxWaitTicks));
+				const long long ticks = (hours * 3600 + secondsPerTick - 1) / secondsPerTick;
+				if (ticks > kMaxWaitTicks)
+					throw ToolError(400, std::format("'hours' needs {} ticks at the current {}s/tick rate (> {} limit)", ticks, secondsPerTick, kMaxWaitTicks));
 
 				ScopedAutoSaveSuppress noAutoSave(a_sleep ? "bSaveOnRest" : "bSaveOnWait");
 				if (a_sleep)
 					pc->StartSleeping(static_cast<std::int32_t>(hours));
 				else
 					pc->StartWaiting(static_cast<std::int32_t>(hours));
-				for (long long i = 0; i < maxTicks; ++i)
-					pc->AdvanceSleepWaitTick();
-				return json{ { "completed", true }, { "hours", hours } };
+				return json{ { "ticks", ticks } };
 			});
+			if (!start.contains("ticks"))
+				return start;
+
+			// Start* sets playerFlags.sleeping and PlayerCharacter::Update advances the wait one tick per
+			// frame until it clears, as with SleepWaitMenu open. Ticking it all inside one task never let
+			// the engine drain the tasks each tick queues: actor refcounts wrapped during a 24h wait.
+			// Each poll is its own main-thread task, so polls land on different frames: the poll count
+			// bounds the wait in frames without the frame counter, which can be unavailable (-1).
+			const long long maxPolls = start["ticks"].get<long long>() * 2 + 60;
+			long long       polls = 0;
+			while (MainThread::RunAndWait([]() -> json {
+				auto* pc = RE::PlayerCharacter::GetSingleton();
+				return pc && pc->GetPlayerFlags().sleeping;
+			}).get<bool>()) {
+				if (++polls > maxPolls)
+					throw ToolError(504, std::format("wait still running after {} polls", maxPolls));
+				std::this_thread::sleep_for(std::chrono::milliseconds(50));
+			}
+			return json{ { "completed", true }, { "hours", hours } };
 		}
 
 		// Identify any form as { formId, formType, name, editorId } — CommonLib's RE'd accessors.
@@ -3125,11 +3164,13 @@ namespace dvb
 			"that has not reached is an answer, not an error, unless 'requireReached':true (504, the old "
 			"behaviour). It is refused (409) while a recording or a capture is "
 			"in flight, unless 'allowTimeScale':true. 'getTimeScale' returns { requested, effective, owner, "
-			"leased, leaseRemainingMs } without changing anything.";
+			"leased, leaseRemainingMs } without changing anything. 'getDifficulty' returns { level, name } "
+			"(0 Novice .. 5 Legendary); 'setDifficulty' (param 'level': 0-5 or the name, any case) sets it "
+			"on the loaded player, as the Settings menu would, and returns the same read back.";
 		game.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast", "advanceTime", "getTimeScale", "setTimeScale" }) }, { "description", "list | save | load | loadLast | advanceTime | getTimeScale | setTimeScale" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast", "advanceTime", "getTimeScale", "setTimeScale", "getDifficulty", "setDifficulty" }) }, { "description", "list | save | load | loadLast | advanceTime | getTimeScale | setTimeScale | getDifficulty | setDifficulty" } } },
 								{ "name", json{ { "type", "string" }, { "description", "save file name (required for save/load; from action='list')" } } },
 								{ "dir", json{ { "type", "string" }, { "description", "list/load/loadLast: override the saves directory (default resolves from sLocalSavePath)" } } },
 								{ "filter", json{ { "type", "string" }, { "description", "list only: case-insensitive substring to match against save names" } } },
@@ -3142,6 +3183,7 @@ namespace dvb
 								{ "allowHigh", json{ { "type", "boolean" }, { "description", "setTimeScale: permit a scale above 3.0, up to 10.0" } } },
 								{ "allowTimeScale", json{ { "type", "boolean" }, { "description", "setTimeScale: change the scale even while a recording or capture is in flight (default false)" } } },
 								{ "waitMs", json{ { "type", "integer" }, { "description", "setTimeScale: how long to wait, after admission, for this request to settle (reached, expired or displaced) before answering (default 2000, 0..30000)" } } },
+								{ "level", json{ { "description", "setDifficulty: 0-5 (Novice, Apprentice, Adept, Expert, Master, Legendary) or the level name, any case" } } },
 								{ "requireReached", json{ { "type", "boolean" }, { "description", "setTimeScale: answer 504 when the request has not reached the engine within waitMs, as before waitMs existed (default false: answer with its state)" } } },
 							} },
 		};
@@ -3711,8 +3753,8 @@ namespace dvb
 		wait.name = "wait";
 		wait.description =
 			"Advance time by waiting `hours`, synchronously and without touching the Wait "
-			"menu's UI at all: starts the wait, then drives its completion (autosave, script "
-			"events) to done before returning — no polling needed. Refuses with "
+			"menu's UI at all: starts the wait and returns once the game has run it to the end, "
+			"one tick per frame as with the menu open (no autosave) — no polling needed. Refuses with "
 			"{ completed:false, reason } on the same gate the menu itself enforces (combat, "
 			"trespassing, midair, hostiles nearby, etc.).";
 		wait.inputSchema = json{
