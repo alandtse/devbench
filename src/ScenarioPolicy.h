@@ -43,6 +43,13 @@ namespace dvb::ScenarioPolicy
 		return startsWithCommand("player.setpos") || startsWithCommand("player.setangle");
 	}
 
+	/// True for a step inside a trajectory span that keeps the replay mark: a trajectory step or a bare
+	/// wait. Any other step there releases it, so its input is captured.
+	[[nodiscard]] inline bool HoldsReplayMark(const json& a_step)
+	{
+		return IsTrajectoryStep(a_step) || (a_step.is_object() && a_step.contains("wait") && !a_step.contains("pose"));
+	}
+
 	/// First and last index (inclusive) of a run of scenario steps.
 	struct StepSpan
 	{
@@ -68,10 +75,7 @@ namespace dvb::ScenarioPolicy
 		}
 		if (!span)
 			return span;
-		const auto isBareWait = [](const json& a_step) {
-			return a_step.is_object() && a_step.contains("wait") && !a_step.contains("pose");
-		};
-		while (span->last + 1 < a_steps.size() && isBareWait(a_steps[span->last + 1]))
+		while (span->last + 1 < a_steps.size() && HoldsReplayMark(a_steps[span->last + 1]))
 			++span->last;
 		return span;
 	}

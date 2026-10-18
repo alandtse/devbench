@@ -115,6 +115,23 @@ TEST_CASE("the replay mark covers only a mixed scenario's trajectory span")
 	CHECK(span->last == 5);
 }
 
+TEST_CASE("a step between two poses releases the replay mark, the poses and bare waits hold it")
+{
+	const json input{ { "tool", "input" }, { "args", { { "action", "tap" }, { "device", "keyboard" }, { "key", "w" } } } };
+	const json steps = json::array({ PoseStep(10), input, { { "wait", 10 } }, PoseStep(10) });
+
+	const auto span = dvb::ScenarioPolicy::TrajectorySpan(steps);
+	CHECK(span.has_value());
+	if (!span)
+		return;
+	CHECK(span->first == 0);
+	CHECK(span->last == 3);
+	CHECK(dvb::ScenarioPolicy::HoldsReplayMark(steps[0]));
+	CHECK(!dvb::ScenarioPolicy::HoldsReplayMark(steps[1]));
+	CHECK(dvb::ScenarioPolicy::HoldsReplayMark(steps[2]));
+	CHECK(dvb::ScenarioPolicy::HoldsReplayMark(steps[3]));
+}
+
 TEST_CASE("a v1 setpos trajectory spans its trailing wait")
 {
 	const json steps = json::array({

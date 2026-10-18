@@ -242,8 +242,9 @@ The `record` tool captures a manual play-through as a replayable scenario file:
 
    A recording keeps capturing while a `scenario` runs beside it or starts it, so a scenario's
    `input` steps land in it like top-level `input` calls. Only teleports pause pose and input
-   capture: a scenario's span of `pose` rows and `player.setpos`/`player.setangle` console steps,
-   and a whole `record action='replay'`. Their setpos commands are recorded as the path instead.
+   capture: a scenario's `pose` rows and `player.setpos`/`player.setangle` console steps with the
+   bare waits between and right after them, and a whole `record action='replay'`. Their setpos
+   commands are recorded as the path instead.
 
    `meta.activityCapture` publishes the activity contract and replay matrix. The top-level
    `activityEvents` stream is capture-complete for the normalized Skyrim event types exposed by

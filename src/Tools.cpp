@@ -2624,10 +2624,14 @@ namespace dvb
 				for (size_t i = 0; i < steps.size() && !aborted; ++i) {
 					if (a_options.beforeStep)
 						a_options.beforeStep(i);
-					if (trajectorySpan && i == trajectorySpan->first)
-						replayMark.Engage();
 					const json& step = steps[i];
 					json        r{ { "index", i } };
+					if (!markWholeRun && trajectorySpan && i >= trajectorySpan->first && i <= trajectorySpan->last) {
+						if (ScenarioPolicy::HoldsReplayMark(step))
+							replayMark.Engage();
+						else
+							replayMark.Release();
+					}
 					if (repeat > 1)
 						r["repeat"] = rep;
 					const auto stepStart = steady_clock::now();
