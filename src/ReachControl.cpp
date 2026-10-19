@@ -461,7 +461,9 @@ namespace dvb::ReachControl
 		json result = RL::ProgressJson(run->progress);
 		result["runId"] = run->runId;
 		result["owner"] = run->owner;
-		result["active"] = run->active.load();
+		const bool active = run->active.load();
+		result["active"] = active;
+		result["stopping"] = active && run->stop.load();
 		return result;
 	}
 

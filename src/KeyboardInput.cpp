@@ -863,8 +863,8 @@ namespace dvb
 			"target nodes after each settle (the body follows the arms, so a node moves when a hand reaches it) and corrects "
 			"until every hand is within toleranceUnits, then holds holdMs; 'head' optionally aims the HMD at the hands or a "
 			"node. It returns { queued, runId } at once; action='reachStatus' (runId) reports { phase (queued | calibrating | "
-			"reaching | holding | done | failed | stopped), iteration, per hand { hand, node, error, errorDistance, handToNode }, "
-			"error }, and 'reachStop' ends it. One reach runs at a time (409); while it runs it replaces the HMD and both "
+			"reaching | holding | done | failed | stopped), iteration, worstErrorDistance, per hand { hand, node, error, errorDistance, handToNode }, "
+			"error, active, stopping (a stop was requested and the run is still releasing) }, and 'reachStop' ends it. One reach runs at a time (409); while it runs it replaces the HMD and both "
 			"controllers like a sequence, and it ends at a load. Fingers are not driven.";
 		input.inputSchema = json{
 			{ "type", "object" },

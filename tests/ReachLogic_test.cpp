@@ -602,8 +602,25 @@ TEST_CASE("ProgressJson rounds and shapes per-hand data")
 	CHECK(result["left"]["hand"][0] == 0.0);
 	CHECK(result["left"]["errorDistance"] == 5.0);
 	CHECK(result["left"]["handToNode"] == 5.0);
+	CHECK(result["worstErrorDistance"] == 5.0);
 	CHECK(!result.contains("right"));
 	CHECK(!result.contains("error"));
+}
+
+TEST_CASE("ProgressJson reports the larger of the two hands' errors")
+{
+	Progress     progress;
+	HandProgress near;
+	near.error = Vec3{ 1.0, 0.0, 0.0 };
+	HandProgress far;
+	far.error = Vec3{ 0.0, 6.0, 8.0 };
+	progress.left = near;
+	progress.right = far;
+	json result = ProgressJson(progress);
+	CHECK(result["worstErrorDistance"] == 10.0);
+
+	Progress empty;
+	CHECK(!ProgressJson(empty).contains("worstErrorDistance"));
 }
 
 TEST_CASE("ProgressJson rounds to hundredths")
