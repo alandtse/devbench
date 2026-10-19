@@ -86,6 +86,10 @@ def test_play_loop_and_stop_an_idle_on_a_spawned_npc(client):
             "loopIdle": "IdleWave",
         }
 
+        refused = client.ok("actor", {"action": "playIdle", "formId": npc, "idle": "IdleStopInstant"})
+        assert refused["ok"] is False, refused
+        assert client.ok("actor", {"action": "status", "formId": npc})["looping"] is True
+
         time.sleep(1)
         stopped = client.ok("actor", {"action": "stopIdle", "formId": npc})
         assert stopped["ok"], stopped
