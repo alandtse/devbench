@@ -3724,6 +3724,7 @@ namespace dvb
 								{ "timeScale", json{ { "type", "number" }, { "description", "replay: run the recorded trajectory this many times faster (0.1..3.0, up to 10.0 with allowHigh:true) and restore the previous scale when it ends — the setup/restore phase runs at normal speed regardless. The result reports goldensEligible plus timeScaleChanges[]" } } },
 								{ "allowHigh", json{ { "type", "boolean" }, { "description", "replay: permit a timeScale above 3.0, up to 10.0" } } },
 								{ "allowTimeScale", json{ { "type", "boolean" }, { "description", "start/replay: proceed while the game's time scale is not 1 (start would record an incomparable run; default false)" } } },
+								{ "holdCamera", json{ { "type", "boolean" }, { "description", "replay: hold the free camera so the recording's camera transform drives the view. Default: held, except on VR when the recording's tracked set is injected, where the HMD drives the view. Set it to force either choice." } } },
 								{ "runId", json{ { "type", "integer" }, { "description", "status: poll an async replay run started earlier (from replay's 'runId')" } } },
 							} },
 		};
@@ -3810,7 +3811,8 @@ namespace dvb
 					// Held from the trajectory boundary (not scene setup) to any exit; see ReplayHold.
 					const std::size_t trajectoryStepCount = plan.value("trajectoryStepCount", static_cast<std::size_t>(0));
 					const auto        cameraHold = std::make_shared<FreeCamera::ReplayHold>();
-					const bool        holdCamera = ScenarioPolicy::ShouldHoldReplayCamera(activity.value("vrTrackedSet", json::object()));
+					const bool        holdCamera = ScenarioPolicy::ShouldHoldReplayCamera(activity.value("vrTrackedSet", json::object()), REL::Module::IsVR(),
+						a_args.contains("holdCamera") ? std::optional<bool>(BooleanArgument(a_args, "holdCamera", true)) : std::nullopt);
 					auto              runReplay = [&a_registry, &a_events, a_ctx, steps, runId, coupling,
 													  activity, inputOwner, interpolate, cameraHold, holdCamera,
 													  trajectoryStepCount, scaleHold, replayScale,

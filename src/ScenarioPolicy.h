@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 
 #include "Json.h"
@@ -8,12 +9,15 @@ namespace dvb::ScenarioPolicy
 {
 	inline constexpr int kEmbeddedToolFallbackErrorCode = 422;
 
-	/// A replay holds the free camera so the recording's own camera transform drives the view. A replay that injects a
-	/// VR tracked set must not: the injected HMD drives the real camera, and a held free camera would show the recorded
-	/// game camera, which does not follow the head.
-	[[nodiscard]] inline bool ShouldHoldReplayCamera(const json& a_vrTrackedSetReport)
+	/// A replay holds the free camera so the recording's own camera transform drives the view, which is how a flat
+	/// recording is replayed. A replay on VR that injects a recorded tracked set must not: the injected HMD drives the real
+	/// camera, and a held free camera would show the recorded game camera, which does not follow the head. a_override
+	/// forces either choice.
+	[[nodiscard]] inline bool ShouldHoldReplayCamera(const json& a_vrTrackedSetReport, bool a_isVR, std::optional<bool> a_override = std::nullopt)
 	{
-		if (!a_vrTrackedSetReport.is_object())
+		if (a_override)
+			return *a_override;
+		if (!a_isVR || !a_vrTrackedSetReport.is_object())
 			return true;
 		const auto frames = a_vrTrackedSetReport.find("emittedFrames");
 		return frames == a_vrTrackedSetReport.end() || !frames->is_number_integer() || frames->get<std::int64_t>() <= 0;
