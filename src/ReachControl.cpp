@@ -290,7 +290,9 @@ namespace dvb::ReachControl
 						const RL::Vec3         rest = useRight ? kRestHandRight : kRestHandLeft;
 						aim = RL::TrackingFor(cal, rest, ReadNodeWorld(a_req.head.node));
 					}
-					const RL::Vec3 pos = a_req.head.position ? *a_req.head.position : RL::Add(aim, RL::Vec3{ 0.0, a_req.head.up, a_req.head.back });
+					RL::Vec3 pos = a_req.head.position ? *a_req.head.position : RL::Add(aim, RL::Vec3{ 0.0, a_req.head.up, a_req.head.back });
+					if (a_req.head.eyeHeight)
+						pos.y = *a_req.head.eyeHeight;
 					hmd = RL::LookAt(pos, aim);
 				}
 

@@ -65,11 +65,12 @@ namespace dvb::ReachLogic
 			kHands,
 			kNode
 		};
-		Aim                 aim{ Aim::kNone };
-		std::string         node;
-		double              back{ 0.5 };
-		double              up{ 0.3 };
-		std::optional<Vec3> position;
+		Aim                   aim{ Aim::kNone };
+		std::string           node;
+		double                back{ 0.5 };
+		double                up{ 0.3 };
+		std::optional<Vec3>   position;
+		std::optional<double> eyeHeight;
 	};
 
 	struct ReachRequest
@@ -94,6 +95,7 @@ namespace dvb::ReachLogic
 	inline constexpr double      kUpMin = 0.0;
 	inline constexpr double      kUpMax = 5.0;
 	inline constexpr double      kPosLimit = 10.0;
+	inline constexpr double      kEyeHeightMax = 3.0;
 	inline constexpr long        kHoldMsMin = 100;
 	inline constexpr long        kHoldMsMax = 1800000;
 	inline constexpr int         kIterationsMin = 1;

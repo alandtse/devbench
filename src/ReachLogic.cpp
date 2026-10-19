@@ -338,6 +338,13 @@ namespace dvb::ReachLogic
 				}
 				request.head.position = position;
 			}
+			if (head.contains("eyeHeight") && !head["eyeHeight"].is_null()) {
+				double eyeHeight = 0.0;
+				if (!ReadNumber(head["eyeHeight"], "head.eyeHeight", 0.0, kEyeHeightMax, eyeHeight, a_error)) {
+					return std::nullopt;
+				}
+				request.head.eyeHeight = eyeHeight;
+			}
 		}
 
 		if (a_args.contains("holdMs") && !a_args["holdMs"].is_null()) {

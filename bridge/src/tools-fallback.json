@@ -73,7 +73,7 @@
             "type": "object"
           },
           "head": {
-            "description": "reach: {lookAt:'hands'|<node name>, back?:0.5, up?:0.3, pos?:[x,y,z]} - aim the HMD at the hands or a node from back meters behind and up meters above it (tracking space), or from pos",
+            "description": "reach: {lookAt:'hands'|<node name>, back?:0.5, up?:0.3, pos?:[x,y,z], eyeHeight?} - aim the HMD at the hands or a node from back meters behind and up meters above it (tracking space), or from pos; eyeHeight (0..3) sets the head's height in tracking meters, e.g. 1.6 to frame low targets from standing height",
             "type": "object"
           },
           "holdMs": {

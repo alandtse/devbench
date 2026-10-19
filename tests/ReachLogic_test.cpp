@@ -382,6 +382,26 @@ TEST_CASE("ParseReach head pos boundaries")
 	CHECK(!tooBig.has_value());
 }
 
+TEST_CASE("ParseReach head eyeHeight")
+{
+	std::string error;
+	auto        ok = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"lookAt":"hands","eyeHeight":1.6}})", error);
+	CHECK(ok.has_value());
+	if (ok) {
+		CHECK(ok->head.eyeHeight.has_value());
+		CHECK(Near(*ok->head.eyeHeight, 1.6));
+	}
+	auto none = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"lookAt":"hands"}})", error);
+	CHECK(none.has_value() && !none->head.eyeHeight.has_value());
+	auto low = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"eyeHeight":-0.1}})", error);
+	CHECK(!low.has_value());
+	auto high = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"eyeHeight":3.1}})", error);
+	CHECK(!high.has_value());
+	auto wrongType = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"eyeHeight":"tall"}})", error);
+	CHECK(!wrongType.has_value());
+	CHECK(error.find("head.eyeHeight") != std::string::npos);
+}
+
 TEST_CASE("ParseReach holdMs boundaries")
 {
 	std::string error;
