@@ -34,6 +34,9 @@ namespace dvb::CaptureBurstLogic
 	/// outside its range.
 	std::optional<BurstRequest> ParseBurst(const json& a_args, std::string& a_error);
 
+	/// True when a_name is `<a_prefix>_NNNN.png` with a four-digit index below a_count: a frame this burst writes.
+	bool IsBurstFrame(std::string_view a_name, std::string_view a_prefix, int a_count);
+
 	/// How long a burst may run before it is reported as timed out: it presents count * everyNFrames frames, assumed to run at no
 	/// less than two frames a second, plus a fixed allowance.
 	long DefaultTimeoutMs(int a_count, int a_everyNFrames);

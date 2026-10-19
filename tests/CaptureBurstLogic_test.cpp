@@ -150,6 +150,20 @@ TEST_CASE("a finished burst is not changed by later events, and only a running o
 
 	ApplyEvent(slow, "r1", "capture.burst.ready", json{ { "requestId", "r1" }, { "ok", true } });
 	CHECK(slow.state == State::kDone);
+	CHECK(slow.error.empty());
+}
+
+TEST_CASE("only this burst's exact frame names are counted")
+{
+	CHECK(IsBurstFrame("shot_0000.png", "shot", 3));
+	CHECK(IsBurstFrame("shot_0002.png", "shot", 3));
+	CHECK(!IsBurstFrame("shot_0003.png", "shot", 3));
+	CHECK(!IsBurstFrame("shot_000.png", "shot", 3));
+	CHECK(!IsBurstFrame("shot_00001.png", "shot", 3));
+	CHECK(!IsBurstFrame("shot_00a1.png", "shot", 3));
+	CHECK(!IsBurstFrame("shot_0001.jpg", "shot", 3));
+	CHECK(!IsBurstFrame("shot2_0001.png", "shot", 3));
+	CHECK(!IsBurstFrame("shot_manifest.json", "shot", 3));
 }
 
 TEST_CASE("the status json reports the state, counts and, once finished, the frame size")
