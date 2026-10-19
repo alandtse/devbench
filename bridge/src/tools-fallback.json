@@ -2,7 +2,7 @@
   "tools": [
     {
       "name": "input",
-      "description": "Versioned synthetic input interface. action='capabilities' (default) returns the exact contract/version, readiness, limits, injection path, supported actions, and complete keyboard name→DirectInput-scan-code catalog (plus mouseLeft/mouseRight/mouseMiddle, codes 256-258, injected as mouse button events; each key lists its codeDomain, engineDevice and engineId, and mouseLeft is the left mouse button, which is attack only under the default bindings and outside menus); clients MUST capability-negotiate rather than assuming this tool exists. Contract v1 implements device='keyboard' using Skyrim's own BSInputEventQueue (not Windows SendInput, so window focus is irrelevant). 'status' reports readiness and every synthetic held key with owner/lease timing. 'down' starts a bounded owned hold (default maxHoldMs 5000; automatic up on expiry); repeated down by the same owner is idempotent and another owner gets 409. 'up' releases that owner's key; cross-owner force is reserved for internal cleanup. Releasing an unheld key is an idempotent no-op. 'tap' emits down, waits durationMs (default 50), then up. 'sequence' executes a prevalidated balanced array of tap/down/up/wait events (optional afterMs); it rejects an unbalanced hold before injecting anything and releases keys acquired by the sequence on failure. 'releaseAll' releases this owner only; all-owner cleanup is internal-only. Pending releases retain their leases until completion. 'up' returns pending=true and released=false, and 'releaseAll' lists those keys in pending rather than released. Every lease watchdog retries a failed automatic release until it succeeds or becomes obsolete. owner defaults to the MCP session id or rest:anonymous; automation should supply a stable task owner. DevBench also releases owned keys on load/new-game and emits input.keyboard events for accepted down/up transitions. Contract v2 also implements device='vrTrackedSet': read-only observe returns the current physical OpenVR HMD and both controllers; one prevalidated timestamped sequence whose every frame atomically contains HMD, left-controller, and right-controller pose plus both controllers' complete OpenVR button/touch/axis state. It is applied at the OpenVR compositor/system boundary, is always asynchronous, has one owner, passes the real runtime through when inactive, and returns a controlToken required for external stop. Failed controller-index restoration remains retryable through that token. Ad-hoc sequences stop on lifecycle boundaries; recording replay may explicitly survive the load/new-game events it is reproducing. There are deliberately no per-device or per-button VR mutation actions: submit the coherent tracked set so poses and controls cannot come from different clocks.",
+      "description": "Versioned synthetic input interface. action='capabilities' (default) returns the exact contract/version, readiness, limits, injection path, supported actions, and complete keyboard name→DirectInput-scan-code catalog (plus mouseLeft/mouseRight/mouseMiddle, codes 256-258, injected as mouse button events; each key lists its codeDomain, engineDevice and engineId, and mouseLeft is the left mouse button, which is attack only under the default bindings and outside menus); clients MUST capability-negotiate rather than assuming this tool exists. Contract v1 implements device='keyboard' using Skyrim's own BSInputEventQueue (not Windows SendInput, so window focus is irrelevant). 'status' reports readiness and every synthetic held key with owner/lease timing. 'down' starts a bounded owned hold (default maxHoldMs 5000; automatic up on expiry); repeated down by the same owner is idempotent and another owner gets 409. 'up' releases that owner's key; cross-owner force is reserved for internal cleanup. Releasing an unheld key is an idempotent no-op. 'tap' emits down, waits durationMs (default 50), then up. 'sequence' executes a prevalidated balanced array of tap/down/up/wait events (optional afterMs); it rejects an unbalanced hold before injecting anything and releases keys acquired by the sequence on failure. 'releaseAll' releases this owner only; all-owner cleanup is internal-only. Pending releases retain their leases until completion. 'up' returns pending=true and released=false, and 'releaseAll' lists those keys in pending rather than released. Every lease watchdog retries a failed automatic release until it succeeds or becomes obsolete. owner defaults to the MCP session id or rest:anonymous; automation should supply a stable task owner. DevBench also releases owned keys on load/new-game and emits input.keyboard events for accepted down/up transitions. Contract v2 also implements device='vrTrackedSet': read-only observe returns the current physical OpenVR HMD and both controllers; one prevalidated timestamped sequence whose every frame atomically contains HMD, left-controller, and right-controller pose plus both controllers' complete OpenVR button/touch/axis state. It is applied at the OpenVR compositor/system boundary, is always asynchronous, has one owner, passes the real runtime through when inactive, and returns a controlToken required for external stop. Failed controller-index restoration remains retryable through that token. Ad-hoc sequences stop on lifecycle boundaries; recording replay may explicitly survive the load/new-game events it is reproducing. There are deliberately no per-device or per-button VR mutation actions: submit the coherent tracked set so poses and controls cannot come from different clocks. device='vrTrackedSet' action='reach' places one or both hands next to nodes of the player: it calibrates how a tracking-space move shows up in the world, injects the tracked set, re-reads the hand and target nodes after each settle (the body follows the arms, so a node moves when a hand reaches it) and corrects until every hand is within toleranceUnits, then holds holdMs; 'head' optionally aims the HMD at the hands or a node. It returns { queued, runId } at once; action='reachStatus' (runId) reports { phase (queued | calibrating | reaching | holding | done | failed | stopped), iteration, per hand { hand, node, error, errorDistance, handToNode }, error }, and 'reachStop' ends it. One reach runs at a time (409); while it runs it replaces the HMD and both controllers like a sequence, and it ends at a load. Fingers are not driven.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -14,13 +14,22 @@
               "tap",
               "sequence",
               "stop",
-              "releaseAll"
+              "releaseAll",
+              "reach",
+              "reachStatus",
+              "reachStop"
             ],
             "type": "string"
           },
           "all": {
             "description": "internal cleanup only; external true is rejected",
             "type": "boolean"
+          },
+          "approachUnits": {
+            "description": "reach: world units behind the target, along the facing, the first approach starts from (default 15)",
+            "maximum": 200,
+            "minimum": 0,
+            "type": "number"
           },
           "controlToken": {
             "description": "vrTrackedSet stop/releaseAll: opaque token returned by sequence start",
@@ -59,6 +68,26 @@
             "minItems": 1,
             "type": "array"
           },
+          "hands": {
+            "description": "reach: {left?:{node,front?,offset?:[x,y,z]}, right?:{...}} - put that hand node-relative: next to a node of the player, front world units in front of it along the facing, plus a world offset; at least one hand",
+            "type": "object"
+          },
+          "head": {
+            "description": "reach: {lookAt:'hands'|<node name>, back?:0.5, up?:0.3, pos?:[x,y,z]} - aim the HMD at the hands or a node from back meters behind and up meters above it (tracking space), or from pos",
+            "type": "object"
+          },
+          "holdMs": {
+            "description": "reach: how long to hold the final pose (default 10000)",
+            "maximum": 1800000,
+            "minimum": 100,
+            "type": "integer"
+          },
+          "iterations": {
+            "description": "reach: correction passes (default 4)",
+            "maximum": 10,
+            "minimum": 1,
+            "type": "integer"
+          },
           "key": {
             "description": "down/up/tap: documented key name, raw DirectInput scancode (1-255), or mouse button code (256-258 = mouseLeft / mouseRight / mouseMiddle)",
             "oneOf": [
@@ -84,6 +113,11 @@
             "minLength": 1,
             "type": "string"
           },
+          "runId": {
+            "description": "reachStatus: the run (default the latest)",
+            "minimum": 1,
+            "type": "integer"
+          },
           "surviveLifecycle": {
             "description": "internal recording replay only; external true is rejected",
             "type": "boolean"
@@ -93,6 +127,12 @@
             "maximum": 1000,
             "minimum": 10,
             "type": "integer"
+          },
+          "toleranceUnits": {
+            "description": "reach: converged when each hand is within this many world units of its target (default 1)",
+            "maximum": 50,
+            "minimum": 0.05,
+            "type": "number"
           }
         },
         "type": "object"
