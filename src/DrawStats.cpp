@@ -349,19 +349,27 @@ namespace dvb::DrawStats
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		// The original is stored before the slot is written: another thread may call the hook at once.
+		template <class T>
+		void WriteHook(REL::Relocation<std::uintptr_t>& a_vtable, std::size_t a_index)
+		{
+			T::func = *reinterpret_cast<const std::uintptr_t*>(a_vtable.address() + a_index * sizeof(void*));
+			a_vtable.write_vfunc(a_index, T::thunk);
+		}
+
 		template <Pass P>
 		void HookShadowLight(REL::VariantID a_vtable)
 		{
 			REL::Relocation<std::uintptr_t> vt{ a_vtable };
-			ShadowRender<P>::func = vt.write_vfunc(0x0A, ShadowRender<P>::thunk);
-			ShadowAccumulate<P>::func = vt.write_vfunc(0x09, ShadowAccumulate<P>::thunk);
+			WriteHook<ShadowRender<P>>(vt, 0x0A);
+			WriteHook<ShadowAccumulate<P>>(vt, 0x09);
 		}
 
 		template <std::size_t S>
 		void HookShader(REL::VariantID a_vtable)
 		{
 			REL::Relocation<std::uintptr_t> vt{ a_vtable };
-			SetupGeometry<S>::func = vt.write_vfunc(0x06, SetupGeometry<S>::thunk);
+			WriteHook<SetupGeometry<S>>(vt, 0x06);
 		}
 
 		int TargetOf(ID3D11View* a_view, bool a_depth)
@@ -407,17 +415,18 @@ namespace dvb::DrawStats
 		};
 		std::vector<Slot> g_slots;
 
-		void* SwapEntry(void* a_object, std::size_t a_index, void* a_hook, std::string_view a_name)
+		template <class F>
+		bool SwapEntry(void* a_object, std::size_t a_index, F a_hook, F& a_original, std::string_view a_name)
 		{
-			auto**      vtbl = *reinterpret_cast<void***>(a_object);
-			DWORD       old = 0;
-			void* const original = vtbl[a_index];
+			auto** vtbl = *reinterpret_cast<void***>(a_object);
+			DWORD  old = 0;
+			a_original = reinterpret_cast<F>(vtbl[a_index]);
 			if (!VirtualProtect(&vtbl[a_index], sizeof(void*), PAGE_EXECUTE_READWRITE, &old))
-				return nullptr;
-			vtbl[a_index] = a_hook;
+				return false;
+			vtbl[a_index] = reinterpret_cast<void*>(a_hook);
 			VirtualProtect(&vtbl[a_index], sizeof(void*), old, &old);
-			g_slots.push_back({ &vtbl[a_index], a_hook, a_name });
-			return original;
+			g_slots.push_back({ &vtbl[a_index], reinterpret_cast<void*>(a_hook), a_name });
+			return true;
 		}
 
 		using OMSetRenderTargets_t = void (*)(ID3D11DeviceContext*, UINT, ID3D11RenderTargetView* const*, ID3D11DepthStencilView*);
@@ -476,12 +485,10 @@ namespace dvb::DrawStats
 			if (DXGI_SWAP_CHAIN_DESC sd{}; SUCCEEDED(swap->GetDesc(&sd)))
 				g_screen = { sd.BufferDesc.Width, sd.BufferDesc.Height };
 			// ID3D11DeviceContext::OMSetRenderTargets is vtable slot 33, IDXGISwapChain::Present slot 8.
-			g_omSetRenderTargets = reinterpret_cast<OMSetRenderTargets_t>(SwapEntry(ctx, 33, reinterpret_cast<void*>(&HkOMSetRenderTargets), "OMSetRenderTargets"));
-			if (!g_omSetRenderTargets)
+			if (!SwapEntry(ctx, 33, &HkOMSetRenderTargets, g_omSetRenderTargets, "OMSetRenderTargets"))
 				return false;
 			const bool gpu = Gpu::Init(device, ctx);
-			g_present = reinterpret_cast<Present_t>(SwapEntry(swap, 8, reinterpret_cast<void*>(&HkPresent), "Present"));
-			if (!g_present)
+			if (!SwapEntry(swap, 8, &HkPresent, g_present, "Present"))
 				return false;
 			logs::info("devbench: draws hooked (GPU timer {})", gpu ? "on" : "unavailable");
 			return true;
@@ -510,8 +517,8 @@ namespace dvb::DrawStats
 			HookShader<7>(RE::VTABLE_BSBloodSplatterShader[0]);
 			HookShader<8>(RE::VTABLE_BSDistantTreeShader[0]);
 			REL::Relocation<std::uintptr_t> batch{ RE::VTABLE_BSBatchRenderer[0] };
-			RegisterPass<1>::func = batch.write_vfunc(0x01, RegisterPass<1>::thunk);
-			RegisterPass<2>::func = batch.write_vfunc(0x02, RegisterPass<2>::thunk);
+			WriteHook<RegisterPass<1>>(batch, 0x01);
+			WriteHook<RegisterPass<2>>(batch, 0x02);
 			g_d3dHooked = HookD3D();
 			if (!g_d3dHooked)
 				g_armError = "no D3D11 context or swap chain to hook: render targets, frame times and GPU time are not measured";
