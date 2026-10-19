@@ -40,6 +40,17 @@ def test_actor_reports_an_unknown_reference(client):
     assert status == 404, (status, body)
 
 
+def _wait_loaded(client, npc: str, seconds: float = 20.0) -> None:
+    """A spawned NPC has no 3D for a moment; idle control refuses it until it does."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        ref = client.ok("inspect", {"kind": "refs", "formId": npc})["refs"][0]
+        if ref.get("actor", {}).get("loaded3D"):
+            return
+        time.sleep(0.5)
+    raise AssertionError(f"{npc} never loaded its 3D")
+
+
 def _spawn(client) -> str:
     """Place an NPC beside the player and return its reference as a hex FormID."""
     body = client.ok(
@@ -59,6 +70,7 @@ def _spawn(client) -> str:
 def test_play_loop_and_stop_an_idle_on_a_spawned_npc(client):
     npc = _spawn(client)
     try:
+        _wait_loaded(client, npc)
         idles = client.ok("actor", {"action": "listIdles", "formId": npc, "limit": 5})
         assert idles["returned"] <= 5 and idles["total"] >= idles["returned"], idles
 
