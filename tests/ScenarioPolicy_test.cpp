@@ -4,6 +4,15 @@
 
 using dvb::json;
 
+TEST_CASE("a replay holds the free camera unless it injects a VR tracked set")
+{
+	CHECK(dvb::ScenarioPolicy::ShouldHoldReplayCamera(json::object()));
+	CHECK(dvb::ScenarioPolicy::ShouldHoldReplayCamera(json(nullptr)));
+	CHECK(dvb::ScenarioPolicy::ShouldHoldReplayCamera(json{ { "enabled", true }, { "emittedFrames", 0 } }));
+	CHECK(dvb::ScenarioPolicy::ShouldHoldReplayCamera(json{ { "emittedFrames", "many" } }));
+	CHECK(!dvb::ScenarioPolicy::ShouldHoldReplayCamera(json{ { "enabled", true }, { "emittedFrames", 488 } }));
+}
+
 TEST_CASE("scenario rejects embedded extension errors")
 {
 	const json result{
