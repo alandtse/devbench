@@ -133,8 +133,8 @@ namespace dvb::ActorIdle
 		a_actor->EnableAI(true);
 		const bool ok = ProcessOf(a_actor)->PlayIdle(a_actor, a_idle, nullptr);
 
-		Drop(a_actor->GetFormID());
 		if (ok) {
+			Drop(a_actor->GetFormID());
 			const auto now = NowMs();
 			// A frozen actor cannot be replayed, so a loop keeps the AI on and a_freezeAi applies to a single play only.
 			if (a_loop || a_freezeAi)

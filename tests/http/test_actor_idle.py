@@ -20,6 +20,10 @@ NPC_BASE = "0xA2C8E"
         {"action": "playIdle", "formId": "0x14", "idle": "IdleWave", "repeatMs": 10},
         {"action": "playIdle", "formId": "0x14", "idle": "IdleWave", "repeatMs": 1.5},
         {"action": "listIdles", "formId": "0x14", "limit": 0},
+        {"action": "playIdle", "formId": "0x14", "idle": 5},
+        {"action": "playIdle", "formId": "0x14", "idle": "IdleWave", "loop": "yes"},
+        {"action": "stopIdle", "formId": "0x14", "freezeAi": 1},
+        {"action": "listIdles", "formId": 20},
     ],
 )
 def test_actor_rejects_a_malformed_request(client, args):

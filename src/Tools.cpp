@@ -3178,8 +3178,8 @@ namespace dvb
 			"(the engine does not report when an idle ends, so set it to the clip's length) until 'stopIdle' or the NPC "
 			"unloads, dies, or a load starts. Idles only animate while the NPC's AI runs, so a loop keeps the AI on; "
 			"freezeAi (single play only) turns the AI back off after the pose settles. 'stopIdle' ends any loop and "
-			"returns the NPC to its default idle (ResetRoot), optional 'freezeAi'. 'status' returns whether a loop is active and its idle. Every action returns { ref, ok, ... } "
-			"and refuses (409) the player, a dead or unloaded NPC. Main thread; SE and VR.";
+			"returns the NPC to its default idle (ResetRoot), optional 'freezeAi'. 'status' returns whether a loop is active and its idle. playIdle and stopIdle return { ref, ok, ... }; every action "
+			"refuses (409) the player, a dead or unloaded NPC. Main thread; SE and VR.";
 		actor.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
@@ -3195,21 +3195,28 @@ namespace dvb
 			{ "required", json::array({ "action", "formId" }) },
 		};
 		a_registry.Register(std::move(actor), [](const json& a_args, const ToolContext&) -> json {
-			const std::string action = a_args.value("action", std::string{});
-			const std::string formId = a_args.value("formId", std::string{});
+			auto text = [&](const char* a_key) -> std::string {
+				if (!a_args.contains(a_key))
+					return {};
+				if (!a_args[a_key].is_string())
+					throw ToolError(400, std::format("'{}' must be a string", a_key));
+				return a_args[a_key].get<std::string>();
+			};
+			const std::string action = text("action");
+			const std::string formId = text("formId");
 			if (action != "listIdles" && action != "playIdle" && action != "stopIdle" && action != "status")
 				throw ToolError(400, std::format("unknown action '{}' (listIdles|playIdle|stopIdle|status)", action));
 			if (formId.empty())
 				throw ToolError(400, "'formId' (the NPC reference) is required");
-			const bool freezeAi = a_args.value("freezeAi", false);
-			const bool loop = a_args.value("loop", false);
+			const bool freezeAi = BooleanArgument(a_args, "freezeAi", false);
+			const bool loop = BooleanArgument(a_args, "loop", false);
 
 			std::string  idleArg;
 			std::int64_t repeatMs = ActorIdleLogic::kDefaultRepeatMs;
 			std::size_t  limit = 200;
 			std::string  filter;
 			if (action == "playIdle") {
-				idleArg = a_args.value("idle", std::string{});
+				idleArg = text("idle");
 				if (idleArg.empty())
 					throw ToolError(400, "'idle' (EditorID or FormID) is required for playIdle");
 				if (loop && freezeAi)
@@ -3219,7 +3226,7 @@ namespace dvb
 					throw ToolError(400, "'repeatMs' must be an integer 250..60000");
 				repeatMs = *gap;
 			} else if (action == "listIdles") {
-				filter = a_args.value("filter", std::string{});
+				filter = text("filter");
 				if (a_args.contains("limit")) {
 					if (!a_args["limit"].is_number_integer() || a_args["limit"].get<std::int64_t>() <= 0)
 						throw ToolError(400, "'limit' must be an integer > 0");
