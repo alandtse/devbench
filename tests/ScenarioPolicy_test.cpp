@@ -4,6 +4,29 @@
 
 using dvb::json;
 
+TEST_CASE("a replay holds the free camera unless it injects a VR tracked set on VR")
+{
+	const json injected{ { "enabled", true }, { "emittedFrames", 488 } };
+	CHECK(dvb::ScenarioPolicy::ShouldHoldReplayCamera(json::object(), true));
+	CHECK(dvb::ScenarioPolicy::ShouldHoldReplayCamera(json(nullptr), true));
+	CHECK(dvb::ScenarioPolicy::ShouldHoldReplayCamera(json{ { "enabled", true }, { "emittedFrames", 0 } }, true));
+	CHECK(dvb::ScenarioPolicy::ShouldHoldReplayCamera(json{ { "emittedFrames", "many" } }, true));
+	CHECK(!dvb::ScenarioPolicy::ShouldHoldReplayCamera(injected, true));
+}
+
+TEST_CASE("a recorded tracked set is not injected off VR, so the camera is still held")
+{
+	const json injected{ { "enabled", true }, { "emittedFrames", 488 } };
+	CHECK(dvb::ScenarioPolicy::ShouldHoldReplayCamera(injected, false));
+}
+
+TEST_CASE("an explicit holdCamera overrides the choice either way")
+{
+	const json injected{ { "enabled", true }, { "emittedFrames", 488 } };
+	CHECK(dvb::ScenarioPolicy::ShouldHoldReplayCamera(injected, true, true));
+	CHECK(!dvb::ScenarioPolicy::ShouldHoldReplayCamera(json::object(), false, false));
+}
+
 TEST_CASE("scenario rejects embedded extension errors")
 {
 	const json result{
