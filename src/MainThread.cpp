@@ -2,6 +2,7 @@
 
 #include "GameState.h"  // dvb::game::CurrentFrame
 #include "MainThreadTask.h"
+#include "MainThreadTimeout.h"
 #include "ToolRegistry.h"  // dvb::ToolError
 
 #include <algorithm>
@@ -81,20 +82,8 @@ namespace dvb::MainThread
 			if (future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
 				return future.get();
 			if (!abandoned)
-				throw TaskTimeout(true, std::format("main-thread task did not finish within {}ms; it already started and may still complete", a_timeout.count()));
-			// The engine's frame counter discriminates the two 504 causes: still
-			// advancing = main thread busy; frozen = hung OR
-			// fully paused (the counter also freezes in pause menus).
-			const int frameNow = game::CurrentFrame();
-			if (frameAtStart < 0 || frameNow < 0)
-				throw TaskTimeout(false, std::format("main-thread task did not start within {}ms; queued task abandoned", a_timeout.count()));
-			if (frameNow == frameAtStart)
-				throw TaskTimeout(false, std::format(
-											 "main-thread task did not start within {}ms; queued task abandoned and the game frame counter has not advanced -- the game is paused, loading or hung; check blockedBy (or menu action=list) and retry once it clears, and only if nothing is open and it persists does a process restart recover",
-											 a_timeout.count()));
-			throw TaskTimeout(false, std::format(
-										 "main-thread task did not start within {}ms; queued task abandoned ({} frames elapsed -- main thread busy)",
-										 a_timeout.count(), frameNow - frameAtStart));
+				throw TaskTimeout(true, DescribeTaskTimeout(a_timeout, true));
+			throw TaskTimeout(false, DescribeTaskTimeout(a_timeout, false, frameAtStart, game::CurrentFrame()));
 		}
 
 		return future.get();  // rethrows the handler's exception on the listener thread
