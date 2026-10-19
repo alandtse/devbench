@@ -85,7 +85,7 @@ namespace dvb::DrawStatsLogic
 			{ "frames", frames },
 			{ "seconds", seconds },
 			{ "fps", seconds > 0.0 ? static_cast<double>(frames) / seconds : 0.0 },
-			{ "cpuFrameMs", msPerFrame(a.frameTicks, b.frameTicks) },
+			{ "frameMs", msPerFrame(a.frameTicks, b.frameTicks) },
 			{ "gpu", json{
 						 { "timed", a_gpuTimed },
 						 { "framesTimed", gpuFrames },

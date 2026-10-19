@@ -70,7 +70,7 @@ TEST_CASE("draws: a reading's shape and per-frame numbers")
 	CHECK(r["frames"] == 100);
 	CHECK(r["seconds"] == 2.0);
 	CHECK(r["fps"] == 50.0);
-	CHECK(r["cpuFrameMs"] == 15.0);
+	CHECK(r["frameMs"] == 15.0);
 	CHECK(r["gpu"]["timed"] == true);
 	CHECK(r["gpu"]["framesTimed"] == 80);
 	CHECK(r["gpu"]["frameMs"] == 6.0);
@@ -109,7 +109,7 @@ TEST_CASE("draws: an empty window reads zeros, never a division by zero")
 	const auto   r = Reading(c, c, {}, false, 0, 0, false, 1000.0);
 	CHECK(r["frames"] == 0);
 	CHECK(r["fps"] == 0.0);
-	CHECK(r["cpuFrameMs"] == 0.0);
+	CHECK(r["frameMs"] == 0.0);
 	CHECK(r["gpu"]["frameMs"] == 0.0);
 	CHECK(r["mainPassTargets"].empty());
 }
@@ -118,7 +118,7 @@ TEST_CASE("draws: every reply names its source")
 {
 	const Counts c{};
 	const auto   own = WithSource(Reading(c, c, {}, false, 0, 0, false, 1000.0), kOwnSource);
-	for (const auto* key : { "frames", "seconds", "fps", "cpuFrameMs", "gpu", "passes", "mainPassTargets", "mainPassTargetsCapped", "source" })
+	for (const auto* key : { "frames", "seconds", "fps", "frameMs", "gpu", "passes", "mainPassTargets", "mainPassTargetsCapped", "source" })
 		CHECK(own.contains(key));
 	CHECK(own["source"] == "devbench");
 

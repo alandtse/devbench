@@ -3017,7 +3017,7 @@ namespace dvb
 				"'radius' from player, 'limit' default 100); 'model' matches statics and furniture — "
 				"actors normally have no base mesh, so list NPCs with 'formType'=Actor. "
 				"'draws' → what the frames since the counting window began drew, per frame: { frames, seconds, fps, "
-				"cpuFrameMs, gpu:{timed, framesTimed, framesLost, frameMs}, passes:[{pass (main|sunShadows|spotShadows|"
+				"frameMs (Present to Present), gpu:{timed, framesTimed, framesLost, frameMs}, passes:[{pass (main|sunShadows|spotShadows|"
 				"pointShadows), objects, objectsByShader (SetupGeometry calls per BSShader type); shadow passes add renders, "
 				"renderCpuMs, accumulateCpuMs, gpuMs, casters, casterSizes:[{atLeast, below, count}] (bound radius / camera "
 				"distance); sunShadows adds objectsPerDepthTarget (cascades)}], mainPassTargets:[{label, width, height, "
