@@ -508,6 +508,10 @@ namespace dvb::ReachLogic
 		if (a_progress.right) {
 			result["right"] = handJson(*a_progress.right);
 		}
+		if (a_progress.left || a_progress.right) {
+			const double worst = std::max(a_progress.left ? Norm(a_progress.left->error) : 0.0, a_progress.right ? Norm(a_progress.right->error) : 0.0);
+			result["worstErrorDistance"] = round2(worst);
+		}
 		if (!a_progress.error.empty()) {
 			result["error"] = a_progress.error;
 		}
