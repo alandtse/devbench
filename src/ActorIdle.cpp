@@ -6,6 +6,7 @@
 #include <RE/A/AIProcess.h>
 #include <RE/A/Actor.h>
 #include <RE/P/PlayerCharacter.h>
+#include <RE/T/TESFile.h>
 #include <RE/T/TESIdleForm.h>
 
 #include <algorithm>
@@ -17,7 +18,6 @@ namespace dvb::ActorIdle
 {
 	namespace
 	{
-		// How long the AI stays on after a play or stop before a requested freeze: PlayIdle only animates while it runs.
 		constexpr std::int64_t              kSettleMs = 1500;
 		constexpr std::chrono::milliseconds kTickInterval{ 100 };
 
@@ -128,7 +128,7 @@ namespace dvb::ActorIdle
 		if (!a_idle)
 			throw ToolError(404, "idle not found");
 
-		// PlayIdle only animates while the AI runs; the do-nothing package keeps the actor where it stands.
+		// Do not drop EnableAI(true): PlayIdle does not animate while the actor's AI is off.
 		a_actor->InitiateDoNothingPackage();
 		a_actor->EnableAI(true);
 		const bool ok = ProcessOf(a_actor)->PlayIdle(a_actor, a_idle, nullptr);
@@ -136,7 +136,6 @@ namespace dvb::ActorIdle
 		Drop(a_actor->GetFormID());
 		if (ok) {
 			const auto now = NowMs();
-			// A frozen actor cannot be replayed, so a loop keeps the AI on and a_freezeAi applies to a single play only.
 			if (a_loop || a_freezeAi)
 				g_entries.push_back({ a_actor->GetFormID(), a_loop ? a_idle->GetFormID() : 0, now, a_repeatMs, !a_loop && a_freezeAi ? now + kSettleMs : -1 });
 			Schedule();
@@ -188,7 +187,6 @@ namespace dvb::ActorIdle
 		json        idles = json::array();
 		std::size_t total = 0, scanned = 0, unnamed = 0, unusable = 0, failedConditions = 0;
 
-		// The data handler's per-type array does not hold idles, so walk every form.
 		std::vector<RE::TESIdleForm*> all;
 		{
 			const auto& [map, lock] = RE::TESForm::GetAllForms();
@@ -224,6 +222,8 @@ namespace dvb::ActorIdle
 					{ "editorId", edid },
 					{ "formId", std::format("0x{:08X}", idle->GetFormID()) },
 					{ "animEvent", event ? event : "" },
+					{ "animFile", idle->animFileName.c_str() ? idle->animFileName.c_str() : "" },
+					{ "plugin", idle->GetFile(0) ? std::string(idle->GetFile(0)->GetFilename()) : std::string{} },
 					{ "loopMin", idle->data.loopMin },
 					{ "loopMax", idle->data.loopMax },
 					{ "replayDelay", idle->data.replayDelay } });

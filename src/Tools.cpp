@@ -5,10 +5,13 @@
 #include "CameraOrbit.h"
 #include <RE/T/ThirdPersonState.h>
 
+#include "AssetInfo.h"
 #include "Capture.h"
 #include "ConsoleLogCapture.h"
 #include "DifficultyLogic.h"
 #include "EventBus.h"
+#include "FormSearch.h"
+#include "FormSearchLogic.h"
 #include "FreeCamera.h"
 #include "GameEvents.h"
 #include "GameState.h"
@@ -3172,7 +3175,7 @@ namespace dvb
 		actor.description =
 			"Drive an NPC's idle animation. 'listIdles' (param 'formId' of a loaded NPC, optional 'filter' EditorID "
 			"substring, 'limit' default 200) returns the idles that NPC can use right now as { editorId, formId, "
-			"animEvent, loopMin, loopMax, replayDelay }. 'playIdle' (params 'formId', 'idle' EditorID or FormID, "
+			"animEvent, animFile, plugin, loopMin, loopMax, replayDelay }. 'playIdle' (params 'formId', 'idle' EditorID or FormID, "
 			"'loop' default false, 'repeatMs' 250..60000 default 5000, 'freezeAi' default false) plays the idle on the "
 			"NPC, which stands where it is under the do-nothing package; with loop:true it is replayed every repeatMs "
 			"(the engine does not report when an idle ends, so set it to the clip's length) until 'stopIdle' or the NPC "
@@ -3245,6 +3248,144 @@ namespace dvb
 					throw ToolError(404, std::format("'{}' is not an idle", idleArg));
 				return ActorIdle::Play(npc, idle, loop, repeatMs, freezeAi);
 			});
+		});
+
+		ToolDescriptor forms;
+		forms.name = "forms";
+		forms.readOnly = true;
+		forms.description =
+			"Find loaded forms. 'find' (param 'formType': Armor | ArmorAddon | HeadPart | Idle | NPC | Weapon | Misc) lists "
+			"the forms of that type, ordered by FormID, filtered by any of 'name' (substring of the name or EditorID), "
+			"'model' (substring of any model path: a head part's, or an armor's addons'), 'plugin' (substring of the "
+			"plugin the form comes from), 'slot' (Armor/ArmorAddon: a biped slot number 30..61 that must be set) and "
+			"'headPartType' (HeadPart: Misc | Face | Eyes | Hair | FacialHair | Scar | Eyebrows); 'limit' (default 50, "
+			"max 500) and 'offset' page the result, which is { total, offset, returned, truncated, forms }. Every form "
+			"carries { formId, formType, plugin, localId, editorId, name }: plugin and localId are what "
+			"Game.GetFormFromFile takes, since the load-order index in formId differs between runtimes and saves. "
+			"A HeadPart adds { headPartType, sex, playable, extraPart, model, extraParts, validRaces (EditorIDs) }; an Armor adds "
+			"{ slotMask, slots, addons:[{ ..., slotMask, slots, maleModel, femaleModel }] }; an ArmorAddon adds its "
+			"slots and both models. 'headParts' (param 'formId' of an actor reference) returns the head parts on that "
+			"actor's base record, described as above, with sharedBase:true when the base is shared by every clone of "
+			"it (so a head part change on one changes all). 'describe' (param 'formId', any form) returns that form as "
+			"'find' describes it plus pluginInfo, the header of the plugin it comes from { name, author, description, "
+			"version, recordCount, masters, master, light }; an Idle also carries { animFile, animEvent, loopMin, loopMax, "
+			"replayDelay, noAttacking, blocking, parent, previous } and animation, the clip its event plays: an "
+			"idle names a behavior graph (usually Actors/Character/Behaviors/0_Master.hkx), so devbench reads the graph "
+			"and the behavior files it references from the game's archives and finds the clip named for the event "
+			"(event IdleCiceroDance1 plays clip CiceroDance1; a prefix such as MT_ or Tor_ is tolerated), then reads that "
+			"clip's file, giving { source:'behavior', behavior, clip, animationName, match (exact | noIdlePrefix | suffix | "
+			"contains, weakest last), candidates, found, resolvedPath, bytes, className, durationSeconds (the clip's "
+			"length), transformTracks, floatTracks }. The match is by name and does not follow the graph's transitions, so "
+			"treat suffix and contains matches as likely, not certain; an event no clip is named for gives found:false with "
+			"a note. An idle whose file is itself an animation reports that file directly (source:'file'). 'plugins' (optional 'filter' over name, author and "
+			"description, 'limit', 'offset') lists the loaded plugins, full then light, each with that header and its "
+			"load-order index. 'asset' (param 'path', relative to Data/Meshes or to Data) reads a game file from the "
+			"archives or loose files and reports { path, found, resolvedPath, bytes } and, for a Havok animation, its "
+			"className, durationSeconds and track counts.";
+		forms.inputSchema = json{
+			{ "type", "object" },
+			{ "properties", json{
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "find", "headParts", "describe", "plugins", "asset" }) }, { "description", "find | headParts | describe | plugins | asset" } } },
+								{ "formType", json{ { "type", "string" }, { "description", "find: Armor | ArmorAddon | HeadPart | Idle | NPC | Weapon | Misc" } } },
+								{ "name", json{ { "type", "string" }, { "description", "find: case-insensitive substring of the name or EditorID; plugins: of the plugin name, author or description (see filter)" } } },
+								{ "model", json{ { "type", "string" }, { "description", "find: case-insensitive substring of any model path (Armor, ArmorAddon, HeadPart)" } } },
+								{ "plugin", json{ { "type", "string" }, { "description", "find: case-insensitive substring of the plugin the form comes from" } } },
+								{ "slot", json{ { "type", "integer" }, { "description", "find: Armor/ArmorAddon: a biped slot number 30..61 that must be set (31 hair, 30 head, 41 long hair)" } } },
+								{ "headPartType", json{ { "type", "string" }, { "description", "find: HeadPart: Misc | Face | Eyes | Hair | FacialHair | Scar | Eyebrows" } } },
+								{ "limit", json{ { "type", "integer" }, { "description", "find: most forms to return (default 50, max 500)" } } },
+								{ "offset", json{ { "type", "integer" }, { "description", "find: forms to skip (default 0)" } } },
+								{ "formId", json{ { "type", "string" }, { "description", "headParts: the actor reference; describe: any form (FormID like 0xFF000D62, or EditorID)" } } },
+								{ "filter", json{ { "type", "string" }, { "description", "plugins: case-insensitive substring of the plugin name, author or description" } } },
+								{ "path", json{ { "type", "string" }, { "description", "asset: a game file path, relative to Data/Meshes or to Data (e.g. Actors/Character/Animations/Foo.hkx)" } } },
+							} },
+			{ "required", json::array({ "action" }) },
+		};
+		a_registry.Register(std::move(forms), [](const json& a_args, const ToolContext&) -> json {
+			const std::string action = a_args.value("action", std::string{});
+			if (action != "find" && action != "headParts" && action != "describe" && action != "plugins" && action != "asset")
+				throw ToolError(400, std::format("unknown action '{}' (find|headParts|describe|plugins|asset)", action));
+
+			auto text = [&](const char* a_key) -> std::string {
+				if (!a_args.contains(a_key))
+					return {};
+				if (!a_args[a_key].is_string())
+					throw ToolError(400, std::format("'{}' must be a string", a_key));
+				return a_args[a_key].get<std::string>();
+			};
+			auto count = [&](const char* a_key, std::size_t a_default, std::size_t a_min, std::size_t a_max) -> std::size_t {
+				if (!a_args.contains(a_key))
+					return a_default;
+				const auto& v = a_args[a_key];
+				if (!v.is_number_integer() || v.get<std::int64_t>() < static_cast<std::int64_t>(a_min) || v.get<std::int64_t>() > static_cast<std::int64_t>(a_max))
+					throw ToolError(400, std::format("'{}' must be an integer {}..{}", a_key, a_min, a_max));
+				return static_cast<std::size_t>(v.get<std::int64_t>());
+			};
+
+			if (action == "plugins") {
+				const std::string filter = text("filter");
+				const auto        limit = count("limit", FormSearchLogic::kDefaultLimit, 1, FormSearchLogic::kMaxLimit);
+				const auto        offset = count("offset", 0, 0, 1000000);
+				return MainThread::RunAndWait([=]() -> json { return AssetInfo::Plugins(filter, limit, offset); }, std::chrono::milliseconds(30000));
+			}
+
+			if (action == "asset") {
+				const std::string path = text("path");
+				if (path.empty())
+					throw ToolError(400, "'path' (a game file path, relative to Data or to Data/Meshes) is required for asset");
+				return MainThread::RunAndWait([path]() -> json { return AssetInfo::Animation(path); }, std::chrono::milliseconds(30000));
+			}
+
+			if (action == "describe") {
+				const std::string formId = text("formId");
+				if (formId.empty())
+					throw ToolError(400, "'formId' (any form) is required for describe");
+				return MainThread::RunAndWait([formId]() -> json {
+					auto* form = LookupFormArg(formId);
+					if (!form)
+						throw ToolError(404, std::format("'{}' is not a loaded form", formId));
+					return FormSearch::DescribeForm(form);
+				},
+					std::chrono::milliseconds(15000));
+			}
+
+			if (action == "headParts") {
+				const std::string formId = text("formId");
+				if (formId.empty())
+					throw ToolError(400, "'formId' (an actor reference) is required for headParts");
+				return MainThread::RunAndWait([formId]() -> json {
+					auto* form = LookupFormArg(formId);
+					auto* ref = form ? form->AsReference() : nullptr;
+					auto* npc = ref ? ref->As<RE::Actor>() : nullptr;
+					if (!npc)
+						throw ToolError(404, std::format("'{}' is not a placed actor reference", formId));
+					return FormSearch::HeadPartsOf(npc);
+				});
+			}
+
+			FormSearch::Query query;
+			query.formType = text("formType");
+			if (query.formType.empty())
+				throw ToolError(400, std::format("'formType' is required for find ({})", FormSearch::SupportedTypes()));
+			query.name = text("name");
+			query.model = text("model");
+			query.plugin = text("plugin");
+			query.limit = count("limit", FormSearchLogic::kDefaultLimit, 1, FormSearchLogic::kMaxLimit);
+			query.offset = count("offset", 0, 0, 1000000);
+			if (a_args.contains("slot")) {
+				const auto& v = a_args["slot"];
+				const auto  mask = v.is_number_integer() ? FormSearchLogic::MaskForSlot(static_cast<int>(v.get<std::int64_t>())) : std::nullopt;
+				if (!mask)
+					throw ToolError(400, "'slot' must be an integer 30..61");
+				query.slotMask = *mask;
+			}
+			if (a_args.contains("headPartType")) {
+				const std::string type = text("headPartType");
+				const auto        parsed = FormSearchLogic::ParseHeadPartType(type);
+				if (!parsed)
+					throw ToolError(400, std::format("unknown headPartType '{}' (Misc | Face | Eyes | Hair | FacialHair | Scar | Eyebrows)", type));
+				query.headPartType = *parsed;
+			}
+			return MainThread::RunAndWait([query]() -> json { return FormSearch::Find(query); }, std::chrono::milliseconds(30000));
 		});
 
 		ToolDescriptor camera;
