@@ -133,8 +133,8 @@ namespace dvb::ActorIdle
 		a_actor->EnableAI(true);
 		const bool ok = ProcessOf(a_actor)->PlayIdle(a_actor, a_idle, nullptr);
 
-		Drop(a_actor->GetFormID());
 		if (ok) {
+			Drop(a_actor->GetFormID());
 			const auto now = NowMs();
 			if (a_loop || a_freezeAi)
 				g_entries.push_back({ a_actor->GetFormID(), a_loop ? a_idle->GetFormID() : 0, now, a_repeatMs, !a_loop && a_freezeAi ? now + kSettleMs : -1 });
