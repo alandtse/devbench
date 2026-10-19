@@ -8,6 +8,17 @@ namespace dvb::ScenarioPolicy
 {
 	inline constexpr int kEmbeddedToolFallbackErrorCode = 422;
 
+	/// A replay holds the free camera so the recording's own camera transform drives the view. A replay that injects a
+	/// VR tracked set must not: the injected HMD drives the real camera, and a held free camera would show the recorded
+	/// game camera, which does not follow the head.
+	[[nodiscard]] inline bool ShouldHoldReplayCamera(const json& a_vrTrackedSetReport)
+	{
+		if (!a_vrTrackedSetReport.is_object())
+			return true;
+		const auto frames = a_vrTrackedSetReport.find("emittedFrames");
+		return frames == a_vrTrackedSetReport.end() || !frames->is_number_integer() || frames->get<std::int64_t>() <= 0;
+	}
+
 	/// Extension tools report domain failures in their JSON payload. A scenario
 	/// must treat those as failed steps even when transport dispatch succeeded.
 	[[nodiscard]] inline bool IsEmbeddedToolFailure(const json& a_value)

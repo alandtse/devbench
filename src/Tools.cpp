@@ -3810,8 +3810,9 @@ namespace dvb
 					// Held from the trajectory boundary (not scene setup) to any exit; see ReplayHold.
 					const std::size_t trajectoryStepCount = plan.value("trajectoryStepCount", static_cast<std::size_t>(0));
 					const auto        cameraHold = std::make_shared<FreeCamera::ReplayHold>();
+					const bool        holdCamera = ScenarioPolicy::ShouldHoldReplayCamera(activity.value("vrTrackedSet", json::object()));
 					auto              runReplay = [&a_registry, &a_events, a_ctx, steps, runId, coupling,
-													  activity, inputOwner, interpolate, cameraHold,
+													  activity, inputOwner, interpolate, cameraHold, holdCamera,
 													  trajectoryStepCount, scaleHold, replayScale,
 													  setupStepCount, allowTimeScale]() -> json {
 						ActiveReplayClaim activeReplayGuard{ runId };
@@ -3861,12 +3862,13 @@ namespace dvb
 							bool scaleEscalated = false;
 							result = ScenarioHandler(json{ { "steps", steps }, { "runId", runId }, { "smoothPose", interpolate } },
 								a_ctx, a_registry, a_events,
-								[&cameraActivated, cameraHold, trajectoryStepCount, &scaleEscalated,
+								[&cameraActivated, cameraHold, holdCamera, trajectoryStepCount, &scaleEscalated,
 									scaleHold, replayScale, setupStepCount, allowTimeScale](std::size_t a_index) {
 									if (!cameraActivated && a_index == trajectoryStepCount) {
 										cameraActivated = true;
-										// No-op off VR; on VR, a failure here must abort the replay.
-										cameraHold->Activate();
+										// A failure here must abort the replay.
+										if (holdCamera)
+											cameraHold->Activate();
 									}
 									if (!scaleEscalated && a_index == setupStepCount &&
 										replayScale != static_cast<float>(TimeScaleControl::kNormalScale)) {
