@@ -355,17 +355,17 @@ TEST_CASE("ParseReach offset boundaries")
 TEST_CASE("ParseReach head back and up boundaries")
 {
 	std::string error;
-	auto        backMin = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"back":0}})", error);
+	auto        backMin = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"lookAt":"hands","back":0}})", error);
 	CHECK(backMin.has_value());
-	auto backMax = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"back":5}})", error);
+	auto backMax = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"lookAt":"hands","back":5}})", error);
 	CHECK(backMax.has_value());
 	auto backLow = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"back":-0.1}})", error);
 	CHECK(!backLow.has_value());
 	auto backHigh = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"back":5.1}})", error);
 	CHECK(!backHigh.has_value());
-	auto upMin = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"up":0}})", error);
+	auto upMin = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"lookAt":"hands","up":0}})", error);
 	CHECK(upMin.has_value());
-	auto upMax = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"up":5}})", error);
+	auto upMax = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"lookAt":"hands","up":5}})", error);
 	CHECK(upMax.has_value());
 	auto upLow = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"up":-0.1}})", error);
 	CHECK(!upLow.has_value());
@@ -376,10 +376,22 @@ TEST_CASE("ParseReach head back and up boundaries")
 TEST_CASE("ParseReach head pos boundaries")
 {
 	std::string error;
-	auto        maxOk = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"pos":[10,-10,10]}})", error);
+	auto        maxOk = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"lookAt":"hands","pos":[10,-10,10]}})", error);
 	CHECK(maxOk.has_value());
 	auto tooBig = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"pos":[10.1,0,0]}})", error);
 	CHECK(!tooBig.has_value());
+}
+
+TEST_CASE("ParseReach head options need lookAt")
+{
+	std::string error;
+	for (const char* key : { R"("back":1)", R"("up":1)", R"("pos":[1,2,3])", R"("eyeHeight":1.6)" }) {
+		auto bare = Parse(std::string(R"({"hands":{"left":{"node":"A"}},"head":{)") + key + "}}", error);
+		CHECK(!bare.has_value());
+		CHECK(error.find("lookAt") != std::string::npos);
+	}
+	auto nulls = Parse(R"({"hands":{"left":{"node":"A"}},"head":{"pos":null,"eyeHeight":null}})", error);
+	CHECK(nulls.has_value());
 }
 
 TEST_CASE("ParseReach head eyeHeight")
@@ -407,11 +419,11 @@ TEST_CASE("ParseReach holdMs boundaries")
 	std::string error;
 	auto        minOk = Parse(R"({"hands":{"left":{"node":"A"}},"holdMs":100})", error);
 	CHECK(minOk.has_value());
-	auto maxOk = Parse(R"({"hands":{"left":{"node":"A"}},"holdMs":1800000})", error);
+	auto maxOk = Parse(R"({"hands":{"left":{"node":"A"}},"holdMs":1798000})", error);
 	CHECK(maxOk.has_value());
 	auto below = Parse(R"({"hands":{"left":{"node":"A"}},"holdMs":99})", error);
 	CHECK(!below.has_value());
-	auto above = Parse(R"({"hands":{"left":{"node":"A"}},"holdMs":1800001})", error);
+	auto above = Parse(R"({"hands":{"left":{"node":"A"}},"holdMs":1798001})", error);
 	CHECK(!above.has_value());
 }
 

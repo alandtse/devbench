@@ -78,7 +78,7 @@
           },
           "holdMs": {
             "description": "reach: how long to hold the final pose (default 10000)",
-            "maximum": 1800000,
+            "maximum": 1798000,
             "minimum": 100,
             "type": "integer"
           },

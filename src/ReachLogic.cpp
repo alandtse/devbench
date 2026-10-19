@@ -1,6 +1,7 @@
 #include "ReachLogic.h"
 
 #include <algorithm>
+#include <array>
 #include <format>
 
 namespace dvb::ReachLogic
@@ -344,6 +345,10 @@ namespace dvb::ReachLogic
 					return std::nullopt;
 				}
 				request.head.eyeHeight = eyeHeight;
+			}
+			if (request.head.aim == HeadTarget::Aim::kNone && std::ranges::any_of(std::array{ "back", "up", "pos", "eyeHeight" }, [&](const char* a_key) { return head.contains(a_key) && !head[a_key].is_null(); })) {
+				a_error = "'head' needs 'lookAt' when 'back', 'up', 'pos' or 'eyeHeight' is given";
+				return std::nullopt;
 			}
 		}
 
