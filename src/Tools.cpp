@@ -1,4 +1,6 @@
 #include "Tools.h"
+#include "ActorIdle.h"
+#include "ActorIdleLogic.h"
 #include "CameraFrameLogic.h"
 #include "CameraOrbit.h"
 #include <RE/T/ThirdPersonState.h>
@@ -3164,6 +3166,86 @@ namespace dvb
 							} },
 		};
 		a_registry.Register(std::move(game), &GameHandler);
+
+		ToolDescriptor actor;
+		actor.name = "actor";
+		actor.description =
+			"Drive an NPC's idle animation. 'listIdles' (param 'formId' of a loaded NPC, optional 'filter' EditorID "
+			"substring, 'limit' default 200) returns the idles that NPC can use right now as { editorId, formId, "
+			"animEvent, loopMin, loopMax, replayDelay }. 'playIdle' (params 'formId', 'idle' EditorID or FormID, "
+			"'loop' default false, 'repeatMs' 250..60000 default 5000, 'freezeAi' default false) plays the idle on the "
+			"NPC, which stands where it is under the do-nothing package; with loop:true it is replayed every repeatMs "
+			"(the engine does not report when an idle ends, so set it to the clip's length) until 'stopIdle' or the NPC "
+			"unloads, dies, or a load starts. Idles only animate while the NPC's AI runs, so a loop keeps the AI on; "
+			"freezeAi (single play only) turns the AI back off after the pose settles. 'stopIdle' ends any loop and "
+			"returns the NPC to its default idle (ResetRoot), optional 'freezeAi'. 'status' returns whether a loop is active and its idle. Every action returns { ref, ok, ... } "
+			"and refuses (409) the player, a dead or unloaded NPC. Main thread; SE and VR.";
+		actor.inputSchema = json{
+			{ "type", "object" },
+			{ "properties", json{
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "listIdles", "playIdle", "stopIdle", "status" }) }, { "description", "listIdles | playIdle | stopIdle | status" } } },
+								{ "formId", json{ { "type", "string" }, { "description", "the NPC reference (FormID like 0x000A2C8F, or EditorID)" } } },
+								{ "idle", json{ { "type", "string" }, { "description", "playIdle: the idle's EditorID or FormID" } } },
+								{ "loop", json{ { "type", "boolean" }, { "description", "playIdle: keep replaying the idle once the NPC stops running it (default false)" } } },
+								{ "repeatMs", json{ { "type", "integer" }, { "description", "playIdle with loop: milliseconds between replays, 250..60000 (default 5000)" } } },
+								{ "freezeAi", json{ { "type", "boolean" }, { "description", "playIdle (single play) or stopIdle: turn the NPC's AI off again once it settles; refused with loop:true" } } },
+								{ "filter", json{ { "type", "string" }, { "description", "listIdles: case-insensitive EditorID substring" } } },
+								{ "limit", json{ { "type", "integer" }, { "description", "listIdles: most idles to return (default 200)" } } },
+							} },
+			{ "required", json::array({ "action", "formId" }) },
+		};
+		a_registry.Register(std::move(actor), [](const json& a_args, const ToolContext&) -> json {
+			const std::string action = a_args.value("action", std::string{});
+			const std::string formId = a_args.value("formId", std::string{});
+			if (action != "listIdles" && action != "playIdle" && action != "stopIdle" && action != "status")
+				throw ToolError(400, std::format("unknown action '{}' (listIdles|playIdle|stopIdle|status)", action));
+			if (formId.empty())
+				throw ToolError(400, "'formId' (the NPC reference) is required");
+			const bool freezeAi = a_args.value("freezeAi", false);
+			const bool loop = a_args.value("loop", false);
+
+			std::string  idleArg;
+			std::int64_t repeatMs = ActorIdleLogic::kDefaultRepeatMs;
+			std::size_t  limit = 200;
+			std::string  filter;
+			if (action == "playIdle") {
+				idleArg = a_args.value("idle", std::string{});
+				if (idleArg.empty())
+					throw ToolError(400, "'idle' (EditorID or FormID) is required for playIdle");
+				if (loop && freezeAi)
+					throw ToolError(400, "'freezeAi' cannot be combined with 'loop': a frozen NPC cannot replay its idle");
+				const auto gap = ActorIdleLogic::ParseRepeatMs(a_args.contains("repeatMs") ? a_args["repeatMs"] : json(nullptr));
+				if (!gap)
+					throw ToolError(400, "'repeatMs' must be an integer 250..60000");
+				repeatMs = *gap;
+			} else if (action == "listIdles") {
+				filter = a_args.value("filter", std::string{});
+				if (a_args.contains("limit")) {
+					if (!a_args["limit"].is_number_integer() || a_args["limit"].get<std::int64_t>() <= 0)
+						throw ToolError(400, "'limit' must be an integer > 0");
+					limit = static_cast<std::size_t>(a_args["limit"].get<std::int64_t>());
+				}
+			}
+
+			return MainThread::RunAndWait([=]() -> json {
+				auto* form = LookupFormArg(formId);
+				auto* ref = form ? form->AsReference() : nullptr;
+				auto* npc = ref ? ref->As<RE::Actor>() : nullptr;
+				if (!npc)
+					throw ToolError(404, std::format("'{}' is not a placed actor reference", formId));
+				if (action == "listIdles")
+					return ActorIdle::List(npc, filter, limit);
+				if (action == "stopIdle")
+					return ActorIdle::Stop(npc, freezeAi);
+				if (action == "status")
+					return ActorIdle::Status(npc);
+				auto* idleForm = LookupFormArg(idleArg);
+				auto* idle = idleForm ? idleForm->As<RE::TESIdleForm>() : nullptr;
+				if (!idle)
+					throw ToolError(404, std::format("'{}' is not an idle", idleArg));
+				return ActorIdle::Play(npc, idle, loop, repeatMs, freezeAi);
+			});
+		});
 
 		ToolDescriptor camera;
 		camera.name = "camera";
