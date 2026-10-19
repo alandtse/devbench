@@ -143,6 +143,7 @@ namespace dvb::CaptureBurstLogic
 		const auto ok = a_payload.find("ok");
 		if (ok != a_payload.end() && ok->is_boolean() && ok->get<bool>()) {
 			a_run.state = State::kDone;
+			a_run.error.clear();
 			a_run.written = std::max(a_run.written, a_run.captured);
 		} else {
 			a_run.state = State::kFailed;
@@ -158,6 +159,22 @@ namespace dvb::CaptureBurstLogic
 			a_run.state = State::kTimeout;
 			a_run.error = "timed out waiting for the capture provider to finish the burst";
 		}
+	}
+
+	bool IsBurstFrame(std::string_view a_name, std::string_view a_prefix, int a_count)
+	{
+		constexpr std::size_t      kIndexDigits = 4;
+		constexpr std::string_view kExtension = ".png";
+		if (a_name.size() != a_prefix.size() + 1 + kIndexDigits + kExtension.size() || !a_name.starts_with(a_prefix) ||
+			a_name[a_prefix.size()] != '_' || !a_name.ends_with(kExtension))
+			return false;
+		int index = 0;
+		for (const char c : a_name.substr(a_prefix.size() + 1, kIndexDigits)) {
+			if (c < '0' || c > '9')
+				return false;
+			index = index * 10 + (c - '0');
+		}
+		return index < a_count;
 	}
 
 	json StatusJson(const RunState& a_run)

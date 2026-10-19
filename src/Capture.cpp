@@ -567,8 +567,8 @@ namespace dvb::Capture
 		std::map<std::uint64_t, BurstRun> g_bursts;
 		std::uint64_t                     g_burstSeq = 0;
 		constexpr std::uintmax_t          kMaxManifestBytes = 1u << 20;
+		constexpr std::size_t             kMaxRememberedBursts = 32;
 
-		// Folds what the provider has published since the last look and applies the timeout. Caller holds g_burstLock.
 		void RefreshBurst(BurstRun& a_run)
 		{
 			if (g_events && a_run.state.state != CaptureBurstLogic::State::kDone && a_run.state.state != CaptureBurstLogic::State::kFailed) {
@@ -585,14 +585,12 @@ namespace dvb::Capture
 			return a_run.state.state == CaptureBurstLogic::State::kRunning;
 		}
 
-		// Frames written so far, counted from the directory while the provider has not reported.
 		int CountWrittenFrames(const BurstRun& a_run)
 		{
 			int             written = 0;
 			std::error_code ec;
 			for (const auto& entry : fs::directory_iterator(a_run.outputDir, ec)) {
-				const auto name = entry.path().filename().string();
-				if (name.size() > a_run.prefix.size() + 1 && name.starts_with(a_run.prefix + "_") && entry.path().extension() == ".png")
+				if (CaptureBurstLogic::IsBurstFrame(entry.path().filename().string(), a_run.prefix, a_run.count))
 					++written;
 			}
 			return written;
@@ -633,15 +631,6 @@ namespace dvb::Capture
 			if (!entry)
 				throw ToolError(404, std::format("no capture provider registered under '{}'", provider));
 
-			{
-				const std::lock_guard lock(g_burstLock);
-				for (auto& [id, run] : g_bursts) {
-					RefreshBurst(run);
-					if (BurstRunning(run))
-						throw ToolError(409, std::format("burst {} is still running (capture action='status' runId={})", id, id));
-				}
-			}
-
 			const fs::path  outputDir = CaptureDir(a_args);
 			std::error_code ec;
 			fs::create_directories(outputDir, ec);
@@ -674,14 +663,34 @@ namespace dvb::Capture
 			if (request->subrect)
 				providerArgs["subrect"] = json{ { "x", request->subrect->x }, { "y", request->subrect->y }, { "w", request->subrect->w }, { "h", request->subrect->h } };
 
-			// Snapshot before the provider is called: a fast provider could publish its ready event first.
-			run.sinceSeq = g_events ? g_events->HeadSeq() : 0;
-			run.started = steady_clock::now();
-			const json queued = entry->handler(providerArgs, a_ctx);
-			if (queued.contains("error"))
-				throw ToolError(502, queued.value("error", std::string("capture provider refused the burst")));
-			if (queued.contains("runId") && queued["runId"].is_number_integer())
-				run.providerRunId = queued["runId"].get<std::int64_t>();
+			// Reserve the slot before the provider is called, so a concurrent request sees this burst running.
+			// The event snapshot is taken at the same point: a fast provider could publish its ready event first.
+			std::uint64_t runId = 0;
+			{
+				const std::lock_guard lock(g_burstLock);
+				for (auto& [id, other] : g_bursts) {
+					RefreshBurst(other);
+					if (BurstRunning(other))
+						throw ToolError(409, std::format("burst {} is still running (capture action='status' runId={})", id, id));
+				}
+				run.sinceSeq = g_events ? g_events->HeadSeq() : 0;
+				run.started = steady_clock::now();
+				run.runId = runId = ++g_burstSeq;
+				g_bursts.emplace(runId, run);
+			}
+
+			std::optional<std::int64_t> providerRunId;
+			try {
+				const json queued = entry->handler(providerArgs, a_ctx);
+				if (queued.contains("error"))
+					throw ToolError(502, queued.value("error", std::string("capture provider refused the burst")));
+				if (queued.contains("runId") && queued["runId"].is_number_integer())
+					providerRunId = queued["runId"].get<std::int64_t>();
+			} catch (...) {
+				const std::lock_guard lock(g_burstLock);
+				g_bursts.erase(runId);
+				throw;
+			}
 
 			json out{
 				{ "queued", true },
@@ -695,14 +704,21 @@ namespace dvb::Capture
 				{ "timeoutMs", run.timeoutMs },
 				{ "timeScale", run.timeScale },
 			};
+			if (providerRunId)
+				out["providerRunId"] = *providerRunId;
+			out["runId"] = runId;
 			const std::lock_guard lock(g_burstLock);
-			run.runId = ++g_burstSeq;
-			out["runId"] = run.runId;
-			g_bursts.emplace(run.runId, std::move(run));
+			if (const auto reserved = g_bursts.find(runId); reserved != g_bursts.end())
+				reserved->second.providerRunId = providerRunId;
+			while (g_bursts.size() > kMaxRememberedBursts) {
+				const auto oldest = g_bursts.begin();
+				if (BurstRunning(oldest->second))
+					break;
+				g_bursts.erase(oldest);
+			}
 			return out;
 		}
 
-		// The manifest the provider wrote, with the time scale the burst ran under added (the provider does not know it).
 		json ReadManifest(const BurstRun& a_run)
 		{
 			std::error_code ec;
@@ -742,6 +758,8 @@ namespace dvb::Capture
 			out["count"] = run.count;
 			out["everyNFrames"] = run.everyNFrames;
 			out["timeScale"] = run.timeScale;
+			if (run.providerRunId)
+				out["providerRunId"] = *run.providerRunId;
 			out["elapsedMs"] = duration_cast<milliseconds>(steady_clock::now() - run.started).count();
 			if (BurstRunning(run))
 				out["written"] = CountWrittenFrames(run);
