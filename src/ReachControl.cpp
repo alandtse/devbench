@@ -107,9 +107,12 @@ namespace dvb::ReachControl
 				};
 				if (!a_token.empty())
 					args["controlToken"] = a_token;
-				dvb::HandleVRInput(args, a_ctx);
-			} catch (...) {
-				// The sequence may already have expired on its own; nothing to recover.
+				const json result = dvb::HandleVRInput(args, a_ctx);
+				if (result.value("restorationPending", false))
+					logs::warn("devbench: reach '{}' sequence stop left controller restoration pending", a_owner);
+			} catch (const std::exception& e) {
+				// The sequence may already have expired on its own; anything else is worth a log line.
+				logs::warn("devbench: reach '{}' sequence stop failed: {}", a_owner, e.what());
 			}
 		}
 

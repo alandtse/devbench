@@ -884,7 +884,7 @@ namespace dvb
 								{ "surviveLifecycle", json{ { "type", "boolean" }, { "description", "internal recording replay only; external true is rejected" } } },
 								{ "hands", json{ { "type", "object" }, { "description", "reach: {left?:{node,front?,offset?:[x,y,z]}, right?:{...}} - put that hand node-relative: next to a node of the player, front world units in front of it along the facing, plus a world offset; at least one hand" } } },
 								{ "head", json{ { "type", "object" }, { "description", "reach: {lookAt:'hands'|<node name>, back?:0.5, up?:0.3, pos?:[x,y,z], eyeHeight?} - aim the HMD at the hands or a node from back meters behind and up meters above it (tracking space), or from pos; eyeHeight (0..3) sets the head's height in tracking meters, e.g. 1.6 to frame low targets from standing height" } } },
-								{ "holdMs", json{ { "type", "integer" }, { "minimum", 100 }, { "maximum", 1800000 }, { "description", "reach: how long to hold the final pose (default 10000)" } } },
+								{ "holdMs", json{ { "type", "integer" }, { "minimum", 100 }, { "maximum", 1798000 }, { "description", "reach: how long to hold the final pose (default 10000)" } } },
 								{ "iterations", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", 10 }, { "description", "reach: correction passes (default 4)" } } },
 								{ "toleranceUnits", json{ { "type", "number" }, { "minimum", 0.05 }, { "maximum", 50 }, { "description", "reach: converged when each hand is within this many world units of its target (default 1)" } } },
 								{ "approachUnits", json{ { "type", "number" }, { "minimum", 0 }, { "maximum", 200 }, { "description", "reach: world units behind the target, along the facing, the first approach starts from (default 15)" } } },

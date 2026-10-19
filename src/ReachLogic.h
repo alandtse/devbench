@@ -97,7 +97,7 @@ namespace dvb::ReachLogic
 	inline constexpr double      kPosLimit = 10.0;
 	inline constexpr double      kEyeHeightMax = 3.0;
 	inline constexpr long        kHoldMsMin = 100;
-	inline constexpr long        kHoldMsMax = 1800000;
+	inline constexpr long        kHoldMsMax = 1798000;
 	inline constexpr int         kIterationsMin = 1;
 	inline constexpr int         kIterationsMax = 10;
 	inline constexpr double      kToleranceMin = 0.05;
