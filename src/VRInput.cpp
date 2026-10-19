@@ -1,5 +1,7 @@
 #include "VRInput.h"
 
+#include "ReachControl.h"
+
 #include "EventBus.h"
 #include "MainThread.h"
 #include "ToolRegistry.h"
@@ -899,9 +901,15 @@ namespace dvb
 				return VRTrackedSetManager::Get().Status();
 			if (action == "observe")
 				return ObservePhysicalTrackedSet();
+			if (action == "reachStatus")
+				return ReachControl::Status(a_args);
 			const std::string owner = ResolveOwner(a_args, a_ctx);
 			if (action == "sequence")
 				return VRTrackedSetManager::Get().Start(a_args, owner, a_ctx.internal);
+			if (action == "reach")
+				return ReachControl::Start(a_args, owner, a_ctx);
+			if (action == "reachStop")
+				return ReachControl::Stop(owner);
 			if (action == "stop" || action == "releaseAll") {
 				if (a_args.contains("controlToken") && !a_args["controlToken"].is_string())
 					throw ToolError(400, "'controlToken' must be a string");
@@ -910,7 +918,7 @@ namespace dvb
 					a_ctx.internal,
 					action == "releaseAll" ? "releaseAll" : "request");
 			}
-			throw ToolError(400, std::format("unknown vrTrackedSet action '{}' (status|observe|sequence|stop|releaseAll)", action));
+			throw ToolError(400, std::format("unknown vrTrackedSet action '{}' (status|observe|sequence|stop|releaseAll|reach|reachStatus|reachStop)", action));
 		} catch (const json::exception& e) {
 			throw ToolError(400, std::format("invalid VR tracked-set JSON: {}", e.what()));
 		}
@@ -931,6 +939,7 @@ namespace dvb
 	{
 		if (!g_vrReady.load(std::memory_order_relaxed))
 			return;
+		ReachControl::EndSession();
 		const std::string reason = a_reason ? a_reason : "lifecycle";
 		try {
 			VRTrackedSetManager::Get().StopForLifecycle(reason);

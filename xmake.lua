@@ -180,6 +180,7 @@ add_files("src/FormSearchLogic.cpp") -- form search matching, head part types an
 add_files("src/HavokAnimationLogic.cpp") -- animation duration and track counts from a Havok packfile; pure logic
 add_files("src/PluginHeaderLogic.cpp") -- author, description and masters from a plugin's TES4 record; pure logic
 add_files("src/CaptureBurstLogic.cpp") -- burst capture request validation and provider event folding; pure logic
+add_files("src/ReachLogic.cpp") -- reach solver, request parsing and frame building; pure logic
 add_files("src/InspectLogic.cpp") -- lights scope/budget/ordering and the handsReady predicate; pure logic
 add_files("src/ReplayTrajectory.cpp") -- pose keyframe sampling/interpolation; pure logic
 add_files("src/RecordingActivity.cpp") -- activity contract + input/trajectory interleave; pure logic
