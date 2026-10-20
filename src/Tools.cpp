@@ -1,4 +1,6 @@
 #include "Tools.h"
+#include "ActorIdle.h"
+#include "ActorIdleLogic.h"
 #include "CameraFrameLogic.h"
 #include "CameraOrbit.h"
 #include <RE/T/ThirdPersonState.h>
@@ -6,6 +8,8 @@
 #include "Capture.h"
 #include "ConsoleLogCapture.h"
 #include "DifficultyLogic.h"
+#include "DrawStats.h"
+#include "DrawStatsLogic.h"
 #include "EventBus.h"
 #include "FreeCamera.h"
 #include "GameEvents.h"
@@ -1927,6 +1931,13 @@ namespace dvb
 			if (kind == "screenshots")
 				return Capture::ListScreenshots(a_args);
 
+			if (kind == "draws") {
+				if (auto provider = ToolExtensions::Find("inspect", "draws"))
+					return DrawStatsLogic::WithSource(provider->handler(a_args, a_ctx), DrawStatsLogic::ProviderSource(provider->descriptor));
+				const bool doReset = BooleanArgument(a_args, "reset", false);
+				return MainThread::RunAndWait([doReset]() { return DrawStatsLogic::WithSource(DrawStats::Read(doReset), DrawStatsLogic::kOwnSource); });
+			}
+
 			// 'extensions' lists consumer-registered inspect kinds (C-ABI RegisterToolExtension).
 			if (kind == "extensions") {
 				json out = json::array();
@@ -1943,7 +1954,7 @@ namespace dvb
 			if (auto entry = ToolExtensions::Find("inspect", kind))
 				return entry->handler(a_args, a_ctx);
 
-			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|inventory|quests|effects|refs|lights|registrants|screenshots|extensions, or a registered kind — see inspect kind=extensions)", kind));
+			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|inventory|quests|effects|refs|lights|draws|registrants|screenshots|extensions, or a registered kind — see inspect kind=extensions)", kind));
 		}
 
 		// camera: read or set the player camera point of view, so a recording can capture the
@@ -2568,11 +2579,22 @@ namespace dvb
 			std::map<uint64_t, State> m_runs;
 		};
 
+		/// Which steps of a scenario run hold the recorder's replay mark.
+		enum class ReplayMarking
+		{
+			TrajectorySpan,  // the run's pose / player.setpos span only (ScenarioPolicy::TrajectorySpan)
+			WholeRun,        // record.replay: its injected input and VR stream must not be re-captured either
+		};
+
+		struct ScenarioRunOptions
+		{
+			ReplayMarking                    replayMarking = ReplayMarking::TrajectorySpan;
+			std::function<void(std::size_t)> beforeStep;  // called with each step's index right before it runs
+		};
+
 		/// Execute a scenario step list and return its complete transcript.
-		// a_beforeStep, when set, is called with each step's index right before it runs.
 		json ScenarioHandler(const json& a_args, const ToolContext& a_ctx,
-			const ToolRegistry& a_registry, EventBus& a_events,
-			const std::function<void(std::size_t)>& a_beforeStep = {})
+			const ToolRegistry& a_registry, EventBus& a_events, const ScenarioRunOptions& a_options = {})
 		{
 			if (!a_args.contains("steps") || !a_args["steps"].is_array())
 				throw ToolError(400, "scenario requires a 'steps' array");
@@ -2595,15 +2617,13 @@ namespace dvb
 			bool       anyFailure = false;
 			bool       aborted = false;
 
-			// Mark replaying for the whole run: if a recording is active (composition — recording
-			// a session that plays back a recipe), the pose sampler must not re-capture the
-			// teleported path; the issued setpos commands (seen by the console hook) are the
-			// trajectory. RAII so the flag clears on any return/throw.
-			Recording::SetReplaying(true);
-			struct ReplayGuard
-			{
-				~ReplayGuard() { Recording::SetReplaying(false); }
-			} replayGuard;
+			// While the player is teleported along a trajectory, a recording running beside it must
+			// not re-sample the path: the issued setpos commands (seen by the console hook) carry it.
+			Recording::ReplayMark                         replayMark;
+			const std::optional<ScenarioPolicy::StepSpan> trajectorySpan = ScenarioPolicy::TrajectorySpan(steps);
+			const bool                                    markWholeRun = a_options.replayMarking == ReplayMarking::WholeRun;
+			if (markWholeRun)
+				replayMark.Engage();
 
 			Recording::ReplayDriver::Playback playback(steps, a_args.value("smoothPose", false));
 
@@ -2613,10 +2633,16 @@ namespace dvb
 				// captures if rep N+1's own scene assert succeeds.
 				bool runSceneMismatch = false;
 				for (size_t i = 0; i < steps.size() && !aborted; ++i) {
-					if (a_beforeStep)
-						a_beforeStep(i);
+					if (a_options.beforeStep)
+						a_options.beforeStep(i);
 					const json& step = steps[i];
 					json        r{ { "index", i } };
+					if (!markWholeRun && trajectorySpan && i >= trajectorySpan->first && i <= trajectorySpan->last) {
+						if (ScenarioPolicy::HoldsReplayMark(step))
+							replayMark.Engage();
+						else
+							replayMark.Release();
+					}
 					if (repeat > 1)
 						r["repeat"] = rep;
 					const auto stepStart = steady_clock::now();
@@ -2904,6 +2930,8 @@ namespace dvb
 
 					r["elapsedMs"] = duration_cast<milliseconds>(steady_clock::now() - stepStart).count();
 					results.push_back(std::move(r));
+					if (!markWholeRun && trajectorySpan && i == trajectorySpan->last)
+						replayMark.Release();
 
 					if (stepFailed) {
 						anyFailure = true;
@@ -3007,6 +3035,19 @@ namespace dvb
 				"(optional 'formType' filter, 'model' substring filter against the base object's mesh path, "
 				"'radius' from player, 'limit' default 100); 'model' matches statics and furniture — "
 				"actors normally have no base mesh, so list NPCs with 'formType'=Actor. "
+				"'draws' → what the frames since the counting window began drew, per frame: { frames, seconds, fps, "
+				"frameMs (Present to Present), gpu:{timed, framesTimed, framesLost, frameMs}, passes:[{pass (main|sunShadows|spotShadows|"
+				"pointShadows), objects, objectsByShader (SetupGeometry calls per BSShader type); shadow passes add renders, "
+				"renderCpuMs, accumulateCpuMs, gpuMs, casters, casterSizes:[{atLeast, below, count}] (bound radius / camera "
+				"distance); sunShadows adds objectsPerDepthTarget (cascades)}], mainPassTargets:[{label, width, height, "
+				"format, arraySize, depth, objects, objectsByShader, gpuMs}] (the main pass by bound render target, the depth "
+				"view else the first color view), hooksReplaced } — the first read installs the hooks and returns an empty "
+				"window with started=true; 'reset'=true begins a new window after the reading. GPU times are D3D11 timestamp "
+				"queries read a few frames late without stalling; frames whose answers are late count as framesLost. A target's "
+				"GPU span runs to the next bind, so work issued between binds (compute passes included) counts toward it. "
+				"devbench's hooks are installed by the first draws call; a renderer mod that registers inspect key 'draws' "
+				"(RegisterToolExtension) answers instead, and devbench's hooks are then never installed or pass every call "
+				"through. Every reply names its source: 'devbench', or the provider's descriptor 'source'. "
 				"'registrants' → who has requested the C-ABI interface and what they registered "
 				"through it { consumers:[{name,atEpoch,atFrame}], registrations:[{kind,name,atEpoch,"
 				"atFrame,replaced}], capabilities:{capture,inspect,menu → [registered keys]} } — "
@@ -3021,13 +3062,14 @@ namespace dvb
 				"'extensions' lists those registered kinds + descriptors, and kind=<registered> dispatches.";
 			inspect.description += RegisteredExtensionSummary("inspect", "kinds");
 			inspect.readOnly = true;
-			json kinds = json::array({ "state", "health", "vm", "scene", "mods", "player", "inventory", "quests", "effects", "refs", "lights", "registrants", "screenshots", "extensions" });
+			json kinds = json::array({ "state", "health", "vm", "scene", "mods", "player", "inventory", "quests", "effects", "refs", "lights", "draws", "registrants", "screenshots", "extensions" });
 			for (const auto& k : ToolExtensions::Keys("inspect"))
-				kinds.push_back(k);
+				if (std::find(kinds.begin(), kinds.end(), json(k)) == kinds.end())
+					kinds.push_back(k);
 			inspect.inputSchema = json{
 				{ "type", "object" },
 				{ "properties", json{
-									{ "kind", json{ { "type", "string" }, { "enum", kinds }, { "description", "state | health | vm | scene | mods | player | inventory | quests | effects | refs | lights | registrants | screenshots | extensions (health answers off-thread for liveness+identity; or a registered mod kind — listed here + via kind=extensions)" } } },
+									{ "kind", json{ { "type", "string" }, { "enum", kinds }, { "description", "state | health | vm | scene | mods | player | inventory | quests | effects | refs | lights | draws | registrants | screenshots | extensions (health answers off-thread for liveness+identity; or a registered mod kind — listed here + via kind=extensions)" } } },
 									{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form; inventory: the container ref to read (default player); effects: the actor to read (default player); lights: the reference whose 3D to read (default player) (hex formId, e.g. 0x14, or EditorID)" } } },
 									{ "selected", json{ { "type", "boolean" }, { "description", "refs/lights: use the console-selected / crosshair ref instead" } } },
 									{ "scope", json{ { "type", "string" }, { "enum", json::array({ "ref", "scene" }) }, { "description", "lights: 'ref' (default) reads one reference's 3D; 'scene' lists every light the renderer is using, nearest the player first, each with the reference it hangs under; any other value is refused (400)" } } },
@@ -3035,6 +3077,7 @@ namespace dvb
 									{ "model", json{ { "type", "string" }, { "description", "refs enumerate: keep only refs whose base object's mesh path contains this substring (case-insensitive, e.g. 'wrcity01'); matches statics and furniture, not actors" } } },
 									{ "radius", json{ { "type", "number" }, { "description", "refs enumerate: only refs within this distance of the player (0 = whole loaded grid); lights scope=scene: only lights within it (0 = no limit)" } } },
 									{ "limit", json{ { "type", "integer" }, { "description", "refs/inventory/lights: max entries to return (default 100; lights: lights emitted, 0..50000)" } } },
+									{ "reset", json{ { "type", "boolean" }, { "description", "draws: begin a new counting window after this reading" } } },
 								} },
 			};
 			return inspect;
@@ -3165,6 +3208,93 @@ namespace dvb
 		};
 		a_registry.Register(std::move(game), &GameHandler);
 
+		ToolDescriptor actor;
+		actor.name = "actor";
+		actor.description =
+			"Drive an NPC's idle animation. 'listIdles' (param 'formId' of a loaded NPC, optional 'filter' EditorID "
+			"substring, 'limit' default 200) returns the idles that NPC can use right now as { editorId, formId, "
+			"animEvent, loopMin, loopMax, replayDelay }. 'playIdle' (params 'formId', 'idle' EditorID or FormID, "
+			"'loop' default false, 'repeatMs' 250..60000 default 5000, 'freezeAi' default false) plays the idle on the "
+			"NPC, which stands where it is under the do-nothing package; with loop:true it is replayed every repeatMs "
+			"(the engine does not report when an idle ends, so set it to the clip's length) until 'stopIdle' or the NPC "
+			"unloads, dies, or a load starts. Idles only animate while the NPC's AI runs, so a loop keeps the AI on; "
+			"freezeAi (single play only) turns the AI back off after the pose settles. 'stopIdle' ends any loop and "
+			"returns the NPC to its default idle (ResetRoot), optional 'freezeAi'. 'status' returns whether a loop is active and its idle. playIdle and stopIdle return { ref, ok, ... }; every action "
+			"refuses (409) the player, a dead or unloaded NPC. Main thread; SE and VR.";
+		actor.inputSchema = json{
+			{ "type", "object" },
+			{ "properties", json{
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "listIdles", "playIdle", "stopIdle", "status" }) }, { "description", "listIdles | playIdle | stopIdle | status" } } },
+								{ "formId", json{ { "type", "string" }, { "description", "the NPC reference (FormID like 0x000A2C8F, or EditorID)" } } },
+								{ "idle", json{ { "type", "string" }, { "description", "playIdle: the idle's EditorID or FormID" } } },
+								{ "loop", json{ { "type", "boolean" }, { "description", "playIdle: keep replaying the idle once the NPC stops running it (default false)" } } },
+								{ "repeatMs", json{ { "type", "integer" }, { "description", "playIdle with loop: milliseconds between replays, 250..60000 (default 5000)" } } },
+								{ "freezeAi", json{ { "type", "boolean" }, { "description", "playIdle (single play) or stopIdle: turn the NPC's AI off again once it settles; refused with loop:true" } } },
+								{ "filter", json{ { "type", "string" }, { "description", "listIdles: case-insensitive EditorID substring" } } },
+								{ "limit", json{ { "type", "integer" }, { "description", "listIdles: most idles to return (default 200)" } } },
+							} },
+			{ "required", json::array({ "action", "formId" }) },
+		};
+		a_registry.Register(std::move(actor), [](const json& a_args, const ToolContext&) -> json {
+			auto text = [&](const char* a_key) -> std::string {
+				if (!a_args.contains(a_key))
+					return {};
+				if (!a_args[a_key].is_string())
+					throw ToolError(400, std::format("'{}' must be a string", a_key));
+				return a_args[a_key].get<std::string>();
+			};
+			const std::string action = text("action");
+			const std::string formId = text("formId");
+			if (action != "listIdles" && action != "playIdle" && action != "stopIdle" && action != "status")
+				throw ToolError(400, std::format("unknown action '{}' (listIdles|playIdle|stopIdle|status)", action));
+			if (formId.empty())
+				throw ToolError(400, "'formId' (the NPC reference) is required");
+			const bool freezeAi = BooleanArgument(a_args, "freezeAi", false);
+			const bool loop = BooleanArgument(a_args, "loop", false);
+
+			std::string  idleArg;
+			std::int64_t repeatMs = ActorIdleLogic::kDefaultRepeatMs;
+			std::size_t  limit = 200;
+			std::string  filter;
+			if (action == "playIdle") {
+				idleArg = text("idle");
+				if (idleArg.empty())
+					throw ToolError(400, "'idle' (EditorID or FormID) is required for playIdle");
+				if (loop && freezeAi)
+					throw ToolError(400, "'freezeAi' cannot be combined with 'loop': a frozen NPC cannot replay its idle");
+				const auto gap = ActorIdleLogic::ParseRepeatMs(a_args.contains("repeatMs") ? a_args["repeatMs"] : json(nullptr));
+				if (!gap)
+					throw ToolError(400, "'repeatMs' must be an integer 250..60000");
+				repeatMs = *gap;
+			} else if (action == "listIdles") {
+				filter = text("filter");
+				if (a_args.contains("limit")) {
+					if (!a_args["limit"].is_number_integer() || a_args["limit"].get<std::int64_t>() <= 0)
+						throw ToolError(400, "'limit' must be an integer > 0");
+					limit = static_cast<std::size_t>(a_args["limit"].get<std::int64_t>());
+				}
+			}
+
+			return MainThread::RunAndWait([=]() -> json {
+				auto* form = LookupFormArg(formId);
+				auto* ref = form ? form->AsReference() : nullptr;
+				auto* npc = ref ? ref->As<RE::Actor>() : nullptr;
+				if (!npc)
+					throw ToolError(404, std::format("'{}' is not a placed actor reference", formId));
+				if (action == "listIdles")
+					return ActorIdle::List(npc, filter, limit);
+				if (action == "stopIdle")
+					return ActorIdle::Stop(npc, freezeAi);
+				if (action == "status")
+					return ActorIdle::Status(npc);
+				auto* idleForm = LookupFormArg(idleArg);
+				auto* idle = idleForm ? idleForm->As<RE::TESIdleForm>() : nullptr;
+				if (!idle)
+					throw ToolError(404, std::format("'{}' is not an idle", idleArg));
+				return ActorIdle::Play(npc, idle, loop, repeatMs, freezeAi);
+			});
+		});
+
 		ToolDescriptor camera;
 		camera.name = "camera";
 		camera.description =
@@ -3259,9 +3389,11 @@ namespace dvb
 		ToolExtensions::SetChangeListener([reg = &a_registry](const std::string& a_baseTool) {
 			std::string base = a_baseTool;
 			std::transform(base.begin(), base.end(), base.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-			if (base == "inspect")
+			if (base == "inspect") {
+				if (ToolExtensions::Find("inspect", "draws"))
+					DrawStats::StandDown();
 				reg->Register(BuildInspectDescriptor(), &InspectHandler);
-			else if (base == "menu")
+			} else if (base == "menu")
 				reg->Register(BuildMenuDescriptor(), &MenuHandler);
 			else if (base == "capture")
 				reg->Register(Capture::BuildCaptureDescriptor(), &Capture::Handle);
@@ -3494,6 +3626,7 @@ namespace dvb
 								{ "timeScale", json{ { "type", "number" }, { "description", "replay: run the recorded trajectory this many times faster (0.1..3.0, up to 10.0 with allowHigh:true) and restore the previous scale when it ends — the setup/restore phase runs at normal speed regardless. The result reports goldensEligible plus timeScaleChanges[]" } } },
 								{ "allowHigh", json{ { "type", "boolean" }, { "description", "replay: permit a timeScale above 3.0, up to 10.0" } } },
 								{ "allowTimeScale", json{ { "type", "boolean" }, { "description", "start/replay: proceed while the game's time scale is not 1 (start would record an incomparable run; default false)" } } },
+								{ "holdCamera", json{ { "type", "boolean" }, { "description", "replay: hold the free camera so the recording's camera transform drives the view. Default: held, except on VR when the recording's tracked set is injected, where the HMD drives the view. Set it to force either choice." } } },
 								{ "runId", json{ { "type", "integer" }, { "description", "status: poll an async replay run started earlier (from replay's 'runId')" } } },
 							} },
 		};
@@ -3580,8 +3713,10 @@ namespace dvb
 					// Held from the trajectory boundary (not scene setup) to any exit; see ReplayHold.
 					const std::size_t trajectoryStepCount = plan.value("trajectoryStepCount", static_cast<std::size_t>(0));
 					const auto        cameraHold = std::make_shared<FreeCamera::ReplayHold>();
+					const bool        holdCamera = ScenarioPolicy::ShouldHoldReplayCamera(activity.value("vrTrackedSet", json::object()), REL::Module::IsVR(),
+						a_args.contains("holdCamera") ? std::optional<bool>(BooleanArgument(a_args, "holdCamera", true)) : std::nullopt);
 					auto              runReplay = [&a_registry, &a_events, a_ctx, steps, runId, coupling,
-													  activity, inputOwner, interpolate, cameraHold,
+													  activity, inputOwner, interpolate, cameraHold, holdCamera,
 													  trajectoryStepCount, scaleHold, replayScale,
 													  setupStepCount, allowTimeScale]() -> json {
 						ActiveReplayClaim activeReplayGuard{ runId };
@@ -3631,19 +3766,21 @@ namespace dvb
 							bool scaleEscalated = false;
 							result = ScenarioHandler(json{ { "steps", steps }, { "runId", runId }, { "smoothPose", interpolate } },
 								a_ctx, a_registry, a_events,
-								[&cameraActivated, cameraHold, trajectoryStepCount, &scaleEscalated,
-									scaleHold, replayScale, setupStepCount, allowTimeScale](std::size_t a_index) {
-									if (!cameraActivated && a_index == trajectoryStepCount) {
-										cameraActivated = true;
-										// No-op off VR; on VR, a failure here must abort the replay.
-										cameraHold->Activate();
-									}
-									if (!scaleEscalated && a_index == setupStepCount &&
-										replayScale != static_cast<float>(TimeScaleControl::kNormalScale)) {
-										scaleEscalated = true;
-										scaleHold->Escalate(replayScale, TimeScaleControl::kDefaultLeaseMs, allowTimeScale);
-									}
-								});
+								{ .replayMarking = ReplayMarking::WholeRun,
+									.beforeStep = [&cameraActivated, cameraHold, holdCamera, trajectoryStepCount, &scaleEscalated,
+													  scaleHold, replayScale, setupStepCount, allowTimeScale](std::size_t a_index) {
+										if (!cameraActivated && a_index == trajectoryStepCount) {
+											cameraActivated = true;
+											// A failure here must abort the replay.
+											if (holdCamera)
+												cameraHold->Activate();
+										}
+										if (!scaleEscalated && a_index == setupStepCount &&
+											replayScale != static_cast<float>(TimeScaleControl::kNormalScale)) {
+											scaleEscalated = true;
+											scaleHold->Escalate(replayScale, TimeScaleControl::kDefaultLeaseMs, allowTimeScale);
+										}
+									} });
 						} catch (const std::exception& e) {
 							const json cleanup = releaseRecordedInput();
 							a_events.Publish("replay.finished", json{ { "runId", runId }, { "ok", false }, { "error", e.what() } });

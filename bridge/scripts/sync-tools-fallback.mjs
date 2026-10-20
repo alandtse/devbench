@@ -22,6 +22,7 @@ const CORE_TOOL_NAMES = new Set([
   "scenario",
   "inspect",
   "game",
+  "actor",
   "camera",
   "papyrus",
   "capture",

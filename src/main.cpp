@@ -1,3 +1,4 @@
+#include "ActorIdle.h"
 #include "Autorun.h"
 #include "CameraOrbit.h"
 #include "Capture.h"
@@ -70,6 +71,8 @@ namespace
 			return;
 		if (a_msg->type == SKSE::MessagingInterface::kPreLoadGame || a_msg->type == SKSE::MessagingInterface::kNewGame)
 			dvb::CameraOrbit::EndSession();  // an orbit never carries into another game
+		if (a_msg->type == SKSE::MessagingInterface::kPreLoadGame || a_msg->type == SKSE::MessagingInterface::kNewGame)
+			dvb::ActorIdle::EndSession();  // nor does an idle loop
 		if (a_msg->type == SKSE::MessagingInterface::kPreLoadGame)
 			dvb::FreeCamera::BeginLoad();
 		else if (a_msg->type == SKSE::MessagingInterface::kNewGame || a_msg->type == SKSE::MessagingInterface::kPostLoadGame)
