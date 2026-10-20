@@ -43,17 +43,32 @@ namespace dvb::Recording
 
 	/// Capture the complete normalized Skyrim input chain delivered by BSInputDeviceManager.
 	/// Every event is serialized while it is valid and stamped onto the recorder's monotonic
-	/// activity clock. No-op unless a recording is active or while DevBench is replaying.
+	/// activity clock. No-op unless a recording is active or while a ReplayMark is engaged.
 	void NoteInputEvents(RE::InputEvent* const* a_events);
 
 	/// Capture observable UI/lifecycle state changes on the same clock as input and pose.
 	void NoteMenuState(const std::string& a_menuName, bool a_opening);
 	void NoteLifecycleEvent(const std::string& a_event);
 
-	/// Mark whether devbench is currently replaying (teleporting the player). While true, the
-	/// pose sampler skips ticks — the replay's own setpos commands (captured via the console
-	/// hook) are the trajectory — so a recording that plays back a recipe embeds it cleanly.
-	void SetReplaying(bool a_replaying);
+	/// One hold on the recorder's replay mark, taken while devbench teleports the player along a
+	/// trajectory. While any hold is engaged the pose sampler and input capture skip — the
+	/// replay's own setpos commands (captured via the console hook) are the trajectory — so a
+	/// recording that plays back a recipe embeds it cleanly. Holds of overlapping runs are
+	/// counted: releasing one leaves the others engaged.
+	class ReplayMark
+	{
+	public:
+		ReplayMark() = default;
+		ReplayMark(const ReplayMark&) = delete;
+		ReplayMark& operator=(const ReplayMark&) = delete;
+		~ReplayMark() { Release(); }
+
+		void Engage();   // no-op if this hold is already engaged
+		void Release();  // no-op if this hold is not engaged
+
+	private:
+		bool m_engaged = false;
+	};
 
 	/// True while a recording is running (start..stop), so a caller can refuse work that would
 	/// make the capture incomparable — e.g. changing the game's time scale mid-recording.

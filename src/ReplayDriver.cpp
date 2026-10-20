@@ -177,6 +177,8 @@ namespace dvb::Recording::ReplayDriver
 			// player's pose.
 			void DriveCamera(const Pose& a_pose)
 			{
+				if (!FreeCamera::IsOwned())
+					return;
 				try {
 					if (a_pose.HasCam()) {
 						FreeCamera::Drive(static_cast<float>(*a_pose.camX), static_cast<float>(*a_pose.camY),

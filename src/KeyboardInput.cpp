@@ -858,11 +858,18 @@ namespace dvb
 			"retryable through that token. Ad-hoc sequences stop on lifecycle boundaries; recording replay "
 			"may explicitly survive the load/new-game events it is reproducing. There are deliberately no per-device or "
 			"per-button VR mutation actions: submit the coherent tracked set so poses and controls cannot "
-			"come from different clocks.";
+			"come from different clocks. device='vrTrackedSet' action='reach' places one or both hands next to nodes of the player: "
+			"it calibrates how a tracking-space move shows up in the world, injects the tracked set, re-reads the hand and "
+			"target nodes after each settle (the body follows the arms, so a node moves when a hand reaches it) and corrects "
+			"until every hand is within toleranceUnits, then holds holdMs; 'head' optionally aims the HMD at the hands or a "
+			"node. It returns { queued, runId } at once; action='reachStatus' (runId) reports { phase (queued | calibrating | "
+			"reaching | holding | done | failed | stopped), iteration, worstErrorDistance, per hand { hand, node, error, errorDistance, handToNode }, "
+			"error, active, stopping (a stop was requested and the run is still releasing) }, and 'reachStop' ends it. One reach runs at a time (409); while it runs it replaces the HMD and both "
+			"controllers like a sequence, and it ends at a load. Fingers are not driven.";
 		input.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "capabilities", "status", "down", "up", "tap", "sequence", "stop", "releaseAll" }) } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "capabilities", "status", "down", "up", "tap", "sequence", "stop", "releaseAll", "reach", "reachStatus", "reachStop" }) } } },
 								{ "device", json{ { "type", "string" }, { "enum", json::array({ "keyboard", "vrTrackedSet" }) }, { "description", "mutation/status device; omit for capabilities" } } },
 								{ "key", json{ { "oneOf", json::array({ json{ { "type", "string" } }, json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", 258 } } }) }, { "description", "down/up/tap: documented key name, raw DirectInput scancode (1-255), or mouse button code (256-258 = mouseLeft / mouseRight / mouseMiddle)" } } },
 								{ "owner", json{ { "type", "string" }, { "minLength", 1 }, { "maxLength", 128 }, { "description", "stable task/session owner; defaults to MCP session id or rest:anonymous" } } },
@@ -875,6 +882,13 @@ namespace dvb
 								{ "tailMs", json{ { "type", "integer" }, { "minimum", 10 }, { "maximum", 1000 }, { "description", "vrTrackedSet sequence: final-state visibility before automatic release (default 50ms)" } } },
 								{ "controlToken", json{ { "type", "string" }, { "description", "vrTrackedSet stop/releaseAll: opaque token returned by sequence start" } } },
 								{ "surviveLifecycle", json{ { "type", "boolean" }, { "description", "internal recording replay only; external true is rejected" } } },
+								{ "hands", json{ { "type", "object" }, { "description", "reach: {left?:{node,front?,offset?:[x,y,z]}, right?:{...}} - put that hand node-relative: next to a node of the player, front world units in front of it along the facing, plus a world offset; at least one hand" } } },
+								{ "head", json{ { "type", "object" }, { "description", "reach: {lookAt:'hands'|<node name>, back?:0.5, up?:0.3, pos?:[x,y,z], eyeHeight?} - aim the HMD at the hands or a node from back meters behind and up meters above it (tracking space), or from pos; eyeHeight (0..3) sets the head's height in tracking meters, e.g. 1.6 to frame low targets from standing height" } } },
+								{ "holdMs", json{ { "type", "integer" }, { "minimum", 100 }, { "maximum", 1798000 }, { "description", "reach: how long to hold the final pose (default 10000)" } } },
+								{ "iterations", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", 10 }, { "description", "reach: correction passes (default 4)" } } },
+								{ "toleranceUnits", json{ { "type", "number" }, { "minimum", 0.05 }, { "maximum", 50 }, { "description", "reach: converged when each hand is within this many world units of its target (default 1)" } } },
+								{ "approachUnits", json{ { "type", "number" }, { "minimum", 0 }, { "maximum", 200 }, { "description", "reach: world units behind the target, along the facing, the first approach starts from (default 15)" } } },
+								{ "runId", json{ { "type", "integer" }, { "minimum", 1 }, { "description", "reachStatus: the run (default the latest)" } } },
 							} },
 		};
 		a_registry.Register(std::move(input), &HandleInput);
