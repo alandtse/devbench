@@ -67,11 +67,15 @@ namespace dvb::Recording
 		// specify its own settleMs. Set from config via SetCaptureDefaults.
 		long g_captureSettleMs = 500;
 
-		// True while devbench is replaying a scenario (teleporting the player). The pose sampler
-		// skips these ticks: the replay's own setpos/setangle commands — captured via the console
-		// hook — already carry the trajectory, so re-sampling would double it. Lets a user record
-		// a session that plays back an existing recipe and embed it cleanly (composition).
-		std::atomic<bool> g_replaying{ false };
+		// Engaged ReplayMark holds. While above zero devbench is teleporting the player and the
+		// pose sampler skips its ticks: the replay's own setpos/setangle commands — captured via
+		// the console hook — already carry the trajectory, so re-sampling would double it.
+		std::atomic<int> g_replayMarks{ 0 };
+
+		bool Replaying()
+		{
+			return g_replayMarks.load(std::memory_order_relaxed) > 0;
+		}
 
 		std::vector<int> ReservedInputKeys()
 		{
@@ -523,7 +527,7 @@ namespace dvb::Recording
 					}
 					if (!running.load(std::memory_order_relaxed))
 						break;
-					if (pose.is_null() || g_replaying.load(std::memory_order_relaxed))
+					if (pose.is_null() || Replaying())
 						continue;  // raw tracking is still sampled, but replay's teleported player pose is not
 					// A main-menu-start recording has no anchor. Preserve its initial state and
 					// also capture the first loaded scene without pretending that was the start.
@@ -1137,8 +1141,7 @@ namespace dvb::Recording
 	void NoteInputEvents(RE::InputEvent* const* a_events)
 	{
 		const auto generation = ActiveGeneration();
-		if (!a_events || !generation ||
-			g_replaying.load(std::memory_order_relaxed))
+		if (!a_events || !generation || Replaying())
 			return;
 		const std::vector<int> reservedKeys = ReservedInputKeys();
 		for (const auto* event = *a_events; event; event = event->next) {
@@ -1160,9 +1163,20 @@ namespace dvb::Recording
 		AppendActivity(json{ { "kind", "lifecycle" }, { "event", a_event } }, generation);
 	}
 
-	void SetReplaying(bool a_replaying)
+	void ReplayMark::Engage()
 	{
-		g_replaying.store(a_replaying, std::memory_order_relaxed);
+		if (m_engaged)
+			return;
+		g_replayMarks.fetch_add(1, std::memory_order_relaxed);
+		m_engaged = true;
+	}
+
+	void ReplayMark::Release()
+	{
+		if (!m_engaged)
+			return;
+		g_replayMarks.fetch_sub(1, std::memory_order_relaxed);
+		m_engaged = false;
 	}
 
 	void SetLoadSettleMs(int a_ms)
