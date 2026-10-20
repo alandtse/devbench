@@ -15,7 +15,7 @@ includes("xmake/cpp-mcp.lua")
 set_project("devbench")
 set_license("GPL-3.0")
 
-local version = "1.29.0"
+local version = "1.30.0"
 local ver = version:split("%.")
 set_version(version)
 
@@ -178,6 +178,7 @@ add_files("src/DifficultyLogic.cpp") -- difficulty level names and parsing; pure
 add_files("src/InspectLogic.cpp") -- lights scope/budget/ordering and the handsReady predicate; pure logic
 add_files("src/ReplayTrajectory.cpp") -- pose keyframe sampling/interpolation; pure logic
 add_files("src/RecordingActivity.cpp") -- activity contract + input/trajectory interleave; pure logic
+add_files("src/DrawStatsLogic.cpp")
 add_headerfiles("tests/*.h")
 set_pcxxheader("tests/pch.h")
 add_defines("_WINSOCKAPI_")

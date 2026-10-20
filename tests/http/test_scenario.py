@@ -35,3 +35,20 @@ def test_navigate_dragonsreach_recipe(client, tool_schema):
     assert body.get("stepsRun") == len(steps), body
     # It actually drove the game for roughly the recorded duration.
     assert body.get("elapsedMs", 0) >= 10_000, body
+
+
+@pytest.mark.requires_player
+def test_record_started_inside_a_scenario_samples_poses(client, tool_schema):
+    require_tool(tool_schema, "scenario")
+    require_tool(tool_schema, "record")
+
+    steps = [
+        {"tool": "record", "args": {"action": "start", "intervalMs": 100}},
+        {"wait": 2000},
+        {"tool": "record", "args": {"action": "stop"}},
+    ]
+    status, body = client.call("scenario", {"steps": steps}, timeout=30.0)
+    assert status == 200, body
+    assert body.get("ok") is True, body
+    stop = body["results"][2].get("result", {})
+    assert stop.get("sampleCount", 0) > 0, body
