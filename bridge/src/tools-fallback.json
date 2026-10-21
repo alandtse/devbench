@@ -37,10 +37,7 @@
           },
           "device": {
             "description": "mutation/status device; omit for capabilities",
-            "enum": [
-              "keyboard",
-              "vrTrackedSet"
-            ],
+            "enum": ["keyboard", "vrTrackedSet"],
             "type": "string"
           },
           "durationMs": {
@@ -148,12 +145,7 @@
         "properties": {
           "action": {
             "description": "listIdles | playIdle | stopIdle | status",
-            "enum": [
-              "listIdles",
-              "playIdle",
-              "stopIdle",
-              "status"
-            ],
+            "enum": ["listIdles", "playIdle", "stopIdle", "status"],
             "type": "string"
           },
           "filter": {
@@ -185,10 +177,7 @@
             "type": "integer"
           }
         },
-        "required": [
-          "action",
-          "formId"
-        ],
+        "required": ["action", "formId"],
         "type": "object"
       }
     },
@@ -199,14 +188,7 @@
         "properties": {
           "action": {
             "description": "list | describe | accept | open | close | invoke",
-            "enum": [
-              "list",
-              "describe",
-              "accept",
-              "open",
-              "close",
-              "invoke"
-            ],
+            "enum": ["list", "describe", "accept", "open", "close", "invoke"],
             "type": "string"
           },
           "index": {
@@ -228,10 +210,7 @@
         "properties": {
           "action": {
             "description": "'exec' (default) runs `command`; 'read' returns the last capture's fenced output",
-            "enum": [
-              "exec",
-              "read"
-            ],
+            "enum": ["exec", "read"],
             "type": "string"
           },
           "capture": {
@@ -308,10 +287,7 @@
           },
           "scope": {
             "description": "lights: 'ref' (default) reads one reference's 3D; 'scene' lists every light the renderer is using, nearest the player first, each with the reference it hangs under; any other value is refused (400)",
-            "enum": [
-              "ref",
-              "scene"
-            ],
+            "enum": ["ref", "scene"],
             "type": "string"
           },
           "selected": {
@@ -415,13 +391,7 @@
         "properties": {
           "action": {
             "description": "find | headParts | describe | plugins | asset",
-            "enum": [
-              "find",
-              "headParts",
-              "describe",
-              "plugins",
-              "asset"
-            ],
+            "enum": ["find", "headParts", "describe", "plugins", "asset"],
             "type": "string"
           },
           "filter": {
@@ -469,9 +439,7 @@
             "type": "integer"
           }
         },
-        "required": [
-          "action"
-        ],
+        "required": ["action"],
         "type": "object"
       },
       "readOnly": true
@@ -483,14 +451,7 @@
         "properties": {
           "action": {
             "description": "get (default) | setPov | freecam | drive | orbit | frame",
-            "enum": [
-              "get",
-              "setPov",
-              "freecam",
-              "drive",
-              "orbit",
-              "frame"
-            ],
+            "enum": ["get", "setPov", "freecam", "drive", "orbit", "frame"],
             "type": "string"
           },
           "aroundDeg": {
@@ -535,11 +496,7 @@
           },
           "pov": {
             "description": "setPov: target point of view",
-            "enum": [
-              "first",
-              "third",
-              "vanity"
-            ],
+            "enum": ["first", "third", "vanity"],
             "type": "string"
           },
           "right": {
@@ -548,14 +505,7 @@
           },
           "side": {
             "description": "frame: which side to look from (default front); front/back/left/right are relative to the reference's heading",
-            "enum": [
-              "front",
-              "back",
-              "left",
-              "right",
-              "top",
-              "bottom"
-            ],
+            "enum": ["front", "back", "left", "right", "top", "bottom"],
             "type": "string"
           },
           "up": {
@@ -599,11 +549,7 @@
         "properties": {
           "action": {
             "description": "capture (default, one frame) | burst (a PNG sequence through the provider) | status (a burst's progress, by runId)",
-            "enum": [
-              "capture",
-              "burst",
-              "status"
-            ],
+            "enum": ["capture", "burst", "status"],
             "type": "string"
           },
           "allowNative": {
@@ -705,11 +651,7 @@
         "properties": {
           "action": {
             "description": "list | describe | call",
-            "enum": [
-              "list",
-              "describe",
-              "call"
-            ],
+            "enum": ["list", "describe", "call"],
             "type": "string"
           },
           "args": {
@@ -754,10 +696,7 @@
         "properties": {
           "action": {
             "description": "run (default, requires 'steps') | status (requires 'runId')",
-            "enum": [
-              "run",
-              "status"
-            ],
+            "enum": ["run", "status"],
             "type": "string"
           },
           "async": {
@@ -794,13 +733,7 @@
         "properties": {
           "action": {
             "description": "start | stop | status | replay | checkpoint",
-            "enum": [
-              "start",
-              "stop",
-              "status",
-              "replay",
-              "checkpoint"
-            ],
+            "enum": ["start", "stop", "status", "replay", "checkpoint"],
             "type": "string"
           },
           "allowHigh": {
@@ -834,11 +767,7 @@
           },
           "coupling": {
             "description": "replay: override the recipe's coupling tier — run looser than the producer signaled (worldspace skips the scene restore)",
-            "enum": [
-              "anchored",
-              "cell",
-              "worldspace"
-            ],
+            "enum": ["anchored", "cell", "worldspace"],
             "type": "string"
           },
           "excludeUi": {
@@ -906,12 +835,7 @@
         "properties": {
           "action": {
             "description": "list | describe | validate | delete",
-            "enum": [
-              "list",
-              "describe",
-              "validate",
-              "delete"
-            ],
+            "enum": ["list", "describe", "validate", "delete"],
             "type": "string"
           },
           "file": {
@@ -938,9 +862,7 @@
             "type": "integer"
           }
         },
-        "required": [
-          "hours"
-        ],
+        "required": ["hours"],
         "type": "object"
       }
     },
@@ -956,9 +878,7 @@
             "type": "integer"
           }
         },
-        "required": [
-          "hours"
-        ],
+        "required": ["hours"],
         "type": "object"
       }
     },
