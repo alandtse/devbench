@@ -1376,7 +1376,7 @@ namespace dvb
 			}
 
 			if (kind == "state") {
-				json out = MainThread::RunAndWait([]() -> json {
+				json       out = MainThread::RunAndWait([]() -> json {
 					auto*      pc = RE::PlayerCharacter::GetSingleton();
 					const bool loaded = pc && pc->Get3D() != nullptr;
 					return json{

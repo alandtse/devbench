@@ -62,6 +62,6 @@ namespace dvb::InspectLogic
 		if (a_focused || !a_alwaysActive || *a_alwaysActive)
 			return {};
 		return "the game window is in the background and bAlwaysActive is off, so the engine pauses; "
-		       "run game setAlwaysActive or set [General] bAlwaysActive=1";
+			   "run game setAlwaysActive or set [General] bAlwaysActive=1";
 	}
 }
