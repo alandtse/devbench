@@ -72,6 +72,10 @@ namespace dvb
 		// Fail a tool request carrying a top-level key its inputSchema doesn't declare (400) instead
 		// of only warning in the reply. Off by default: a tool with an incomplete schema would break.
 		bool strictToolArgs = false;
+
+		// Force the engine's [General] bAlwaysActive on at startup so the game keeps running (and tools keep
+		// working) while its window is in the background. Off by default: it is a user preference.
+		bool alwaysActive = false;
 	};
 
 	// Load Data/SKSE/Plugins/devbench/config.json. If the file is missing it is

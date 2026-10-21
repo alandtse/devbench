@@ -139,8 +139,51 @@
       }
     },
     {
+      "name": "actor",
+      "description": "Drive an NPC's idle animation. 'listIdles' (param 'formId' of a loaded NPC, optional 'filter' EditorID substring, 'limit' default 200) returns the idles that NPC can use right now as { editorId, formId, animEvent, animFile, plugin, loopMin, loopMax, replayDelay }. 'playIdle' (params 'formId', 'idle' EditorID or FormID, 'loop' default false, 'repeatMs' 250..60000 default 5000, 'freezeAi' default false) plays the idle on the NPC, which stands where it is under the do-nothing package; with loop:true it is replayed every repeatMs (the engine does not report when an idle ends, so set it to the clip's length) until 'stopIdle' or the NPC unloads, dies, or a load starts. Idles only animate while the NPC's AI runs, so a loop keeps the AI on; freezeAi (single play only) turns the AI back off after the pose settles. 'stopIdle' ends any loop and returns the NPC to its default idle (ResetRoot), optional 'freezeAi'. 'status' returns whether a loop is active and its idle. playIdle and stopIdle return { ref, ok, ... }; every action refuses (409) the player, a dead or unloaded NPC. Main thread; SE and VR.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "description": "listIdles | playIdle | stopIdle | status",
+            "enum": ["listIdles", "playIdle", "stopIdle", "status"],
+            "type": "string"
+          },
+          "filter": {
+            "description": "listIdles: case-insensitive EditorID substring",
+            "type": "string"
+          },
+          "formId": {
+            "description": "the NPC reference (FormID like 0x000A2C8F, or EditorID)",
+            "type": "string"
+          },
+          "freezeAi": {
+            "description": "playIdle (single play) or stopIdle: turn the NPC's AI off again once it settles; refused with loop:true",
+            "type": "boolean"
+          },
+          "idle": {
+            "description": "playIdle: the idle's EditorID or FormID",
+            "type": "string"
+          },
+          "limit": {
+            "description": "listIdles: most idles to return (default 200)",
+            "type": "integer"
+          },
+          "loop": {
+            "description": "playIdle: keep replaying the idle once the NPC stops running it (default false)",
+            "type": "boolean"
+          },
+          "repeatMs": {
+            "description": "playIdle with loop: milliseconds between replays, 250..60000 (default 5000)",
+            "type": "integer"
+          }
+        },
+        "required": ["action", "formId"],
+        "type": "object"
+      }
+    },
+    {
       "name": "menu",
-      "description": "Inspect, open, answer, or dismiss menus. action='list' returns { openMenus, messageBoxOpen, registered } tracked live from menu open/close events. 'describe' returns the active MessageBoxMenu as { messageBoxOpen, bodyText, buttons:[…], cancelIndex } (read the buttons, then pick one), or with a 'name' the registered menu's descriptor. 'accept' answers a MessageBoxMenu by button 'index' (default 0) — runs its callback and dismisses it (this is how you clear a Yes/No modal, e.g. the content-mismatch dialog gating a load; kHide does NOT). 'open' shows an ENGINE menu by 'name' via the UI queue (kShow) — opens hub menus from a plain name (TweenMenu, 'Journal Menu', MagicMenu, MapMenu, StatsMenu, InventoryMenu, FavoritesMenu); context menus that need a target ref (ContainerMenu/BarterMenu/BookMenu) won't open this way. 'close' hides a menu by 'name' via the UI queue (kHide). 'invoke' dispatches to a consumer-registered (mod) menu by 'name' — NOT 'open' (mod menus aren't engine menus). A mod exposes its menu via the C-ABI RegisterMenuHandler; 'list' returns those under 'registered'. Registered (mod) menus (invoke with action='invoke', name=<x>): CommunityShaders — Open, close, or toggle the Open Shaders in-game settings menu headlessly, the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). page: OPTIONAL built-in page name (e.g. \"Performance\", \"Home\") or a feature's shortName (see openshaders.feature list) to navigate to on the next frame, same as clicking it in the left pane. Returns {op,page,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).; devbench.selftest — devbench menu-extension self-test; echoes its args..",
+      "description": "Inspect, open, answer, or dismiss menus. action='list' returns { openMenus, messageBoxOpen, registered } tracked live from menu open/close events. 'describe' returns the active MessageBoxMenu as { messageBoxOpen, bodyText, buttons:[…], cancelIndex } (read the buttons, then pick one), or with a 'name' the registered menu's descriptor. 'accept' answers a MessageBoxMenu by button 'index' (default 0) — runs its callback and dismisses it (this is how you clear a Yes/No modal, e.g. the content-mismatch dialog gating a load; kHide does NOT). 'open' shows an ENGINE menu by 'name' via the UI queue (kShow) — opens hub menus from a plain name (TweenMenu, 'Journal Menu', MagicMenu, MapMenu, StatsMenu, InventoryMenu, FavoritesMenu); context menus that need a target ref (ContainerMenu/BarterMenu/BookMenu) won't open this way. 'close' hides a menu by 'name' via the UI queue (kHide). 'invoke' dispatches to a consumer-registered (mod) menu by 'name' — NOT 'open' (mod menus aren't engine menus). A mod exposes its menu via the C-ABI RegisterMenuHandler; 'list' returns those under 'registered'. Registered (mod) menus (invoke with action='invoke', name=<x>): CommunityShaders — Open, close, or toggle the Open Shaders in-game settings menu headlessly, the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). page: OPTIONAL built-in page name (e.g. \"Performance\", \"Home\") or a feature's shortName (see openshaders.feature list) to navigate to on the next frame, same as clicking it in the left pane. tab: OPTIONAL tab label, at most 128 characters (visible text such as \"Neural Rendering\", or the id after ### with or without the ###; case is ignored and so is any [Alpha]-style suffix on the visible text) to select in whichever tab bar the menu draws, same as clicking it; give page too, and a tab inside another tab is found once that one is selected (call again with the inner tab). A request that finds no such tab within 600 menu frames is dropped with a warning in the log; the call still reports queued. sidebarVisible: OPTIONAL boolean to show or hide the sidebar with its slide animation without saving settings; false suppresses hover auto-hide expansion, true restores the configured auto-hide behavior. Use op=open when changing sidebar visibility. editorMode: OPTIONAL browser|menu to switch the OS Editor panel without saving settings; use op=open and page=CSEditor to open the editor first. Sidebar visibility only affects the standalone menu. Returns {op,page,tab,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).; devbench.selftest — devbench menu-extension self-test; echoes its args..",
       "inputSchema": {
         "properties": {
           "action": {
@@ -187,45 +230,8 @@
       }
     },
     {
-      "name": "scenario",
-      "description": "Run a timed sequence of steps server-side (reproducible tests/benchmarks) and return a per-step transcript. action='run' (default, requires 'steps'). Each step is one of: {\"tool\":\"<name>\",\"args\":{…}} dispatch any registered tool (e.g. console, game); {\"wait\":<ms>} fixed pacing; {\"waitFor\":<event>,…} block on a Skyrim EVENT — string shorthand (\"postLoadGame\"/\"saveGame\"/\"newGame\"/\"preLoadGame\"/\"dataLoaded\"/\"deleteGame\", or \"menuOpened\"/\"menuClosed\" with a \"name\"), or {\"topic\":\"…\",\"match\":{…}}; {\"waitUntil\":\"playerLoaded\"|\"noModal\"|\"noMenu\"|\"noBlockingMenu\"} poll live state. PREFER waitFor over a fixed wait — e.g. wait for postLoadGame to know a load truly finished. Optional: repeat (≤1000), continueOnError, async. By default action='run' BLOCKS the request for the run's duration and returns the transcript directly — the primary use is asserting against that return value in the same call. Pass async=true to instead get {queued:true, runId, steps} immediately and poll action='status'+runId (returns {done:false} while running, or {done:true, ok, result} / {done:true, ok:false, error} once finished — runId is shared with record{action:'replay'}, so either tool's status action resolves either tool's runId). Publishes scenario.started/scenario.step/scenario.finished events (index/total/kind/tool on each step) in both modes — poll GET /api/events to follow a run; if the game wedges mid-run, the last scenario.step names the culprit step.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "description": "run (default, requires 'steps') | status (requires 'runId')",
-            "enum": ["run", "status"],
-            "type": "string"
-          },
-          "async": {
-            "description": "run: return {queued:true, runId} immediately and run in the background (default false); true does not block",
-            "type": "boolean"
-          },
-          "continueOnError": {
-            "description": "run: keep going after a failed/timed-out step instead of aborting (default false)",
-            "type": "boolean"
-          },
-          "repeat": {
-            "description": "run: run the whole step list N times (default 1, max 1000)",
-            "type": "integer"
-          },
-          "runId": {
-            "description": "status: poll an async run started earlier (from run's 'runId')",
-            "type": "integer"
-          },
-          "steps": {
-            "description": "run: ordered steps; each is one of tool/wait/waitFor/waitUntil (see description)",
-            "items": {
-              "type": "object"
-            },
-            "type": "array"
-          }
-        },
-        "type": "object"
-      }
-    },
-    {
       "name": "inspect",
-      "description": "Read live game/plugin state. Runs on the main thread and returns the value synchronously (times out if the game is mid-load / not pumping tasks). kinds: 'state' → { plugin, version, vr, playerLoaded, frame, pid, port, exe } — pid/port/exe identify the answering instance, so a multi-instance session (e.g. SE + VR both running, on adjacent auto-iterated ports) can confirm it's talking to the intended one; 'vm' → Papyrus VM health { loadedTypes, attachedScripts, arrays, runningStacks, frozenStacks, overstressed }; 'scene' → player context { cell, worldspace, location, position, gameHour, daysPassed, weather }; 'mods' → active load order { count, lightCount, total, plugins:[{index, name}], lightPlugins:[…] }; 'player' → player snapshot { name, level, sex, gold, race, actorValues:{health,magicka,stamina,carryWeight each {current,max}}, equipped:{right,left,ammo}, hands:{weaponDrawn (broad: drawn or about to sheathe), weaponState, weaponSettledDrawn (exactly drawn), castingArtReady (every spell hand's caster flags its art attached; says nothing about which art), handsReady (settled drawn, and every spell hand's attach sequence finished: no art pending, no clone task, the attached flag set and an attached art node recorded; it does not compare the model with the spell and is not proof a rendered frame shows it), left/right:{equipped, heldLights (every light under the hand's first WEAPON/SHIELD node in each view, with view, lightId and inScene), heldLightEntriesInScene (entries in the scene's active/shadow lists - not proof a light is visible), heldLightsUnique, heldLightsUniqueInScene, heldLightSearch [{view, node, match, rootLoaded, nodeFound}], heldLightSearchComplete (false: an empty list does not prove the hand holds no light; firstPerson is searched only when the actor has its own first-person 3D), caster:{state, currentSpell, castingArt (the art still to attach; null once attached), castingArtPending, pendingArtMatchesEquipped (null when nothing is pending), castingArtLoading, castingArtAttached, attachedArtNode, light}}} (caster, light and attachedArtNode null when absent) }; 'lights' → every NiLight under a reference's 3D (default the player: thirdPerson + firstPerson; or 'formId' / 'selected') as {name, type, path, diffuse, radius, fade, fadeAmount, appCulled, inScene:'active'|'shadow'|false, position}, plus an actor's hands (each hand's casting light); scope='scene' instead lists every light the renderer is using, nearest first (ties by name, path, position), each with its 'owner' reference and 'distance' (null when the player's position is unknown; 'radius' then refused with 409), ('radius', 'limit'). Every lights read has one budget for nodes visited, parent steps and lights emitted, reports it under 'coverage' with 'truncated' and 'truncatedBy', and names its 'observation' source; 'inventory' → items held by the player (or a container 'formId') { owner, count, items:[{formId, name, formType, count, value, weight, equipped}] } (filters: 'formType', 'limit'); 'quests' → journal (running/completed) { count, quests:[{formId, name, stage, type, active, completed, objectives:[{index, text, state}]}] } ('limit'); 'effects' → active magic effects on the player (or an actor 'formId') { target, count, activeEffects:[{spell, effect, magnitude, duration, elapsed}] }; 'refs' → identify reference(s) sharing one shape { formId, formType, name, editorId, base, position, rotation, cell, model, bounds } — 'model' is the base object's mesh (.nif) path when it has one; 'bounds' is { min, max } local extents for framing a shot; an actor ref also carries actor { level, health, healthMax, stamina, staminaMax, attackState (the console's GetAttackState: 0 none, 2 swing, 3 hit, ...), hostileToPlayer, playerTeammate, alive, loaded3D } and, when the ref has no name, its display name; pass 'formId' for one form, 'selected'=true for the console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid (optional 'formType' filter, 'model' substring filter against the base object's mesh path, 'radius' from player, 'limit' default 100); 'model' matches statics and furniture — actors normally have no base mesh, so list NPCs with 'formType'=Actor. 'draws' → what the frames since the counting window began drew, per frame: { frames, seconds, fps, frameMs (Present to Present), gpu:{timed, framesTimed, framesLost, frameMs}, passes:[{pass (main|sunShadows|spotShadows|pointShadows), objects, objectsByShader (SetupGeometry calls per BSShader type); shadow passes add renders, renderCpuMs, accumulateCpuMs, gpuMs, casters, casterSizes:[{atLeast, below, count}] (bound radius / camera distance); sunShadows adds objectsPerDepthTarget (cascades)}], mainPassTargets:[{label, width, height, format, arraySize, depth, objects, objectsByShader, gpuMs}] (the main pass by bound render target, the depth view else the first color view), hooksReplaced } — the first read installs the hooks and returns an empty window with started=true; 'reset'=true begins a new window after the reading. GPU times are D3D11 timestamp queries read a few frames late without stalling; frames whose answers are late count as framesLost. A target's GPU span runs to the next bind, so work issued between binds (compute passes included) counts toward it. devbench's hooks are installed by the first draws call; a renderer mod that registers inspect key 'draws' (RegisterToolExtension) answers instead, and devbench's hooks are then never installed or pass every call through. Every reply names its source: 'devbench', or the provider's descriptor 'source'. 'registrants' → who has requested the C-ABI interface and what they registered through it { consumers:[{name,atEpoch,atFrame}], registrations:[{kind,name,atEpoch,atFrame,replaced}], capabilities:{capture,inspect,menu → [registered keys]} } — consumers and registrations are reported side by side, not joined, since the C-ABI has no per-call caller identity. 'screenshots' → image files in the vanilla screenshot directories (game root + 'Screenshots/') { dirs, count, returned, truncated, screenshots:[{file,path,bytes,mtimeEpoch}] } newest-first (optional 'dir' override, 'limit' default 50) — see also the `capture` tool, which has its own native fallback using the same directories. A consumer mod can add a custom kind via the C-ABI RegisterToolExtension (e.g. load-timing data); 'extensions' lists those registered kinds + descriptors, and kind=<registered> dispatches. Registered (mod) kinds: devbench.selftest — devbench inspect-extension self-test; echoes its args.; featureissues — Open Shaders feature-issue tracking -> {featureIssues:[{shortName,displayName,version,issueType,rejectionReason,replacementFeature,replacementFeatureDisplayName,replacementFeatureInstalled,replacementFeatureModLink,userMessage,minimumVersionRequired,modifiedShaderDirectory,iniPath,removedInVersion}],hasIssues,hasObsoleteShaderModifyingFeatures,hasPotentialShaderModifyingFeatures}. Surfaces the same detection FeatureIssues.h already does at boot for the in-menu warning banner -- obsolete features with a known replacement, INI version mismatches, override files that failed to apply, and unrecognized/unknown feature INIs left in Data/Shaders/Features. issueType: OBSOLETE|VERSION_MISMATCH|OVERRIDE_FAILED|UNKNOWN. modifiedShaderDirectory/hasObsoleteShaderModifyingFeatures flag features whose obsolete files could still be holding stale shader source -- the more likely of the two shader-modifying flags to explain an otherwise-unexplained compile problem elsewhere.; llfshadows — Open Shaders Light Limit Fix shadow-scheduler diagnostics -> {valid,frame,total,chosen,excess,invalid*,slotsInUse,lights:[{ptr,reason}],slots:[{slot,ptr,importance,score,desiredScale,budgetScale,pendingScale,renderedScale,tile:{x,y,size,contentValid}}],classes:{full,half,quarter,eighth,sixteenth},atlas:{dim,capacityCells,occupancy,vramBytes},budget:{avgLightCostUs,avgRedrawsPerFrame,estPassMsPerFrame,staticBakesTotal,splitAccumAllTotal,splitAccumStaticOnlyTotal,splitAccumDynamicOnlyTotal,splitLatchMismatchTotal,splitLatchWindowTotal,splitWastedBakesTotal,passGuardChecksTotal,passGuardCycleSkipsTotal,passGuardFaultSkipsTotal,passGuardCapExceededTotal,passGuardCycleRepairsTotal,staleAccumulatesTotal,staleAfterRenderSkipTotal,stalePassClearsTotal,renderSkipSessionResetTotal,renderSkipPortalTransitionTotal,renderSkipTeardownWaitingTotal,renderSkipTeardownRaceTotal,passRegChecksTotal,passRegRingsTotal,stalePromotedTotal,passGuardRepairsPromotedTotal,passRegRingsPromotedTotal}}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. slots covers occupied point-light pool slots (tile.size 0 = no atlas tile); classes buckets renderedScale; atlas is all-zero when the shadow atlas is inactive; passGuard* count pass-chain guard activity during SCM shadow renders (cycles repaired in place, calls skipped when a repair failed or a link was unreadable, chains too long to prove); staleAccumulatesTotal counts lights accumulated in an earlier frame and never rendered since (staleAfterRenderSkipTotal: those whose accumulate frame was a render-function early exit; stalePassClearsTotal: times such a light's pass groups were unlinked before re-accumulating), renderSkip*Total count RenderScheduledShadowLights early exits by reason, *Promoted* count the subset of stale accumulates, in-place repairs and registration rings that involved a promoted (normal->shadow) light; passReg* count pass registrations checked and rings they closed (only while LightLimitFix tracePassRegistration is on); budget is the GPU-timestamp tracker (estPassMsPerFrame = avg cost x avg redraws, the REST perf A/B metric). The scheduler fills this only while the settings menu is open or a dump was recently requested; calling this primes it, so if valid==false (idle) poll again after a frame (use inspect kind=openshaders frame_count to know a tick passed).; openshaders — Open Shaders engine state -> {plugin,frame_count,vr}. frame_count increases each render tick — use it as ground truth that a queued operation has had a frame to run.; profiler — Open Shaders GPU/CPU profiler snapshot -> {enabled,capturing,frame_count,capturedFrameCount,capturedGpuFrameCount,capturedCpuFrameCount,totalMs,cpuTotalMs,resolvedTotalMs,resolvedCpuTotalMs,acquiredSlots,peakAcquiredSlots,slotRefusals,maxTimers,timers:[{name,gpuMs,topLevelMs,avgMs,p95Ms,p99Ms,cpuMs,cpuAvgMs,cpuP95Ms,cpuP99Ms,hasGpu,hasCpu,activeGpu,activeCpu,historyHead,historyCount,cpuHistoryHead,cpuHistoryCount}]}. Calling this primes the next capture, so an idle first call may show stale data. CPU samples publish at their engine-frame boundary and pair with capturedCpuFrameCount, resolvedCpuTotalMs, cpuMs, and CPU history. GPU samples resolve independently through a three-slot query ring and pair with capturedGpuFrameCount, resolvedTotalMs, gpuMs, topLevelMs, and GPU history. gpuMs and its rolling statistics report self time with directly nested GPU passes removed. topLevelMs is the inclusive contribution from top-level intervals; resolvedTotalMs equals the sum of topLevelMs across timers. capturedFrameCount is a compatibility summary containing the newest frame published by either source; do not use it to pair both sources. totalMs and cpuTotalMs are live menu values that zero while idle. activeGpu and activeCpu describe the latest published frame for their own source. Each valid filtered capture cycle contributes exactly one history sample per matching known timer, including zero when that timer did not run. Same-name intervals are summed before one sample is pushed. acquiredSlots is the last completed GPU cycle's slot count; peakAcquiredSlots is its session high-water mark. slotRefusals is cumulative, and any nonzero value means a GPU interval lacked a slot, although a requested CPU sample is still retained. Enable or disable capture via openshaders.profiler.; shadercache — Open Shaders shader-cache status -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,recentFailures,diskHitTasks,digestHitTasks,digestMissTasks,digestComputeCount,digestComputeTimeUs,frame_count,diskCacheHeld,featureSetChanged,featureSetRevertPending,featureSetCacheBackedUp,previousDiskCacheAvailable,cacheMismatches,previousCacheMismatches}. Poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished; watch failedTasks/currentFailedCount for failed compiles. recentFailures is the last 32 compile failures this session, each {key,path,error,epoch,frame} -- key is GetShaderString's cache key (shader class + merged feature #defines, identifying WHICH feature's shader broke without a separate lookup; for ImageSpace shaders the filename embedded in key can differ from path), path is the actual source file that was compiled, error is the compiler's own message (truncated to 2000 chars). digestHitTasks/digestMissTasks count disk-cache validity checks where the content-digest manifest matched (hit) or differed (miss); the later blob load or recompilation can still fail; digestComputeTimeUs is the cumulative microseconds spent computing content digests this session. diskCacheHeld true means a feature-set mismatch (see cacheMismatches, each {kind,shortName,feature,detail,nowPresent}) is holding the whole disk cache this session -- resolve with openshaders.shadercache acceptRebuild or restorePrevious. previousDiskCacheAvailable/previousCacheMismatches describe the rollback slot (the pre-change cache) a restorePrevious call would swap back in..",
+      "description": "Read live game/plugin state. Runs on the main thread and returns the value synchronously (times out if the game is mid-load / not pumping tasks). kinds: 'state' → { plugin, version, vr, playerLoaded, frame, pid, port, exe, windowFocused, alwaysActive (null when unavailable), warning? } — warning appears when the window is in the background with bAlwaysActive off, which pauses the engine; pid/port/exe identify the answering instance, so a multi-instance session (e.g. SE + VR both running, on adjacent auto-iterated ports) can confirm it's talking to the intended one; 'vm' → Papyrus VM health { loadedTypes, attachedScripts, arrays, runningStacks, frozenStacks, overstressed }; 'scene' → player context { cell, worldspace, location, position, gameHour, daysPassed, weather }; 'mods' → active load order { count, lightCount, total, plugins:[{index, name}], lightPlugins:[…] }; 'player' → player snapshot { name, level, sex, gold, race, actorValues:{health,magicka,stamina,carryWeight each {current,max}}, equipped:{right,left,ammo}, hands:{weaponDrawn (broad: drawn or about to sheathe), weaponState, weaponSettledDrawn (exactly drawn), castingArtReady (every spell hand's caster flags its art attached; says nothing about which art), handsReady (settled drawn, and every spell hand's attach sequence finished: no art pending, no clone task, the attached flag set and an attached art node recorded; it does not compare the model with the spell and is not proof a rendered frame shows it), left/right:{equipped, heldLights (every light under the hand's first WEAPON/SHIELD node in each view, with view, lightId and inScene), heldLightEntriesInScene (entries in the scene's active/shadow lists - not proof a light is visible), heldLightsUnique, heldLightsUniqueInScene, heldLightSearch [{view, node, match, rootLoaded, nodeFound}], heldLightSearchComplete (false: an empty list does not prove the hand holds no light; firstPerson is searched only when the actor has its own first-person 3D), caster:{state, currentSpell, castingArt (the art still to attach; null once attached), castingArtPending, pendingArtMatchesEquipped (null when nothing is pending), castingArtLoading, castingArtAttached, attachedArtNode, light}}} (caster, light and attachedArtNode null when absent) }; 'lights' → every NiLight under a reference's 3D (default the player: thirdPerson + firstPerson; or 'formId' / 'selected') as {name, type, path, diffuse, radius, fade, fadeAmount, appCulled, inScene:'active'|'shadow'|false, position}, plus an actor's hands (each hand's casting light); scope='scene' instead lists every light the renderer is using, nearest first (ties by name, path, position), each with its 'owner' reference and 'distance' (null when the player's position is unknown; 'radius' then refused with 409), ('radius', 'limit'). Every lights read has one budget for nodes visited, parent steps and lights emitted, reports it under 'coverage' with 'truncated' and 'truncatedBy', and names its 'observation' source; 'inventory' → items held by the player (or a container 'formId') { owner, count, items:[{formId, name, formType, count, value, weight, equipped}] } (filters: 'formType', 'limit'); 'quests' → journal (running/completed) { count, quests:[{formId, name, stage, type, active, completed, objectives:[{index, text, state}]}] } ('limit'); 'effects' → active magic effects on the player (or an actor 'formId') { target, count, activeEffects:[{spell, effect, magnitude, duration, elapsed}] }; 'refs' → identify reference(s) sharing one shape { formId, formType, name, editorId, base, position, rotation, cell, model, bounds } — 'model' is the base object's mesh (.nif) path when it has one; 'bounds' is { min, max } local extents for framing a shot; an actor ref also carries actor { level, health, healthMax, stamina, staminaMax, attackState (the console's GetAttackState: 0 none, 2 swing, 3 hit, ...), hostileToPlayer, playerTeammate, alive, loaded3D } and, when the ref has no name, its display name; pass 'formId' for one form, 'selected'=true for the console/crosshair ref (set via prid), or neither to enumerate loaded refs in the grid (optional 'formType' filter, 'model' substring filter against the base object's mesh path, 'radius' from player, 'limit' default 100); 'model' matches statics and furniture — actors normally have no base mesh, so list NPCs with 'formType'=Actor. 'draws' → what the frames since the counting window began drew, per frame: { frames, seconds, fps, frameMs (Present to Present), gpu:{timed, framesTimed, framesLost, frameMs}, passes:[{pass (main|sunShadows|spotShadows|pointShadows), objects, objectsByShader (SetupGeometry calls per BSShader type); shadow passes add renders, renderCpuMs, accumulateCpuMs, gpuMs, casters, casterSizes:[{atLeast, below, count}] (bound radius / camera distance); sunShadows adds objectsPerDepthTarget (cascades)}], mainPassTargets:[{label, width, height, format, arraySize, depth, objects, objectsByShader, gpuMs}] (the main pass by bound render target, the depth view else the first color view), hooksReplaced } — the first read installs the hooks and returns an empty window with started=true; 'reset'=true begins a new window after the reading. GPU times are D3D11 timestamp queries read a few frames late without stalling; frames whose answers are late count as framesLost. A target's GPU span runs to the next bind, so work issued between binds (compute passes included) counts toward it. devbench's hooks are installed by the first draws call; a renderer mod that registers inspect key 'draws' (RegisterToolExtension) answers instead, and devbench's hooks are then never installed or pass every call through. Every reply names its source: 'devbench', or the provider's descriptor 'source'. 'registrants' → who has requested the C-ABI interface and what they registered through it { consumers:[{name,atEpoch,atFrame}], registrations:[{kind,name,atEpoch,atFrame,replaced}], capabilities:{capture,inspect,menu → [registered keys]} } — consumers and registrations are reported side by side, not joined, since the C-ABI has no per-call caller identity. 'screenshots' → image files in the vanilla screenshot directories (game root + 'Screenshots/') { dirs, count, returned, truncated, screenshots:[{file,path,bytes,mtimeEpoch}] } newest-first (optional 'dir' override, 'limit' default 50) — see also the `capture` tool, which has its own native fallback using the same directories. A consumer mod can add a custom kind via the C-ABI RegisterToolExtension (e.g. load-timing data); 'extensions' lists those registered kinds + descriptors, and kind=<registered> dispatches. Registered (mod) kinds: devbench.selftest — devbench inspect-extension self-test; echoes its args.; featureissues — Open Shaders feature-issue tracking -> {featureIssues:[{shortName,displayName,version,issueType,rejectionReason,replacementFeature,replacementFeatureDisplayName,replacementFeatureInstalled,replacementFeatureModLink,userMessage,minimumVersionRequired,modifiedShaderDirectory,iniPath,removedInVersion}],hasIssues,hasObsoleteShaderModifyingFeatures,hasPotentialShaderModifyingFeatures}. Surfaces the same detection FeatureIssues.h already does at boot for the in-menu warning banner -- obsolete features with a known replacement, INI version mismatches, override files that failed to apply, and unrecognized/unknown feature INIs left in Data/Shaders/Features. issueType: OBSOLETE|VERSION_MISMATCH|OVERRIDE_FAILED|UNKNOWN. modifiedShaderDirectory/hasObsoleteShaderModifyingFeatures flag features whose obsolete files could still be holding stale shader source -- the more likely of the two shader-modifying flags to explain an otherwise-unexplained compile problem elsewhere.; llfshadows — Open Shaders Light Limit Fix shadow-scheduler diagnostics -> {valid,frame,total,chosen,excess,invalid*,slotsInUse,lights:[{ptr,reason}],visibility:[{ptr,chosen,engineCulled,frustrumCull,lodDimmer,distance,radius,ownInFrustum,cameraHold,hidden,shadowDistanceCulled,frustumCulled,name,x,y,z}],visEngineOutOursIn,visEngineInOursOut,slots:[{slot,ptr,importance,score,desiredScale,budgetScale,pendingScale,renderedScale,demandMax,untouchedSamples,litMax,litTile,litSum,litReason,litSmoothed,litCapped,tile:{x,y,size,contentValid}}],classes:{full,half,quarter,eighth,sixteenth},atlas:{dim,capacityCells,occupancy,vramBytes},budget:{avgLightCostUs,avgRedrawsPerFrame,estPassMsPerFrame,frontAppendTotal,backOnlyAppendTotal,hemisphereReassignTotal,hemisphereDropTotal,passlessCasterSkipTotal,passlessSkipNoShadowShader,passlessSkipRefraction,passlessSkipAlphaBlend,passlessSkipFaded,staticBakesTotal,splitAccumAllTotal,splitAccumStaticOnlyTotal,splitAccumDynamicOnlyTotal,splitLatchMismatchTotal,splitLatchWindowTotal,splitWastedBakesTotal,scalePromotionRedraws,scaleDemotionRedrawsAvoided,scalePromotionRedundantAvoided,convertReEnableRun,convertReEnableSkipped,convertReEnableToleranceSkipped,originPinnedLights,warpsRun,warpsSkippedSubPixel,warpsSkippedOffscreen,warpsSkippedNoDemand,convertedLights,convertedStrictLights,passGuardChecksTotal,passGuardCycleSkipsTotal,passGuardFaultSkipsTotal,passGuardCapExceededTotal,passGuardCycleRepairsTotal,staleAccumulatesTotal,staleAfterRenderSkipTotal,stalePassClearsTotal,renderSkipSessionResetTotal,renderSkipPortalTransitionTotal,renderSkipTeardownWaitingTotal,renderSkipTeardownRaceTotal,passRegChecksTotal,passRegRingsTotal,stalePromotedTotal,passGuardRepairsPromotedTotal,passRegRingsPromotedTotal}}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. visibility audits every candidate light: engineCulled is the UpdateCamera verdict (frustrumCull reads 0xff for every rejection) split into exclusive causes hidden, shadowDistanceCulled and frustumCulled; ownInFrustum is an independent sphere-versus-side-planes test from the published view-projection (any eye in VR) that ignores the far plane; distance is the light centre to the nearest eye; visEngineOutOursIn counts lights the engine culled although their sphere touches the view frustum, visEngineInOursOut the reverse. slots covers occupied point-light pool slots (tile.size 0 = no atlas tile); demandMax and untouchedSamples are the GPU screen-demand reading and its zero streak; litSum is that demand weighted by the light's own shadow test, summed over the taps (lit area x brightness); litReason ORs 1 no shadow projection, 2 spot, 4 no tile yet, 8 fading in, 16 behind a hemisphere, 32 lit, 64 blocked; litSmoothed is litSum after the release filter and litCapped is the DemandTileCap latch holding the tile class at a quarter size; litMax and litTile are the best lit tap and its tile id and stay zero unless Shadow Demand Instrumentation is on; classes buckets renderedScale; atlas is all-zero when the shadow atlas is inactive; passGuard* count pass-chain guard activity during SCM shadow renders (cycles repaired in place, calls skipped when a repair failed or a link was unreadable, chains too long to prove); staleAccumulatesTotal counts lights accumulated in an earlier frame and never rendered since (staleAfterRenderSkipTotal: those whose accumulate frame was a render-function early exit; stalePassClearsTotal: times such a light's pass groups were unlinked before re-accumulating), renderSkip*Total count RenderScheduledShadowLights early exits by reason, *Promoted* count the subset of stale accumulates, in-place repairs and registration rings that involved a promoted (normal->shadow) light; passReg* count pass registrations checked and rings they closed (only while LightLimitFix tracePassRegistration is on); budget is the GPU-timestamp tracker (estPassMsPerFrame = avg cost x avg redraws, the REST perf A/B metric). scalePromotionRedraws counts tile-class promotions that alone forced a redraw, scaleDemotionRedrawsAvoided the demotions skipped because the retained larger tile already held that content; scalePromotionRedundantAvoided counts the promotions the previous pendingScale > renderedScale rule would have dirtied although the retained tile already held that class; convertReEnableRun counts engine EnableLight calls on converted (normal) lights and convertReEnableSkipped the calls skipped because pose, radius, fade, hidden state and portal graph were unchanged since the last enable, or (convertReEnableToleranceSkipped) because only flicker-scale drift occurred (position within 1 unit, radius within 2 percent, fade on the same side of the engine's 0.05 on/off threshold) and the staggered 8 to 15 frame refresh was not yet due; originPinnedLights counts lights currently rendering from their bake pose instead of the live pose (Pinned and Warped modes); warpsRun counts warped-mode static-tile seeds that passed the visibility gate and reprojected on the GPU, warpsSkippedOffscreen those skipped because the light's sphere is outside every eye frustum, warpsSkippedNoDemand those skipped because the light's measured screen demand stayed zero for 30 samples and warpsSkippedSubPixel those skipped because the projected edge error stayed under a pixel; convertedLights and convertedStrictLights count the lights currently converted to normal lights and how many of them use strict portal membership (the case where the re-enable also keys on rotation); passlessCasterSkipTotal counts casters dropped from the cull walk because the engine registers no shadow-map pass for them, split into effect/particle/water shader properties (passlessSkipNoShadowShader), refraction, alpha-blended lit meshes and faded (fade x material alpha below 1) meshes; each scale counter counts once per scale-change event, not once per frame the change stays pending. frontAppendTotal/backOnlyAppendTotal/hemisphereReassignTotal/hemisphereDropTotal count caster appends by destination list plus the wholly-behind casters the back-side fix reassigns to the back map or drops outright, and accumulate only across primed windows rather than the whole session. The scheduler fills this only while the settings menu is open or a dump was recently requested; calling this primes it, so if valid==false (idle) poll again after a frame (use inspect kind=openshaders frame_count to know a tick passed).; openshaders — Open Shaders engine state -> {plugin,frame_count,vr}. frame_count increases each render tick — use it as ground truth that a queued operation has had a frame to run.; profiler — Open Shaders GPU/CPU profiler snapshot -> {enabled,capturing,frame_count,capturedFrameCount,capturedGpuFrameCount,capturedCpuFrameCount,totalMs,cpuTotalMs,resolvedTotalMs,resolvedCpuTotalMs,acquiredSlots,peakAcquiredSlots,slotRefusals,maxTimers,timers:[{name,gpuMs,topLevelMs,avgMs,p95Ms,p99Ms,cpuMs,cpuAvgMs,cpuP95Ms,cpuP99Ms,hasGpu,hasCpu,activeGpu,activeCpu,historyHead,historyCount,cpuHistoryHead,cpuHistoryCount}]}. Calling this primes the next capture, so an idle first call may show stale data. CPU samples publish at their engine-frame boundary and pair with capturedCpuFrameCount, resolvedCpuTotalMs, cpuMs, and CPU history. GPU samples resolve independently through a three-slot query ring and pair with capturedGpuFrameCount, resolvedTotalMs, gpuMs, topLevelMs, and GPU history. gpuMs and its rolling statistics report self time with directly nested GPU passes removed. topLevelMs is the inclusive contribution from top-level intervals; resolvedTotalMs equals the sum of topLevelMs across timers. capturedFrameCount is a compatibility summary containing the newest frame published by either source; do not use it to pair both sources. totalMs and cpuTotalMs are live menu values that zero while idle. activeGpu and activeCpu describe the latest published frame for their own source. Each valid filtered capture cycle contributes exactly one history sample per matching known timer, including zero when that timer did not run. Same-name intervals are summed before one sample is pushed. acquiredSlots is the last completed GPU cycle's slot count; peakAcquiredSlots is its session high-water mark. slotRefusals is cumulative, and any nonzero value means a GPU interval lacked a slot, although a requested CPU sample is still retained. Enable or disable capture via openshaders.profiler.; shadercache — Open Shaders shader-cache status -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,recentFailures,diskHitTasks,digestHitTasks,digestMissTasks,contentStoreHitTasks,digestComputeCount,digestComputeTimeUs,frame_count,diskCacheHeld,featureSetChanged,featureSetRevertPending,featureSetCacheBackedUp,previousDiskCacheAvailable,cacheMismatches,previousCacheMismatches}. Poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished; watch failedTasks/currentFailedCount for failed compiles. recentFailures is the last 32 compile failures this session, each {key,path,error,epoch,frame} -- key is GetShaderString's cache key (shader class + merged feature #defines, identifying WHICH feature's shader broke without a separate lookup; for ImageSpace shaders the filename embedded in key can differ from path), path is the actual source file that was compiled, error is the compiler's own message (truncated to 2000 chars). digestHitTasks/digestMissTasks count disk-cache validity checks where the content-digest manifest matched (hit) or differed (miss); the later blob load or recompilation can still fail; digestComputeTimeUs is the cumulative microseconds spent computing content digests this session; contentDedupeTasks counts compiles skipped because an identical-bytecode task had already compiled the blob this session; contentStoreHitTasks counts compiles satisfied by the persistent content store; activeReuseTasks and previousReuseTasks count blobs kept from the active or previous cache because their recorded content key matched the current code. diskCacheHeld true means a feature-set mismatch (see cacheMismatches, each {kind,shortName,feature,detail,nowPresent}) is holding the whole disk cache this session -- resolve with openshaders.shadercache acceptRebuild or restorePrevious. previousDiskCacheAvailable/previousCacheMismatches describe the rollback slot (the pre-change cache) a restorePrevious call would swap back in..",
       "inputSchema": {
         "properties": {
           "formId": {
@@ -275,6 +281,10 @@
             "description": "refs enumerate: only refs within this distance of the player (0 = whole loaded grid); lights scope=scene: only lights within it (0 = no limit)",
             "type": "number"
           },
+          "reset": {
+            "description": "draws: begin a new counting window after this reading",
+            "type": "boolean"
+          },
           "scope": {
             "description": "lights: 'ref' (default) reads one reference's 3D; 'scene' lists every light the renderer is using, nearest the player first, each with the reference it hangs under; any other value is refused (400)",
             "enum": ["ref", "scene"],
@@ -282,10 +292,6 @@
           },
           "selected": {
             "description": "refs/lights: use the console-selected / crosshair ref instead",
-            "type": "boolean"
-          },
-          "reset": {
-            "description": "draws: begin a new counting window after this reading",
             "type": "boolean"
           }
         },
@@ -295,11 +301,11 @@
     },
     {
       "name": "game",
-      "description": "Save/load and list saves. action='list' returns { count, returned, truncated, saves: [{name, mtimeUnix}, ...] }, sorted newest-first (saves[0] is what 'loadLast' loads) — count is post-filter (how many matched), returned/saves are post-limit. 'filter' keeps only names containing a substring (case-insensitive; save names embed the location, e.g. 'Whiterun'), 'limit' caps how many are returned, 'detail'=true adds a 'meta' object per matched save (characterName, location, race, level, experience, playTime, saveNumber, saveType [inferred from the filename], screenshot, fileTimeUnix — read directly from the save's own .ess header, same bytes the vanilla Load menu shows, so it works even before anything has loaded) plus top-level metaAvailable/metaNote if none parsed; 'loadLast' loads the most recent save (a settled real-game state — avoids coc's heavy new-game init); 'load'/'save' take a 'name' ('load' skips the mod-mismatch confirmation modal). All but 'list' are fire-and-forget; watch lifecycle events / inspect playerLoaded for completion. 'advanceTime' (param 'hours', non-zero, may be negative) jumps the calendar directly — no need to fall back to console 'set timescale to N' and waiting real time — and returns { gameHour, daysPassed, day, month, year } read back the same tick; runs synchronously on the main thread. 'setTimeScale' (param 'scale', or 'freeze':true for 0) speeds up or slows down the game itself for 'holdMs' (default 60000) — which is what makes a replay or scenario run faster in wall time — then restores the previous scale; 0.1..3.0, up to 10.0 with 'allowHigh':true, and every request gets a 'generation' and one terminal snapshot { generation, state, requested, effective, owner, leased, leaseRemainingMs, reached, applied, admissionMs, waitedMs }. state is accepted (recorded, not yet handed to the engine), written (the engine has its value but is still ramping toward it), reached, expired (its lease ran out) or displaced (a later request or a release replaced it); applied = written or reached. It waits up to 'waitMs' (default 2000, 0..30000) after admission for reached / expired / displaced; admissionMs and waitedMs are reported apart. A request that has not reached is an answer, not an error, unless 'requireReached':true (504, the old behaviour). It is refused (409) while a recording or a capture is in flight, unless 'allowTimeScale':true. 'getTimeScale' returns { requested, effective, owner, leased, leaseRemainingMs } without changing anything. 'getDifficulty' returns { level, name } (0 Novice .. 5 Legendary); 'setDifficulty' (param 'level': 0-5 or the name, any case) sets it on the loaded player, as the Settings menu would, and returns the same read back.",
+      "description": "Save/load and list saves. action='list' returns { count, returned, truncated, saves: [{name, mtimeUnix}, ...] }, sorted newest-first (saves[0] is what 'loadLast' loads) — count is post-filter (how many matched), returned/saves are post-limit. 'filter' keeps only names containing a substring (case-insensitive; save names embed the location, e.g. 'Whiterun'), 'limit' caps how many are returned, 'detail'=true adds a 'meta' object per matched save (characterName, location, race, level, experience, playTime, saveNumber, saveType [inferred from the filename], screenshot, fileTimeUnix — read directly from the save's own .ess header, same bytes the vanilla Load menu shows, so it works even before anything has loaded) plus top-level metaAvailable/metaNote if none parsed; 'loadLast' loads the most recent save (a settled real-game state — avoids coc's heavy new-game init); 'load'/'save' take a 'name' ('load' skips the mod-mismatch confirmation modal). All but 'list' are fire-and-forget; watch lifecycle events / inspect playerLoaded for completion. 'advanceTime' (param 'hours', non-zero, may be negative) jumps the calendar directly — no need to fall back to console 'set timescale to N' and waiting real time — and returns { gameHour, daysPassed, day, month, year } read back the same tick; runs synchronously on the main thread. 'setTimeScale' (param 'scale', or 'freeze':true for 0) speeds up or slows down the game itself for 'holdMs' (default 60000) — which is what makes a replay or scenario run faster in wall time — then restores the previous scale; 0.1..3.0, up to 10.0 with 'allowHigh':true, and every request gets a 'generation' and one terminal snapshot { generation, state, requested, effective, owner, leased, leaseRemainingMs, reached, applied, admissionMs, waitedMs }. state is accepted (recorded, not yet handed to the engine), written (the engine has its value but is still ramping toward it), reached, expired (its lease ran out) or displaced (a later request or a release replaced it); applied = written or reached. It waits up to 'waitMs' (default 2000, 0..30000) after admission for reached / expired / displaced; admissionMs and waitedMs are reported apart. A request that has not reached is an answer, not an error, unless 'requireReached':true (504, the old behaviour). It is refused (409) while a recording or a capture is in flight, unless 'allowTimeScale':true. 'getTimeScale' returns { requested, effective, owner, leased, leaseRemainingMs } without changing anything. 'getDifficulty' returns { level, name } (0 Novice .. 5 Legendary); 'setDifficulty' (param 'level': 0-5 or the name, any case) sets it on the loaded player, as the Settings menu would, and returns the same read back. 'getAlwaysActive' / 'setAlwaysActive' (param 'enabled': boolean) read or set the engine's [General] bAlwaysActive live, so the game keeps running while its window is in the background; the INI file is not changed. Both return { alwaysActive, windowFocused }.",
       "inputSchema": {
         "properties": {
           "action": {
-            "description": "list | save | load | loadLast | advanceTime | getTimeScale | setTimeScale | getDifficulty | setDifficulty",
+            "description": "list | save | load | loadLast | advanceTime | getTimeScale | setTimeScale | getDifficulty | setDifficulty | getAlwaysActive | setAlwaysActive",
             "enum": [
               "list",
               "save",
@@ -309,7 +315,9 @@
               "getTimeScale",
               "setTimeScale",
               "getDifficulty",
-              "setDifficulty"
+              "setDifficulty",
+              "getAlwaysActive",
+              "setAlwaysActive"
             ],
             "type": "string"
           },
@@ -329,6 +337,10 @@
             "description": "list/load/loadLast: override the saves directory (default resolves from sLocalSavePath)",
             "type": "string"
           },
+          "enabled": {
+            "description": "setAlwaysActive: keep the game running while its window is in the background",
+            "type": "boolean"
+          },
           "filter": {
             "description": "list only: case-insensitive substring to match against save names",
             "type": "string"
@@ -345,12 +357,12 @@
             "description": "advanceTime: hours to add to the calendar (non-zero; negative rewinds within the current session)",
             "type": "number"
           },
+          "level": {
+            "description": "setDifficulty: 0-5 (Novice, Apprentice, Adept, Expert, Master, Legendary) or the level name, any case"
+          },
           "limit": {
             "description": "list only: cap the number of saves returned (newest-first); must be > 0 if given",
             "type": "integer"
-          },
-          "level": {
-            "description": "setDifficulty: 0-5 (Novice, Apprentice, Adept, Expert, Master, Legendary) or the level name, any case"
           },
           "name": {
             "description": "save file name (required for save/load; from action='list')",
@@ -369,49 +381,6 @@
             "type": "integer"
           }
         },
-        "type": "object"
-      }
-    },
-    {
-      "name": "actor",
-      "description": "Drive an NPC's idle animation. 'listIdles' (param 'formId' of a loaded NPC, optional 'filter' EditorID substring, 'limit' default 200) returns the idles that NPC can use right now as { editorId, formId, animEvent, animFile, plugin, loopMin, loopMax, replayDelay }. 'playIdle' (params 'formId', 'idle' EditorID or FormID, 'loop' default false, 'repeatMs' 250..60000 default 5000, 'freezeAi' default false) plays the idle on the NPC, which stands where it is under the do-nothing package; with loop:true it is replayed every repeatMs (the engine does not report when an idle ends, so set it to the clip's length) until 'stopIdle' or the NPC unloads, dies, or a load starts. Idles only animate while the NPC's AI runs, so a loop keeps the AI on; freezeAi (single play only) turns the AI back off after the pose settles. 'stopIdle' ends any loop and returns the NPC to its default idle (ResetRoot), optional 'freezeAi'. 'status' returns whether a loop is active and its idle. playIdle and stopIdle return { ref, ok, ... }; every action refuses (409) the player, a dead or unloaded NPC. Main thread; SE and VR.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "description": "listIdles | playIdle | stopIdle | status",
-            "enum": ["listIdles", "playIdle", "stopIdle", "status"],
-            "type": "string"
-          },
-          "filter": {
-            "description": "listIdles: case-insensitive EditorID substring",
-            "type": "string"
-          },
-          "formId": {
-            "description": "the NPC reference (FormID like 0x000A2C8F, or EditorID)",
-            "type": "string"
-          },
-          "freezeAi": {
-            "description": "playIdle (single play) or stopIdle: turn the NPC's AI off again once it settles; refused with loop:true",
-            "type": "boolean"
-          },
-          "idle": {
-            "description": "playIdle: the idle's EditorID or FormID",
-            "type": "string"
-          },
-          "limit": {
-            "description": "listIdles: most idles to return (default 200)",
-            "type": "integer"
-          },
-          "loop": {
-            "description": "playIdle: keep replaying the idle once the NPC stops running it (default false)",
-            "type": "boolean"
-          },
-          "repeatMs": {
-            "description": "playIdle with loop: milliseconds between replays, 250..60000 (default 5000)",
-            "type": "integer"
-          }
-        },
-        "required": ["action", "formId"],
         "type": "object"
       }
     },
@@ -492,18 +461,18 @@
           "distance": {
             "description": "frame: camera distance in world units (default 1.4 x the reference's height)",
             "exclusiveMinimum": 0,
-            "maximum": 100000.0,
+            "maximum": 100000,
             "type": "number"
           },
           "distanceScale": {
             "description": "frame: multiplier on the default distance (default 1)",
             "exclusiveMinimum": 0,
-            "maximum": 1000.0,
+            "maximum": 1000,
             "type": "number"
           },
           "eyeHeight": {
             "description": "frame: camera height as a fraction of the reference's height (default 0.85)",
-            "maximum": 2.0,
+            "maximum": 2,
             "minimum": 0,
             "type": "number"
           },
@@ -531,8 +500,8 @@
             "type": "string"
           },
           "right": {
-            "type": "number",
-            "description": "orbit: camera offset to the side in units (with up; omit both to keep the game's own)"
+            "description": "orbit: camera offset to the side in units (with up; omit both to keep the game's own)",
+            "type": "number"
           },
           "side": {
             "description": "frame: which side to look from (default front); front/back/left/right are relative to the reference's heading",
@@ -540,8 +509,8 @@
             "type": "string"
           },
           "up": {
-            "type": "number",
-            "description": "orbit: camera offset up in units"
+            "description": "orbit: camera offset up in units",
+            "type": "number"
           },
           "x": {
             "description": "drive: world X (requires free-cam mode)",
@@ -556,63 +525,18 @@
             "type": "number"
           },
           "yawDeg": {
-            "type": "number",
-            "description": "orbit: degrees round the player (0 behind, 180 in front; default 180)"
+            "description": "orbit: degrees round the player (0 behind, 180 in front; default 180)",
+            "type": "number"
           },
           "z": {
             "description": "drive: world Z (requires free-cam mode)",
             "type": "number"
           },
           "zoom": {
-            "type": "number",
-            "minimum": -1,
+            "description": "orbit: the game's third-person zoom offset (omit to keep it)",
             "maximum": 1,
-            "description": "orbit: the game's third-person zoom offset (omit to keep it)"
-          }
-        },
-        "type": "object"
-      }
-    },
-    {
-      "name": "papyrus",
-      "description": "Inspect the live Papyrus surface and invoke global functions, returning the value. action='list' returns loaded script class names { total, returned, truncated, scripts } (optional 'filter' substring, 'limit' default 200). 'describe' takes a 'script' (class name) and returns its { globalFunctions, memberFunctions, properties }, each function with params + returnType — use it to discover what 'call' can invoke. 'call' runs a function via the VM: 'script' + 'function' (+ optional 'args' array, 'timeoutMs' default 3000) and returns { called, returned, returnedType }. Omitted trailing optional args are filled from a table of known Papyrus defaults (PlaceAtMe aiCount=1, MoveTo abMatchRotation=true, ...) when script, function, position, name and type all match; any other omitted arg refuses the call (400, nothing runs) unless 'fillNeutral':true, which sends None/0/false/\"\" instead. Fills are listed under 'filledArgs' (source table|neutral) with a 'warning' for any neutral guess. A 504 says whether the call was already dispatched (it may still run). Unlike console 'cgf', this hands the return value back (e.g. Utility.GetCurrentGameTime → a Float). Pass 'self' to call a MEMBER function on a target: { \"form\": \"0x14 | EditorID\" } targets any form, or \"selected\" uses the console/crosshair ref (set via prid); without 'self' only global/native functions are callable. args and returns support bool/number/string, { \"form\": … } (a form return resolves to { formId, formType, editorId, name }), arrays of scalars, and null for None (object and array params).",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "description": "list | describe | call",
-            "enum": ["list", "describe", "call"],
-            "type": "string"
-          },
-          "args": {
-            "description": "call: arguments; each a bool/number/string, { \"form\": \"0x14 | EditorID\" }, an array of scalars, or null for None (object and array params)",
-            "type": "array"
-          },
-          "fillNeutral": {
-            "description": "call: send None/0/false/\"\" for omitted args the defaults table does not know, instead of refusing the call (default false)",
-            "type": "boolean"
-          },
-          "filter": {
-            "description": "list: case-insensitive substring to match class names",
-            "type": "string"
-          },
-          "function": {
-            "description": "call: the function name, e.g. GetCurrentGameTime or GetActorValue",
-            "type": "string"
-          },
-          "limit": {
-            "description": "list: max class names to return (default 200)",
-            "type": "integer"
-          },
-          "script": {
-            "description": "describe/call: the Papyrus script class name, e.g. Utility, Game, Actor",
-            "type": "string"
-          },
-          "self": {
-            "description": "call: target a member function — { \"form\": \"0x14 | EditorID\" } or \"selected\" (console/crosshair ref). Omit for global/native functions."
-          },
-          "timeoutMs": {
-            "description": "call: ms to wait for the result before 504 (default 3000)",
-            "type": "integer"
+            "minimum": -1,
+            "type": "number"
           }
         },
         "type": "object"
@@ -671,7 +595,8 @@
               "native",
               "providers",
               "extensions",
-              "openshaders"
+              "openshaders",
+              "openshaders.native"
             ],
             "type": "string"
           },
@@ -714,6 +639,88 @@
           "variant": {
             "description": "variant under test, for correlation (default 'default')",
             "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "papyrus",
+      "description": "Inspect the live Papyrus surface and invoke global functions, returning the value. action='list' returns loaded script class names { total, returned, truncated, scripts } (optional 'filter' substring, 'limit' default 200). 'describe' takes a 'script' (class name) and returns its { globalFunctions, memberFunctions, properties }, each function with params + returnType — use it to discover what 'call' can invoke. 'call' runs a function via the VM: 'script' + 'function' (+ optional 'args' array, 'timeoutMs' default 3000) and returns { called, returned, returnedType }. Omitted trailing optional args are filled from a table of known Papyrus defaults (PlaceAtMe aiCount=1, MoveTo abMatchRotation=true, ...) when script, function, position, name and type all match; any other omitted arg refuses the call (400, nothing runs) unless 'fillNeutral':true, which sends None/0/false/\"\" instead. Fills are listed under 'filledArgs' (source table|neutral) with a 'warning' for any neutral guess. A 504 says whether the call was already dispatched (it may still run). Unlike console 'cgf', this hands the return value back (e.g. Utility.GetCurrentGameTime → a Float). Pass 'self' to call a MEMBER function on a target: { \"form\": \"0x14 | EditorID\" } targets any form, or \"selected\" uses the console/crosshair ref (set via prid); without 'self' only global/native functions are callable. args and returns support bool/number/string, { \"form\": … } (a form return resolves to { formId, formType, editorId, name }), arrays of scalars, and null for None (object and array params).",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "description": "list | describe | call",
+            "enum": ["list", "describe", "call"],
+            "type": "string"
+          },
+          "args": {
+            "description": "call: arguments; each a bool/number/string, { \"form\": \"0x14 | EditorID\" }, an array of scalars, or null for None (object and array params)",
+            "type": "array"
+          },
+          "fillNeutral": {
+            "description": "call: send None/0/false/\"\" for omitted args the defaults table does not know, instead of refusing the call (default false)",
+            "type": "boolean"
+          },
+          "filter": {
+            "description": "list: case-insensitive substring to match class names",
+            "type": "string"
+          },
+          "function": {
+            "description": "call: the function name, e.g. GetCurrentGameTime or GetActorValue",
+            "type": "string"
+          },
+          "limit": {
+            "description": "list: max class names to return (default 200)",
+            "type": "integer"
+          },
+          "script": {
+            "description": "describe/call: the Papyrus script class name, e.g. Utility, Game, Actor",
+            "type": "string"
+          },
+          "self": {
+            "description": "call: target a member function — { \"form\": \"0x14 | EditorID\" } or \"selected\" (console/crosshair ref). Omit for global/native functions."
+          },
+          "timeoutMs": {
+            "description": "call: ms to wait for the result before 504 (default 3000)",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "scenario",
+      "description": "Run a timed sequence of steps server-side (reproducible tests/benchmarks) and return a per-step transcript. action='run' (default, requires 'steps'). Each step is one of: {\"tool\":\"<name>\",\"args\":{…}} dispatch any registered tool (e.g. console, game); {\"wait\":<ms>} fixed pacing; {\"waitFor\":<event>,…} block on a Skyrim EVENT — string shorthand (\"postLoadGame\"/\"saveGame\"/\"newGame\"/\"preLoadGame\"/\"dataLoaded\"/\"deleteGame\", or \"menuOpened\"/\"menuClosed\" with a \"name\"), or {\"topic\":\"…\",\"match\":{…}}; {\"waitUntil\":\"playerLoaded\"|\"noModal\"|\"noMenu\"|\"noBlockingMenu\"|\"weaponDrawn\"|\"castingArtLeft\"|\"castingArtRight\"|\"handsReady\"} poll live state (handsReady: weapon settled drawn and every spell hand finished its art attach sequence; not proof a rendered frame shows the art — wait on it after EquipSpell + DrawWeapon before a capture). PREFER waitFor over a fixed wait — e.g. wait for postLoadGame to know a load truly finished. Optional: repeat (≤1000), continueOnError, async. By default action='run' BLOCKS the request for the run's duration and returns the transcript directly — the primary use is asserting against that return value in the same call. Pass async=true to instead get {queued:true, runId, steps} immediately and poll action='status'+runId (returns {done:false} while running, or {done:true, ok, result} / {done:true, ok:false, error} once finished — runId is shared with record{action:'replay'}, so either tool's status action resolves either tool's runId). Publishes scenario.started/scenario.step/scenario.finished events (index/total/kind/tool on each step) in both modes — poll GET /api/events to follow a run; if the game wedges mid-run, the last scenario.step names the culprit step.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "description": "run (default, requires 'steps') | status (requires 'runId')",
+            "enum": ["run", "status"],
+            "type": "string"
+          },
+          "async": {
+            "description": "run: return {queued:true, runId} immediately and run in the background (default false); true does not block",
+            "type": "boolean"
+          },
+          "continueOnError": {
+            "description": "run: keep going after a failed/timed-out step instead of aborting (default false)",
+            "type": "boolean"
+          },
+          "repeat": {
+            "description": "run: run the whole step list N times (default 1, max 1000)",
+            "type": "integer"
+          },
+          "runId": {
+            "description": "status: poll an async run started earlier (from run's 'runId')",
+            "type": "integer"
+          },
+          "steps": {
+            "description": "run: ordered steps; each is one of tool/wait/waitFor/waitUntil (see description)",
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
           }
         },
         "type": "object"

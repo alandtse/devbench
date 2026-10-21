@@ -96,3 +96,11 @@ TEST_CASE("handsReady needs a settled draw and every spell hand's attach sequenc
 	CHECK(!HandsReady(h));
 	CHECK(!ArtAttachedOrNoSpell(h.left));
 }
+
+TEST_CASE("a background warning needs an unfocused window with bAlwaysActive known to be off")
+{
+	CHECK(BackgroundWarning(true, false).empty());
+	CHECK(BackgroundWarning(false, true).empty());
+	CHECK(BackgroundWarning(false, std::nullopt).empty());
+	CHECK(!BackgroundWarning(false, false).empty());
+}

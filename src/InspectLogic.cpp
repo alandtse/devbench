@@ -56,4 +56,12 @@ namespace dvb::InspectLogic
 	{
 		return a_hands.settledDrawn && HandReady(a_hands.left) && HandReady(a_hands.right);
 	}
+
+	std::string BackgroundWarning(bool a_focused, std::optional<bool> a_alwaysActive)
+	{
+		if (a_focused || !a_alwaysActive || *a_alwaysActive)
+			return {};
+		return "the game window is in the background and bAlwaysActive is off, so the engine pauses; "
+			   "run game setAlwaysActive or set [General] bAlwaysActive=1";
+	}
 }

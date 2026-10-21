@@ -1,6 +1,7 @@
 #include "Tools.h"
 #include "ActorIdle.h"
 #include "ActorIdleLogic.h"
+#include "BackgroundRun.h"
 #include "CameraFrameLogic.h"
 #include "CameraOrbit.h"
 #include <RE/T/ThirdPersonState.h>
@@ -522,6 +523,22 @@ namespace dvb
 			if (action == "getTimeScale")
 				return TimeScaleControl::Status();
 
+			if (action == "getAlwaysActive" || action == "setAlwaysActive") {
+				std::optional<bool> enabled;
+				if (action == "setAlwaysActive") {
+					const auto enabledArg = a_args.find("enabled");
+					if (enabledArg == a_args.end() || !enabledArg->is_boolean())
+						throw ToolError(400, "game setAlwaysActive: 'enabled' is required (boolean)");
+					enabled = enabledArg->get<bool>();
+				}
+				return MainThread::RunAndWait([enabled]() -> json {
+					if (enabled && !BackgroundRun::SetAlwaysActive(*enabled))
+						throw ToolError(503, "bAlwaysActive:General is not available in this runtime");
+					const auto current = BackgroundRun::AlwaysActive();
+					return json{ { "alwaysActive", current ? json(*current) : json(nullptr) }, { "windowFocused", BackgroundRun::WindowFocused() } };
+				});
+			}
+
 			if (action == "getDifficulty" || action == "setDifficulty") {
 				std::optional<int> level;
 				if (action == "setDifficulty") {
@@ -665,7 +682,7 @@ namespace dvb
 					out["note"] = kLoadNote;
 				return out;
 			}
-			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|advanceTime|getTimeScale|setTimeScale|getDifficulty|setDifficulty)", action));
+			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|advanceTime|getTimeScale|setTimeScale|getDifficulty|setDifficulty|getAlwaysActive|setAlwaysActive)", action));
 		}
 
 		bool ContainsCI(const std::string& a_hay, const std::string& a_needle);  // defined below (near CheckState)
@@ -1359,16 +1376,23 @@ namespace dvb
 			}
 
 			if (kind == "state") {
-				json out = MainThread::RunAndWait([]() -> json {
+				json       out = MainThread::RunAndWait([]() -> json {
 					auto*      pc = RE::PlayerCharacter::GetSingleton();
 					const bool loaded = pc && pc->Get3D() != nullptr;
+					const auto alwaysActive = BackgroundRun::AlwaysActive();
 					return json{
 						{ "plugin", "devbench" },
 						{ "version", DEVBENCH_VERSION_STRING },
 						{ "playerLoaded", loaded },
 						{ "frame", game::CurrentFrame() },
+						{ "alwaysActive", alwaysActive ? json(*alwaysActive) : json(nullptr) },
 					};
 				});
+				const bool focused = BackgroundRun::WindowFocused();
+				out["windowFocused"] = focused;
+				const auto alwaysActive = out["alwaysActive"].is_boolean() ? std::optional<bool>(out["alwaysActive"].get<bool>()) : std::nullopt;
+				if (auto warning = InspectLogic::BackgroundWarning(focused, alwaysActive); !warning.empty())
+					out["warning"] = std::move(warning);
 				// pid/port/exe/vr identify which instance answered — with multiple games on
 				// adjacent auto-iterated ports, a caller can confirm it's talking to the
 				// intended one instead of silently misattaching. Shared with /api/health.
@@ -2991,7 +3015,9 @@ namespace dvb
 			inspect.description =
 				"Read live game/plugin state. Runs on the main thread and returns the value "
 				"synchronously (times out if the game is mid-load / not pumping tasks). kinds: "
-				"'state' → { plugin, version, vr, playerLoaded, frame, pid, port, exe } — pid/port/exe "
+				"'state' → { plugin, version, vr, playerLoaded, frame, pid, port, exe, windowFocused, alwaysActive "
+				"(null when unavailable), warning? } — warning appears when the window is in the background with "
+				"bAlwaysActive off, which pauses the engine; pid/port/exe "
 				"identify the answering instance, so a multi-instance session (e.g. SE + VR both "
 				"running, on adjacent auto-iterated ports) can confirm it's talking to the intended "
 				"one; 'vm' → Papyrus VM health "
@@ -3188,11 +3214,14 @@ namespace dvb
 			"in flight, unless 'allowTimeScale':true. 'getTimeScale' returns { requested, effective, owner, "
 			"leased, leaseRemainingMs } without changing anything. 'getDifficulty' returns { level, name } "
 			"(0 Novice .. 5 Legendary); 'setDifficulty' (param 'level': 0-5 or the name, any case) sets it "
-			"on the loaded player, as the Settings menu would, and returns the same read back.";
+			"on the loaded player, as the Settings menu would, and returns the same read back. 'getAlwaysActive' / "
+			"'setAlwaysActive' (param 'enabled': boolean) read or set the engine's [General] bAlwaysActive live, so the game "
+			"keeps running while its window is in the background; the INI file is not changed. Both return "
+			"{ alwaysActive, windowFocused }.";
 		game.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast", "advanceTime", "getTimeScale", "setTimeScale", "getDifficulty", "setDifficulty" }) }, { "description", "list | save | load | loadLast | advanceTime | getTimeScale | setTimeScale | getDifficulty | setDifficulty" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast", "advanceTime", "getTimeScale", "setTimeScale", "getDifficulty", "setDifficulty", "getAlwaysActive", "setAlwaysActive" }) }, { "description", "list | save | load | loadLast | advanceTime | getTimeScale | setTimeScale | getDifficulty | setDifficulty | getAlwaysActive | setAlwaysActive" } } },
 								{ "name", json{ { "type", "string" }, { "description", "save file name (required for save/load; from action='list')" } } },
 								{ "dir", json{ { "type", "string" }, { "description", "list/load/loadLast: override the saves directory (default resolves from sLocalSavePath)" } } },
 								{ "filter", json{ { "type", "string" }, { "description", "list only: case-insensitive substring to match against save names" } } },
@@ -3205,6 +3234,7 @@ namespace dvb
 								{ "allowHigh", json{ { "type", "boolean" }, { "description", "setTimeScale: permit a scale above 3.0, up to 10.0" } } },
 								{ "allowTimeScale", json{ { "type", "boolean" }, { "description", "setTimeScale: change the scale even while a recording or capture is in flight (default false)" } } },
 								{ "waitMs", json{ { "type", "integer" }, { "description", "setTimeScale: how long to wait, after admission, for this request to settle (reached, expired or displaced) before answering (default 2000, 0..30000)" } } },
+								{ "enabled", json{ { "type", "boolean" }, { "description", "setAlwaysActive: keep the game running while its window is in the background" } } },
 								{ "level", json{ { "description", "setDifficulty: 0-5 (Novice, Apprentice, Adept, Expert, Master, Legendary) or the level name, any case" } } },
 								{ "requireReached", json{ { "type", "boolean" }, { "description", "setTimeScale: answer 504 when the request has not reached the engine within waitMs, as before waitMs existed (default false: answer with its state)" } } },
 							} },
