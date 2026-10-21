@@ -104,4 +104,8 @@ namespace dvb::InspectLogic
 	/// so a finished sequence follows that equip. It does not compare the attached model with the
 	/// spell, and it is not proof that a rendered frame shows the art.
 	bool HandsReady(const HandsObservation& a_hands);
+
+	/// Why tools that need frames may stall: the game window is in the background and the engine is not
+	/// set to keep running there. Empty when nothing is wrong or bAlwaysActive could not be read.
+	std::string BackgroundWarning(bool a_focused, std::optional<bool> a_alwaysActive);
 }

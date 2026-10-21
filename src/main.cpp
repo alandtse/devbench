@@ -1,5 +1,6 @@
 #include "ActorIdle.h"
 #include "Autorun.h"
+#include "BackgroundRun.h"
 #include "CameraOrbit.h"
 #include "Capture.h"
 #include "Config.h"
@@ -151,6 +152,12 @@ namespace
 		// is inert if its framework isn't installed; both drive devbench via dvb::RunTool, so they
 		// need the server (g_server). SMF and FUCK are independent — host either, both, or neither.
 		if (a_msg->type == SKSE::MessagingInterface::kDataLoaded && g_server) {
+			if (g_config.alwaysActive) {
+				if (dvb::BackgroundRun::SetAlwaysActive(true))
+					logs::info("devbench: bAlwaysActive forced on (alwaysActive config)");
+				else
+					logs::warn("devbench: alwaysActive requested but bAlwaysActive:General is unavailable");
+			}
 			dvb::UI::Register();
 			dvb::UI::RegisterFuck();
 		}
