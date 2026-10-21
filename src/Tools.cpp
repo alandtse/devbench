@@ -1379,17 +1379,18 @@ namespace dvb
 				json       out = MainThread::RunAndWait([]() -> json {
 					auto*      pc = RE::PlayerCharacter::GetSingleton();
 					const bool loaded = pc && pc->Get3D() != nullptr;
+					const auto alwaysActive = BackgroundRun::AlwaysActive();
 					return json{
 						{ "plugin", "devbench" },
 						{ "version", DEVBENCH_VERSION_STRING },
 						{ "playerLoaded", loaded },
 						{ "frame", game::CurrentFrame() },
+						{ "alwaysActive", alwaysActive ? json(*alwaysActive) : json(nullptr) },
 					};
 				});
 				const bool focused = BackgroundRun::WindowFocused();
-				const auto alwaysActive = BackgroundRun::AlwaysActive();
 				out["windowFocused"] = focused;
-				out["alwaysActive"] = alwaysActive ? json(*alwaysActive) : json(nullptr);
+				const auto alwaysActive = out["alwaysActive"].is_boolean() ? std::optional<bool>(out["alwaysActive"].get<bool>()) : std::nullopt;
 				if (auto warning = InspectLogic::BackgroundWarning(focused, alwaysActive); !warning.empty())
 					out["warning"] = std::move(warning);
 				// pid/port/exe/vr identify which instance answered — with multiple games on
@@ -3014,7 +3015,9 @@ namespace dvb
 			inspect.description =
 				"Read live game/plugin state. Runs on the main thread and returns the value "
 				"synchronously (times out if the game is mid-load / not pumping tasks). kinds: "
-				"'state' → { plugin, version, vr, playerLoaded, frame, pid, port, exe } — pid/port/exe "
+				"'state' → { plugin, version, vr, playerLoaded, frame, pid, port, exe, windowFocused, alwaysActive "
+				"(null when unavailable), warning? } — warning appears when the window is in the background with "
+				"bAlwaysActive off, which pauses the engine; pid/port/exe "
 				"identify the answering instance, so a multi-instance session (e.g. SE + VR both "
 				"running, on adjacent auto-iterated ports) can confirm it's talking to the intended "
 				"one; 'vm' → Papyrus VM health "

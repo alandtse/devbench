@@ -126,7 +126,8 @@ namespace dvb
 			cfg.captureSettleMs = j.value("captureSettleMs", cfg.captureSettleMs);
 			cfg.stallWatchdogMs = j.value("stallWatchdogMs", cfg.stallWatchdogMs);
 			cfg.strictToolArgs = j.value("strictToolArgs", cfg.strictToolArgs);
-			cfg.alwaysActive = j.value("alwaysActive", cfg.alwaysActive);
+			if (const auto it = j.find("alwaysActive"); it != j.end() && it->is_boolean())
+				cfg.alwaysActive = it->get<bool>();
 
 			// Migrate forward: if the file predates any key (e.g. an install from before
 			// the record hotkeys existed), rewrite it so the new keys appear with their
