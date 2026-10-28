@@ -2659,7 +2659,11 @@ namespace dvb
 				// Per-repetition, not per-run: a scene mismatch on rep N must not poison rep N+1's
 				// captures if rep N+1's own scene assert succeeds.
 				bool runSceneMismatch = false;
+				// A waitFor right after a waitFor resumes from the event the previous one matched.
+				std::optional<uint64_t> chainedSince;
 				for (size_t i = 0; i < steps.size() && !aborted; ++i) {
+					// Taken by every step: only a waitFor branch that runs and matches sets it again.
+					const std::optional<uint64_t> prevWaitForSince = std::exchange(chainedSince, std::nullopt);
 					if (a_options.beforeStep)
 						a_options.beforeStep(i);
 					const json& step = steps[i];
@@ -2765,8 +2769,8 @@ namespace dvb
 							// Optional: auto-answer a matching modal each poll (e.g. the content-mismatch
 							// box a restore raises before postLoadGame can fire).
 							const std::string acceptBody = step.value("acceptModal", json::object()).value("matchBody", std::string{});
-							// Only events published after this step begins count.
-							uint64_t   since = a_events.HeadSeq();
+							// Only events published after this step begins (or after the previous waitFor's match) count.
+							uint64_t   since = prevWaitForSince.value_or(a_events.HeadSeq());
 							bool       satisfied = false;
 							const auto deadline = steady_clock::now() + milliseconds(timeoutMs);
 							while (steady_clock::now() < deadline) {
@@ -2784,7 +2788,9 @@ namespace dvb
 								std::this_thread::sleep_for(milliseconds(pollMs));
 							}
 							r["satisfied"] = satisfied;
-							if (!satisfied) {
+							if (satisfied)
+								chainedSince = since;
+							else {
 								r["timedOut"] = true;
 								stepFailed = true;
 							}
