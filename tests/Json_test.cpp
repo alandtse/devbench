@@ -28,6 +28,14 @@ TEST_CASE("Utf8Text maps the 0x80-0x9F block, not Latin-1")
 	CHECK(dvb::Utf8Text("\x81") == "\xC2\x81");                                  // a hole keeps its C1 code point
 }
 
+TEST_CASE("Utf8Text keeps the UTF-8 parts of mixed text")
+{
+	// a UTF-8 name and dash formatted with a Windows-1252 path
+	CHECK(dvb::Utf8Text("R\xC3\xA1n \xE2\x80\x94 Caf\xE9") == "R\xC3\xA1n \xE2\x80\x94 Caf\xC3\xA9");
+	CHECK(dvb::Utf8Text("\xE2\x80") == "\xC3\xA2\xE2\x82\xAC");              // a cut-off sequence is Windows-1252
+	CHECK(dvb::Utf8Text("\xED\xA0\x80") == "\xC3\xAD\xC2\xA0\xE2\x82\xAC");  // no surrogates
+}
+
 TEST_CASE("MCP content of a Windows-1252 payload serializes")
 {
 	const json obj = dvb::ToContentBlocks(json{ { "name", "R\xE1n" } });

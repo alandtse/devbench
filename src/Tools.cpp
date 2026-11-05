@@ -422,7 +422,7 @@ namespace dvb
 				auto           entries = EnumerateSaves(saveDir);  // already newest-first by mtime
 				if (const std::string filter = a_args.value("filter", std::string{}); !filter.empty()) {
 					const std::string needle = Lower(filter);
-					std::erase_if(entries, [&](const SaveEntry& s) { return Lower(s.name).find(needle) == std::string::npos; });
+					std::erase_if(entries, [&](const SaveEntry& s) { return Lower(Utf8Text(s.name)).find(needle) == std::string::npos; });
 				}
 				const size_t matched = entries.size();  // post-filter, pre-limit — see count/truncated below
 				if (a_args.contains("limit")) {
@@ -640,7 +640,7 @@ namespace dvb
 				if (saves.empty())
 					throw ToolError(404, std::format("no .ess saves in {}", saveDir.string()));
 				const std::string name = saves.front().name;
-				Recording::NoteLoadEntry(name);  // reproducible entry point for a later recording
+				Recording::NoteLoadEntry(Utf8Text(name));  // reproducible entry point for a later recording
 				task->AddTask([name]() {
 					if (auto* m = RE::BGSSaveLoadManager::GetSingleton())
 						m->Load(name.c_str(), false);
@@ -653,15 +653,17 @@ namespace dvb
 				if (name.empty())
 					throw ToolError(400, std::format("action '{}' requires a 'name'", action));
 				const bool isSave = (action == "save");
+				auto       file = name;
 				if (!isSave) {
 					// Validate the save exists rather than silently queueing a no-op load
 					// (a bare {queued:true} on a bad name is a cold-start trap for agents).
 					const fs::path saveDir = ResolveSaveDir(a_args);
 					const auto     saves = EnumerateSaves(saveDir);
-					const bool     exists = std::any_of(saves.begin(), saves.end(),
-						[&](const SaveEntry& s) { return s.name == name; });
-					if (!exists)
+					const auto     it = std::find_if(saves.begin(), saves.end(),
+						[&](const SaveEntry& s) { return Utf8Text(s.name) == name; });
+					if (it == saves.end())
 						throw ToolError(404, std::format("save '{}' not found in {} — use action='list' for valid names", name, saveDir.string()));
+					file = it->name;
 					Recording::NoteLoadEntry(name);  // reproducible entry point for a later recording
 				}
 				if (isSave) {
@@ -669,11 +671,11 @@ namespace dvb
 					// against the main thread's VM lock, so use SKSE's save request.
 					Papyrus::QueueCall(json{ { "script", "Game" }, { "function", "SaveGame" }, { "args", json::array({ name }) } });
 				} else {
-					task->AddTask([name]() {
+					task->AddTask([file]() {
 						auto* m = RE::BGSSaveLoadManager::GetSingleton();
 						if (!m)
 							return;
-						m->Load(name.c_str(), false);  // checkForMods=false skips the mod-mismatch modal
+						m->Load(file.c_str(), false);  // checkForMods=false skips the mod-mismatch modal
 					});
 				}
 				logs::info("devbench: game {} '{}'", action, name);
