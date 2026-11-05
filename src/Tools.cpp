@@ -805,7 +805,7 @@ namespace dvb
 						auto* data = RE::MessageBoxMenu::GetCurrentMessageBoxData();
 						if (!data)
 							return json{ { "accepted", false }, { "reason", "no active MessageBoxMenu" } };
-						if (!data->bodyText.c_str() || !ContainsCI(data->bodyText.c_str(), matchBody))
+						if (!data->bodyText.c_str() || !ContainsCI(Utf8Text(data->bodyText.c_str()), matchBody))
 							return json{ { "accepted", false }, { "reason", "body did not match matchBody" } };
 						// Non-cancel button, but never out of range: fall back to 0 on a one-button box.
 						const int pick = (data->cancelButtonIndex == 0 && data->buttonText.size() > 1) ? 1 : 0;
@@ -2384,7 +2384,7 @@ namespace dvb
 			try {
 				return MainThread::RunAndWait([&a_matchBody]() -> json {
 					auto* data = RE::MessageBoxMenu::GetCurrentMessageBoxData();
-					if (!data || !data->bodyText.c_str() || !ContainsCI(data->bodyText.c_str(), a_matchBody))
+					if (!data || !data->bodyText.c_str() || !ContainsCI(Utf8Text(data->bodyText.c_str()), a_matchBody))
 						return false;
 					RE::MessageBoxMenu::SelectOption((data->cancelButtonIndex == 0 && data->buttonText.size() > 1) ? 1 : 0);
 					return true;
