@@ -11,7 +11,7 @@
 // direct synchronous call.
 namespace dvb::MainThread
 {
-	json RunAndWait(std::function<json()> a_fn, std::chrono::milliseconds, const std::atomic<bool>*)
+	json RunAndWait(std::function<json()> a_fn, std::chrono::milliseconds, const std::atomic<bool>*, Queue)
 	{
 		return a_fn();
 	}

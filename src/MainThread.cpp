@@ -21,7 +21,7 @@ namespace
 
 namespace dvb::MainThread
 {
-	json RunAndWait(std::function<json()> a_fn, std::chrono::milliseconds a_timeout, const std::atomic<bool>* a_keepWaiting)
+	json RunAndWait(std::function<json()> a_fn, std::chrono::milliseconds a_timeout, const std::atomic<bool>* a_keepWaiting, Queue a_queue)
 	{
 		auto* task = SKSE::GetTaskInterface();
 		if (!task)
@@ -34,7 +34,7 @@ namespace dvb::MainThread
 		auto       future = invocation->GetFuture();
 
 		g_pendingTasks.fetch_add(1, std::memory_order_relaxed);
-		task->AddTask([invocation]() {
+		auto run = [invocation]() {
 			// Stamp completion + drop the pending count on the main thread whether fn()
 			// returns or throws — a routine ToolError must not leave the markers looking
 			// like a stalled queue.
@@ -47,7 +47,11 @@ namespace dvb::MainThread
 				}
 			} finally;
 			invocation->Run();
-		});
+		};
+		if (a_queue == Queue::kUi)
+			task->AddUITask(std::move(run));
+		else
+			task->AddTask(std::move(run));
 
 		// Slice the wait so a caller that withdraws interest (a_keepWaiting clears) doesn't
 		// block the full timeout — e.g. the recorder stopping while the main thread is stalled
