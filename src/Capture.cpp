@@ -4,6 +4,7 @@
 #include "Config.h"
 #include "EventBus.h"
 #include "GameState.h"
+#include "Json.h"
 #include "MainThread.h"
 #include "Ssim.h"
 #include "TimeScaleControl.h"
@@ -301,7 +302,7 @@ namespace dvb::Capture
 			fs::create_directories(sidecar.parent_path(), ec);
 			std::ofstream out(sidecar, std::ios::trunc);
 			if (out)
-				out << a_result.dump(2) << '\n';
+				out << Dump(a_result, 2) << '\n';
 			else
 				logs::warn("devbench capture: could not write sidecar {}", sidecar.string());
 		}

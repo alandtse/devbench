@@ -649,7 +649,7 @@ namespace dvb::Papyrus
 					dispatch(RE::BSTSmartPointer<BSScript::IStackCallbackFunctor>(new CallFunctor(state)));
 					std::string names;
 					for (const auto& f : *filled)
-						names += std::format("{}{}={} ({})", names.empty() ? "" : ", ", f.value("name", std::string{}), f.value("value", json()).dump(), f.value("source", std::string{}));
+						names += std::format("{}{}={} ({})", names.empty() ? "" : ", ", f.value("name", std::string{}), Dump(f.value("value", json())), f.value("source", std::string{}));
 					std::lock_guard<std::mutex> lk(state->m);
 					state->dispatched = true;
 					state->filledNames = std::move(names);
