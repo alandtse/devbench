@@ -18,6 +18,7 @@
 #include "StallWatchdog.h"
 #include "Tools.h"
 #include "VRInput.h"
+#include "VanityCamera.h"
 #include "Version.h"
 
 #include <cstring>
@@ -86,6 +87,8 @@ namespace
 		if (a_msg->type == SKSE::MessagingInterface::kPostLoad) {
 			const dvb::Config cfg = dvb::LoadConfig();
 			ApplyLogLevel(cfg.logLevel);
+			if (cfg.disableVanityCamera)
+				dvb::VanityCamera::Install();  // independent of the server: the idle camera is a game setting
 			if (!cfg.enabled) {
 				logs::info("devbench: server disabled via config; not starting");
 			} else {
