@@ -28,6 +28,7 @@
 #include "Recording.h"
 #include "ReplayDriver.h"
 #include "ReplayTrajectory.h"
+#include "SaveDelete.h"
 #include "ScenarioPolicy.h"
 #include "Server.h"
 #include "TimeScaleControl.h"
@@ -37,11 +38,13 @@
 #include "Version.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <map>
 #include <optional>
 #include <thread>
@@ -410,6 +413,19 @@ namespace dvb
 				a_out["metaNote"] = "none of the matched saves' .ess headers could be read";
 		}
 
+		// Pending until the main thread starts the delete; Abandoned when the caller timed out first, so a late task is a no-op.
+		struct DeleteJob
+		{
+			enum : int
+			{
+				kPending,
+				kStarted,
+				kAbandoned
+			};
+			std::atomic<int>                 state{ kPending };
+			std::promise<SaveDelete::Result> result;
+		};
+
 		// game: programmatic save / load / list. Named saves use SKSE's Game.SaveGame
 		// request; loads use BGSSaveLoadManager. loadLast gives a settled real-save
 		// state for testing WITHOUT coc's heavy new-game init. Both are async — see kLoadNote.
@@ -684,7 +700,50 @@ namespace dvb
 					out["note"] = kLoadNote;
 				return out;
 			}
-			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|advanceTime|getTimeScale|setTimeScale|getDifficulty|setDifficulty|getAlwaysActive|setAlwaysActive)", action));
+			if (action == "delete") {
+				// The engine deletes from its own saves directory, so a 'dir' override would validate one file and delete another.
+				if (a_args.contains("dir"))
+					throw ToolError(400, "action 'delete' does not take 'dir'");
+				const std::string stem = SaveDelete::Stem(a_args.value("name", std::string{}));
+				if (stem.empty())
+					throw ToolError(400, "action 'delete' requires a 'name'");
+				const fs::path           saveDir = ResolveSaveDir(a_args);
+				const auto               saves = EnumerateSaves(saveDir);
+				std::vector<std::string> matches;
+				for (const auto& s : saves)
+					if (Lower(s.name) == Lower(stem))
+						matches.push_back(s.name);
+				if (matches.empty())
+					throw ToolError(404, std::format("save '{}' not found in {} — use action='list' for valid names", stem, saveDir.string()));
+				if (matches.size() > 1)
+					throw ToolError(409, std::format("'{}' matches {} saves that differ only by case; use the exact name", stem, matches.size()));
+				const std::string target = matches.front();
+
+				auto job = std::make_shared<DeleteJob>();
+				auto result = job->result.get_future();
+				task->AddTask([job, target]() {
+					int expected = DeleteJob::kPending;
+					if (!job->state.compare_exchange_strong(expected, DeleteJob::kStarted))
+						return;  // the caller already gave up; deleting now would be unreported
+					job->result.set_value(SaveDelete::Delete(target));
+				});
+				if (result.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
+					int expected = DeleteJob::kPending;
+					if (job->state.compare_exchange_strong(expected, DeleteJob::kAbandoned))
+						throw ToolError(504, "game delete did not start within 5s and was cancelled; nothing was deleted");
+					result.wait();  // already started on the main thread, so it finishes shortly
+				}
+				switch (result.get()) {
+				case SaveDelete::Result::kDeleted:
+					logs::info("devbench: game delete '{}'", target);
+					return json{ { "deleted", true }, { "action", action }, { "name", target } };
+				case SaveDelete::Result::kUnsupported:
+					throw ToolError(501, "game delete is not supported on VR");
+				default:
+					throw ToolError(409, std::format("engine save list has no entry for '{}'", target));
+				}
+			}
+			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|delete|advanceTime|getTimeScale|setTimeScale|getDifficulty|setDifficulty|getAlwaysActive|setAlwaysActive)", action));
 		}
 
 		bool ContainsCI(const std::string& a_hay, const std::string& a_needle);  // defined below (near CheckState)
@@ -3203,7 +3262,9 @@ namespace dvb
 			"before anything has loaded) plus top-level metaAvailable/metaNote if none parsed; "
 			"'loadLast' loads the most recent save (a settled real-game state — avoids coc's "
 			"heavy new-game init); 'load'/'save' take a 'name' ('load' skips the mod-mismatch "
-			"confirmation modal). All but 'list' are fire-and-forget; watch lifecycle events / "
+			"confirmation modal). 'delete' (param 'name') removes that save through the engine's own "
+			"Delete (SE/AE only, irreversible) and reports the result. All other actions except 'list' are "
+			"fire-and-forget; watch lifecycle events / "
 			"inspect playerLoaded for completion. 'advanceTime' (param 'hours', non-zero, may be "
 			"negative) jumps the calendar directly — no need to fall back to console 'set timescale "
 			"to N' and waiting real time — and returns { gameHour, daysPassed, day, month, year } "
@@ -3229,9 +3290,9 @@ namespace dvb
 		game.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast", "advanceTime", "getTimeScale", "setTimeScale", "getDifficulty", "setDifficulty", "getAlwaysActive", "setAlwaysActive" }) }, { "description", "list | save | load | loadLast | advanceTime | getTimeScale | setTimeScale | getDifficulty | setDifficulty | getAlwaysActive | setAlwaysActive" } } },
-								{ "name", json{ { "type", "string" }, { "description", "save file name (required for save/load; from action='list')" } } },
-								{ "dir", json{ { "type", "string" }, { "description", "list/load/loadLast: override the saves directory (default resolves from sLocalSavePath)" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast", "delete", "advanceTime", "getTimeScale", "setTimeScale", "getDifficulty", "setDifficulty", "getAlwaysActive", "setAlwaysActive" }) }, { "description", "list | save | load | loadLast | delete | advanceTime | getTimeScale | setTimeScale | getDifficulty | setDifficulty | getAlwaysActive | setAlwaysActive" } } },
+								{ "name", json{ { "type", "string" }, { "description", "save file name (required for save/load/delete; from action='list')" } } },
+								{ "dir", json{ { "type", "string" }, { "description", "list/load/loadLast: override the saves directory (default resolves from sLocalSavePath; delete does not take it)" } } },
 								{ "filter", json{ { "type", "string" }, { "description", "list only: case-insensitive substring to match against save names" } } },
 								{ "limit", json{ { "type", "integer" }, { "description", "list only: cap the number of saves returned (newest-first); must be > 0 if given" } } },
 								{ "detail", json{ { "type", "boolean" }, { "description", "list only: add per-save character/location/level metadata (default false)" } } },
