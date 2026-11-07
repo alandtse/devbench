@@ -746,7 +746,8 @@ namespace dvb
 			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|delete|advanceTime|getTimeScale|setTimeScale|getDifficulty|setDifficulty|getAlwaysActive|setAlwaysActive)", action));
 		}
 
-		bool ContainsCI(const std::string& a_hay, const std::string& a_needle);  // defined below (near CheckState)
+		bool         ContainsCI(const std::string& a_hay, const std::string& a_needle);  // defined below (near CheckState)
+		RE::TESForm* LookupFormArg(const std::string& a_arg);                            // defined below (with 'inspect refs')
 
 		// menu: detect/answer menus. 'list' = open menus + messageBoxOpen (tracked live from
 		// MenuOpenCloseEvent) + consumer-registered handler names; 'describe' = the active
@@ -812,6 +813,33 @@ namespace dvb
 						q->AddMessage(name.c_str(), RE::UI_MESSAGE_TYPE::kShow, nullptr);
 				});
 				return json{ { "queued", true }, { "action", "open" }, { "name", name } };
+			}
+
+			if (action == "readBook") {
+				// BookMenu needs the book itself, so 'open' cannot show it: a world reference opens through
+				// OpenMenuFromReference and an inventory book through OpenMenuFromBaseForm.
+				const std::string arg = a_args.value("formId", std::string{});
+				if (arg.empty())
+					throw ToolError(400, "action 'readBook' requires a 'formId' (a book form or a reference to one)");
+				return MainThread::RunAndWait([arg]() -> json {
+					auto* form = LookupFormArg(arg);
+					if (!form)
+						throw ToolError(404, std::format("no form for '{}'", arg));
+					auto* player = RE::PlayerCharacter::GetSingleton();
+					if (!player)
+						throw ToolError(409, "player is not loaded");
+					auto* ref = form->As<RE::TESObjectREFR>();
+					auto* base = ref ? ref->GetBaseObject() : form;
+					auto* book = base ? base->As<RE::TESObjectBOOK>() : nullptr;
+					if (!book)
+						throw ToolError(400, std::format("'{}' is not a book or a reference to one", arg));
+					if (ref) {
+						RE::BookMenu::OpenMenuFromReference(ref);
+					} else {
+						RE::BookMenu::OpenMenuFromBaseForm(book);
+					}
+					return json{ { "action", "readBook" }, { "queued", true }, { "formId", std::format("{:08X}", book->GetFormID()) }, { "viaRef", ref != nullptr } };
+				});
 			}
 
 			if (action == "close") {
@@ -884,7 +912,7 @@ namespace dvb
 				return json{ { "queued", true }, { "action", "accept" }, { "index", index } };
 			}
 
-			throw ToolError(400, std::format("unknown action '{}' (list|open|close|describe|accept|invoke)", action));
+			throw ToolError(400, std::format("unknown action '{}' (list|open|close|describe|accept|invoke|readBook)", action));
 		}
 
 		constexpr long long kMaxWaitHours = 100000;
@@ -3201,7 +3229,8 @@ namespace dvb
 			menu.inputSchema = json{
 				{ "type", "object" },
 				{ "properties", json{
-									{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "open", "close", "invoke" }) }, { "description", "list | describe | accept | open | close | invoke" } } },
+									{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "open", "close", "invoke", "readBook" }) }, { "description", "list | describe | accept | open | close | invoke | readBook" } } },
+									{ "formId", json{ { "type", "string" }, { "description", "readBook: hex FormID or EditorID of a book form (from the player's inventory) or of a reference to a book in the world; opens the real BookMenu." } } },
 									{ "name", json{ { "type", "string" }, { "description", "open/close: ENGINE menu to show/hide (e.g. TweenMenu). invoke/describe: a registered mod menu (see list .registered, or this tool's description)." } } },
 									{ "index", json{ { "type", "integer" }, { "description", "accept: 0-based button index to select (default 0). See describe's buttons/cancelIndex." } } },
 								} },
