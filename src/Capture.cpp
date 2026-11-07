@@ -512,7 +512,7 @@ namespace dvb::Capture
 				{ "provider", "native" },
 				{ "kind", "screenshot" },
 				{ "path", GenericPath(dest) },
-				{ "file", dest.filename().string() },
+				{ "file", Utf8(dest.filename()) },
 				{ "bytes", static_cast<std::uintmax_t>(fs::file_size(dest, ec)) },
 				{ "checkpointId", checkpointId },
 				{ "recording", recording },
@@ -827,7 +827,7 @@ namespace dvb::Capture
 				{ "provider", a_providerKey },
 				{ "kind", "screenshot" },
 				{ "path", GenericPath(outputPath) },
-				{ "file", outputPath.filename().string() },
+				{ "file", Utf8(outputPath.filename()) },
 				{ "bytes", ready.bytes },
 				{ "checkpointId", checkpointId },
 				{ "recording", recording },
@@ -908,7 +908,7 @@ namespace dvb::Capture
 			const auto&     f = files[i];
 			std::error_code ec;
 			shots.push_back(json{
-				{ "file", f.path.filename().string() },
+				{ "file", Utf8(f.path.filename()) },
 				{ "path", GenericPath(f.path) },
 				{ "bytes", f.size },
 				// file_time_type's clock epoch is NOT the Unix epoch (e.g. 1601 on MSVC) --
