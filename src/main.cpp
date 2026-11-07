@@ -133,8 +133,8 @@ namespace
 				dvb::ConsoleHook::Install(g_server->Events());  // observe console commands as events / for recording
 				dvb::CameraOrbit::Install();                    // camera action='orbit' holds the gameplay camera round the player
 				if (cfg.disableVanityCamera)
-					dvb::VanityCamera::Install();               // pin the idle auto-vanity camera off
-				dvb::ConsoleLogCapture::InstallPrintHook();     // every printed line reaches a console capture
+					dvb::VanityCamera::Install();            // pin the idle auto-vanity camera off
+				dvb::ConsoleLogCapture::InstallPrintHook();  // every printed line reaches a console capture
 
 				// Receive cross-plugin interface requests from ANY plugin (nullptr sender),
 				// so consumer mods' dispatches reach us (mirrors MergeMapper). Registered
