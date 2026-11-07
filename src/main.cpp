@@ -134,7 +134,7 @@ namespace
 				dvb::StallWatchdog::Start(g_server->Events(), cfg.stallWatchdogMs);
 				dvb::ConsoleHook::Install(g_server->Events());  // observe console commands as events / for recording
 				dvb::CameraOrbit::Install();                    // camera action='orbit' holds the gameplay camera round the player
-				dvb::ConsoleLogCapture::InstallPrintHook();  // every printed line reaches a console capture
+				dvb::ConsoleLogCapture::InstallPrintHook();     // every printed line reaches a console capture
 
 				// Receive cross-plugin interface requests from ANY plugin (nullptr sender),
 				// so consumer mods' dispatches reach us (mirrors MergeMapper). Registered
