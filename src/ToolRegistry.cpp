@@ -1,5 +1,7 @@
 #include "ToolRegistry.h"
 
+#include "Json.h"
+
 namespace dvb
 {
 	namespace
@@ -117,7 +119,7 @@ namespace dvb
 		// hundreds of identical console steps and already logs its own start/finish summary, so
 		// per-step lines were pure noise.
 		if (!a_ctx.internal) {
-			const std::string args = a_args.is_null() ? std::string{} : a_args.dump();
+			const std::string args = a_args.is_null() ? std::string{} : Dump(a_args);
 			logs::debug("tool '{}' invoked {}", a_name, args.size() > 160 ? args.substr(0, 160) + "..." : args);
 		}
 		try {

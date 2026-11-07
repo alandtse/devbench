@@ -60,7 +60,7 @@ namespace dvb::HostApi
 				DevBenchAPI::WriteFn write = +[](void* a_sink, const char* a_json) {
 					*static_cast<std::string*>(a_sink) = a_json ? a_json : "";
 				};
-				a_handler(a_ctx, a_args.dump().c_str(), &result, write);
+				a_handler(a_ctx, Dump(a_args).c_str(), &result, write);
 				if (result.empty())
 					return json::object();
 				try {
