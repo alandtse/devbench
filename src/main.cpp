@@ -87,6 +87,8 @@ namespace
 		if (a_msg->type == SKSE::MessagingInterface::kPostLoad) {
 			const dvb::Config cfg = dvb::LoadConfig();
 			ApplyLogLevel(cfg.logLevel);
+			if (cfg.disableVanityCamera)
+				dvb::VanityCamera::Install();  // independent of the server: the idle camera is a game setting
 			if (!cfg.enabled) {
 				logs::info("devbench: server disabled via config; not starting");
 			} else {
@@ -132,8 +134,6 @@ namespace
 				dvb::StallWatchdog::Start(g_server->Events(), cfg.stallWatchdogMs);
 				dvb::ConsoleHook::Install(g_server->Events());  // observe console commands as events / for recording
 				dvb::CameraOrbit::Install();                    // camera action='orbit' holds the gameplay camera round the player
-				if (cfg.disableVanityCamera)
-					dvb::VanityCamera::Install();            // pin the idle auto-vanity camera off
 				dvb::ConsoleLogCapture::InstallPrintHook();  // every printed line reaches a console capture
 
 				// Receive cross-plugin interface requests from ANY plugin (nullptr sender),
