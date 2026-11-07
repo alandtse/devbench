@@ -159,6 +159,11 @@ Missing → auto-created with defaults. Invalid → defaults (logged). All keys 
   // Force the engine's [General] bAlwaysActive on at startup so the game keeps running, and tools keep
   // working, while its window is in the background. Off by default. `game setAlwaysActive` does the same live.
   "alwaysActive": false,
+
+  // Stop the engine's idle auto-vanity camera. The fAutoVanityModeDelay INI setting only seeds the idle timer and
+  // the engine re-enables the feature itself, so devbench pins it off on every camera update. On by default;
+  // `camera setPov=vanity` still works.
+  "disableVanityCamera": true,
 }
 ```
 
