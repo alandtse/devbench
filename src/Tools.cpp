@@ -28,6 +28,7 @@
 #include "Recording.h"
 #include "ReplayDriver.h"
 #include "ReplayTrajectory.h"
+#include "SaveDelete.h"
 #include "ScenarioPolicy.h"
 #include "Server.h"
 #include "TimeScaleControl.h"
@@ -42,6 +43,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <map>
 #include <optional>
 #include <thread>
@@ -682,7 +684,33 @@ namespace dvb
 					out["note"] = kLoadNote;
 				return out;
 			}
-			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|advanceTime|getTimeScale|setTimeScale|getDifficulty|setDifficulty|getAlwaysActive|setAlwaysActive)", action));
+			if (action == "delete") {
+				const std::string name = a_args.value("name", std::string{});
+				if (name.empty())
+					throw ToolError(400, "action 'delete' requires a 'name'");
+				const fs::path saveDir = ResolveSaveDir(a_args);
+				const auto     saves = EnumerateSaves(saveDir);
+				const bool     exists = std::any_of(saves.begin(), saves.end(),
+					[&](const SaveEntry& s) { return s.name == name; });
+				if (!exists)
+					throw ToolError(404, std::format("save '{}' not found in {} — use action='list' for valid names", name, saveDir.string()));
+
+				auto done = std::make_shared<std::promise<SaveDelete::Result>>();
+				auto result = done->get_future();
+				task->AddTask([name, done]() { done->set_value(SaveDelete::Delete(name)); });
+				if (result.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
+					return json{ { "queued", true }, { "action", action }, { "name", name }, { "note", "delete not confirmed within 5s; check action='list'" } };
+				switch (result.get()) {
+				case SaveDelete::Result::kDeleted:
+					logs::info("devbench: game delete '{}'", name);
+					return json{ { "deleted", true }, { "action", action }, { "name", name } };
+				case SaveDelete::Result::kUnsupported:
+					throw ToolError(501, "game delete is not supported on VR");
+				default:
+					throw ToolError(409, std::format("engine save list has no entry for '{}'", name));
+				}
+			}
+			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|delete|advanceTime|getTimeScale|setTimeScale|getDifficulty|setDifficulty|getAlwaysActive|setAlwaysActive)", action));
 		}
 
 		bool ContainsCI(const std::string& a_hay, const std::string& a_needle);  // defined below (near CheckState)
@@ -3195,7 +3223,9 @@ namespace dvb
 			"before anything has loaded) plus top-level metaAvailable/metaNote if none parsed; "
 			"'loadLast' loads the most recent save (a settled real-game state — avoids coc's "
 			"heavy new-game init); 'load'/'save' take a 'name' ('load' skips the mod-mismatch "
-			"confirmation modal). All but 'list' are fire-and-forget; watch lifecycle events / "
+			"confirmation modal). 'delete' (param 'name') removes that save through the engine's own "
+			"Delete (SE/AE only, irreversible) and reports the result. All other actions except 'list' are "
+			"fire-and-forget; watch lifecycle events / "
 			"inspect playerLoaded for completion. 'advanceTime' (param 'hours', non-zero, may be "
 			"negative) jumps the calendar directly — no need to fall back to console 'set timescale "
 			"to N' and waiting real time — and returns { gameHour, daysPassed, day, month, year } "
@@ -3221,7 +3251,7 @@ namespace dvb
 		game.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast", "advanceTime", "getTimeScale", "setTimeScale", "getDifficulty", "setDifficulty", "getAlwaysActive", "setAlwaysActive" }) }, { "description", "list | save | load | loadLast | advanceTime | getTimeScale | setTimeScale | getDifficulty | setDifficulty | getAlwaysActive | setAlwaysActive" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast", "delete", "advanceTime", "getTimeScale", "setTimeScale", "getDifficulty", "setDifficulty", "getAlwaysActive", "setAlwaysActive" }) }, { "description", "list | save | load | loadLast | delete | advanceTime | getTimeScale | setTimeScale | getDifficulty | setDifficulty | getAlwaysActive | setAlwaysActive" } } },
 								{ "name", json{ { "type", "string" }, { "description", "save file name (required for save/load; from action='list')" } } },
 								{ "dir", json{ { "type", "string" }, { "description", "list/load/loadLast: override the saves directory (default resolves from sLocalSavePath)" } } },
 								{ "filter", json{ { "type", "string" }, { "description", "list only: case-insensitive substring to match against save names" } } },
