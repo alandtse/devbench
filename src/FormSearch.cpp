@@ -193,7 +193,7 @@ namespace dvb::FormSearch
 		{
 			if (!a_query.plugin.empty() && !ContainsCI(PluginOf(a_form), a_query.plugin))
 				return false;
-			if (!a_query.name.empty() && !ContainsCI(Str(a_form->GetName()), a_query.name) && !ContainsCI(Str(a_form->GetFormEditorID()), a_query.name))
+			if (!a_query.name.empty() && !ContainsCI(Utf8Text(Str(a_form->GetName())), a_query.name) && !ContainsCI(Str(a_form->GetFormEditorID()), a_query.name))
 				return false;
 			if (a_query.slotMask) {
 				const auto mask = SlotMaskOf(a_form);

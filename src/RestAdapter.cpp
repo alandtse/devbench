@@ -16,7 +16,7 @@ namespace dvb
 		void WriteJson(httplib::Response& a_res, int a_status, const json& a_body)
 		{
 			a_res.status = a_status;
-			a_res.set_content(a_body.dump(), "application/json");
+			a_res.set_content(Dump(a_body), "application/json");
 		}
 	}
 
