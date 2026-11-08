@@ -821,7 +821,8 @@ namespace dvb
 				const std::string arg = a_args.value("formId", std::string{});
 				if (arg.empty())
 					throw ToolError(400, "action 'readBook' requires a 'formId' (a book form or a reference to one)");
-				return MainThread::RunAndWait([arg]() -> json {
+				const bool activate = a_args.value("activate", false);
+				return MainThread::RunAndWait([arg, activate]() -> json {
 					auto* form = LookupFormArg(arg);
 					if (!form)
 						throw ToolError(404, std::format("no form for '{}'", arg));
@@ -833,6 +834,13 @@ namespace dvb
 					auto* book = base ? base->As<RE::TESObjectBOOK>() : nullptr;
 					if (!book)
 						throw ToolError(400, std::format("'{}' is not a book or a reference to one", arg));
+					if (activate) {
+						if (!ref)
+							throw ToolError(400, "readBook 'activate' needs a reference to a book; an inventory book has no entry point outside the InventoryMenu");
+						// The player's own activation: TESObjectBOOK::Activate, so a hook on its BookMenu call site fires.
+						const bool activated = ref->ActivateRef(player, 0, nullptr, 1, false);
+						return json{ { "action", "readBook" }, { "queued", true }, { "formId", std::format("{:08X}", book->GetFormID()) }, { "viaRef", true }, { "viaActivate", true }, { "activated", activated } };
+					}
 					if (ref) {
 						RE::BookMenu::OpenMenuFromReference(ref);
 					} else {
@@ -3231,6 +3239,7 @@ namespace dvb
 				{ "properties", json{
 									{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "open", "close", "invoke", "readBook" }) }, { "description", "list | describe | accept | open | close | invoke | readBook" } } },
 									{ "formId", json{ { "type", "string" }, { "description", "readBook: hex FormID or EditorID of a book form (the tool does not check inventory) or of a reference to a book in the world; opens the real BookMenu." } } },
+									{ "activate", json{ { "type", "boolean" }, { "description", "readBook: activate the reference as the player does (TESObjectBOOK::Activate) instead of opening the menu directly; needs a reference." } } },
 									{ "name", json{ { "type", "string" }, { "description", "open/close: ENGINE menu to show/hide (e.g. TweenMenu). invoke/describe: a registered mod menu (see list .registered, or this tool's description)." } } },
 									{ "index", json{ { "type", "integer" }, { "description", "accept: 0-based button index to select (default 0). See describe's buttons/cancelIndex." } } },
 								} },

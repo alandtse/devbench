@@ -199,6 +199,10 @@
             ],
             "type": "string"
           },
+          "activate": {
+            "description": "readBook: activate the reference as the player does (TESObjectBOOK::Activate) instead of opening the menu directly; needs a reference.",
+            "type": "boolean"
+          },
           "formId": {
             "description": "readBook: hex FormID or EditorID of a book form (the tool does not check inventory) or of a reference to a book in the world; opens the real BookMenu.",
             "type": "string"
