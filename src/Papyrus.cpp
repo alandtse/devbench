@@ -1,5 +1,6 @@
 #include "Papyrus.h"
 
+#include "GameText.h"
 #include "Json.h"
 #include "MainThread.h"
 #include "PapyrusDefaults.h"
@@ -73,7 +74,7 @@ namespace dvb::Papyrus
 					out["formType"] = std::format("{}", static_cast<int>(form->GetFormType()));
 					out["editorId"] = Str(form->GetFormEditorID());
 					if (const char* n = form->GetName(); n && *n)
-						out["name"] = n;
+						out["name"] = FromGame(n);
 				}
 			}
 			return out;
@@ -90,7 +91,7 @@ namespace dvb::Papyrus
 			if (a_var.IsFloat())
 				return a_var.GetFloat();
 			if (a_var.IsString())
-				return std::string(a_var.GetString());
+				return FromGame(a_var.GetString());
 			if (a_var.IsObject())
 				return ObjectToJson(a_vm, a_var);
 			if (a_var.IsArray()) {
@@ -221,7 +222,7 @@ namespace dvb::Papyrus
 			} else if (a_arg.is_number_integer() || a_arg.is_number_unsigned()) {
 				v.SetSInt(a_arg.get<std::int32_t>());
 			} else if (a_arg.is_string()) {
-				v.SetString(a_arg.get<std::string>());
+				v.SetString(ToGame(a_arg.get<std::string>()));
 			} else if (a_arg.is_array()) {
 				return JsonArrayToVariable(a_vm, a_arg);
 			} else if (a_arg.is_object() && a_arg.contains("form")) {
