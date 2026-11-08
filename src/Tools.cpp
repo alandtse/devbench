@@ -2461,7 +2461,7 @@ namespace dvb
 		// Open menus that would make a replay meaningless — they pause the sim, are modal, or grab the
 		// cursor into menu-mode (inventory/dialogue/lockpick/messagebox). Always-open menus (HUD/cursor)
 		// and the console (SKSE task exec still runs) never block. Reads live UI flags on the main thread.
-		std::vector<std::string> BlockingMenus()
+		std::vector<std::string> BlockingMenus(milliseconds a_stallLimit = milliseconds(1000))
 		{
 			try {
 				const json names = MainThread::RunAndWait([]() -> json {
@@ -2479,7 +2479,7 @@ namespace dvb
 						}
 					return out;
 				},
-					milliseconds(1000));
+					a_stallLimit);
 				return names.get<std::vector<std::string>>();
 			} catch (const ToolError&) {
 				// A pausing menu froze the frame counter → RunAndWait 504; that IS blocked. Name it from
@@ -2597,7 +2597,7 @@ namespace dvb
 			if (a_cond == "noMenu")
 				return GetOpenMenus().empty();
 			if (a_cond == "noBlockingMenu")
-				return BlockingMenus().empty();
+				return BlockingMenus(std::min(a_stallLimit, milliseconds(1000))).empty();
 			throw ToolError(400, std::format("unknown waitUntil condition '{}' (playerLoaded|noModal|noMenu|noBlockingMenu|weaponDrawn|handsReady|castingArtLeft|castingArtRight)", a_cond));
 		}
 
@@ -4238,6 +4238,9 @@ namespace dvb
 							} },
 		};
 		a_registry.Register(std::move(wait), [](const json& a_args, const ToolContext&) {
+			const int modes = static_cast<int>(a_args.contains("hours")) + static_cast<int>(a_args.contains("ms")) + static_cast<int>(a_args.contains("until"));
+			if (modes > 1)
+				throw ToolError(400, "wait takes one of 'hours', 'ms' or 'until', not a combination");
 			if (a_args.contains("hours"))
 				return WaitOrSleepHandler(a_args, false);
 			if (a_args.contains("ms") || a_args.contains("until"))

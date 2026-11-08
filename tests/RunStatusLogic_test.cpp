@@ -42,6 +42,8 @@ TEST_CASE("from and limit return that slice")
 TEST_CASE("a slice past the end is empty, and a reply without a transcript is unchanged")
 {
 	CHECK(Compact(Status(3), json{ { "from", 99 } })["result"]["results"].empty());
+	CHECK(Compact(Status(3), json{ { "from", 9223372036854775808ULL } })["result"]["results"].empty());
+	CHECK(Compact(Status(3), json{ { "limit", 9223372036854775808ULL } })["result"]["results"].size() == 3);
 	const json running{ { "runId", 2 }, { "done", false } };
 	CHECK(Compact(running, json::object()) == running);
 }

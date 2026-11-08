@@ -80,23 +80,21 @@ async function main(): Promise<void> {
     { capabilities: { tools: { listChanged: true } } },
   );
 
-  let advertisedNames = "";
-  const namesOf = (tools: { name: string }[]): string =>
-    tools
-      .map((t) => t.name)
-      .sort()
-      .join(",");
+  let advertised = "";
+  const signatureOf = (tools: { name: string }[]): string =>
+    JSON.stringify([...tools].sort((a, b) => a.name.localeCompare(b.name)));
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
       const tools = await listTools(target);
-      advertisedNames = namesOf(tools);
+      advertised = signatureOf(tools);
       return { tools: tools.map(toMcpTool) };
     } catch (e) {
       if (e instanceof GameUnavailableError) {
         // A not-yet-running game reports the static fallback, not an empty list --
         // a client typically fetches tools/list only once per session. A call still
         // fails live with GameUnavailableError's own message.
+        advertised = signatureOf(toolsFallback.tools);
         return { tools: toolsFallback.tools.map(toMcpTool) };
       }
       throw e;
@@ -122,9 +120,13 @@ async function main(): Promise<void> {
       // fetched tools/list, so it still advertises a tool this game lacks: tell it
       // to fetch the list again.
       if (/unknown tool/i.test(message)) {
-        const live = await listTools(target).then(namesOf, () => undefined);
-        if (live !== undefined && live !== advertisedNames) {
-          server.sendToolListChanged().catch(() => {});
+        const live = await listTools(target).then(signatureOf, () => undefined);
+        if (live !== undefined && live !== advertised) {
+          server.sendToolListChanged().catch((err: Error) => {
+            console.error(
+              `devbench-bridge: tools/list_changed failed: ${err.message}`,
+            );
+          });
         }
       }
       return {

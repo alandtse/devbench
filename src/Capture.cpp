@@ -482,7 +482,9 @@ namespace dvb::Capture
 				std::string dirList;
 				for (const auto& d : dirs)
 					dirList += (dirList.empty() ? "" : ", ") + d.string();
-				PublishAbandoned("", "", a_args, "timeout");
+				json abandoned = a_args;
+				abandoned["checkpointId"] = checkpointId;
+				PublishAbandoned("", "", abandoned, "timeout");
 				throw ToolError(504, std::format("no new screenshot appeared within {}ms (scanned: {})", timeoutMs, dirList));
 			}
 
@@ -1075,7 +1077,7 @@ namespace dvb::Capture
 								{ "count", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", 240 }, { "description", "burst: frames to capture (required)" } } },
 								{ "everyNFrames", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", 600 }, { "description", "burst: capture every Nth presented engine frame (default 1); not game time, so it does not follow the time scale" } } },
 								{ "runId", json{ { "type", "integer" }, { "description", "status: the runId a burst returned" } } },
-								{ "checkpointId", json{ { "type", "string" }, { "description", "file stem and correlation key (default shot_<epoch ms>); a burst's frames are <checkpointId>_NNNN.png" } } },
+								{ "checkpointId", json{ { "type", "string" }, { "description", "file stem and correlation key (default shot_<epoch ms>_<n>; use the returned checkpointId or path); a burst's frames are <checkpointId>_NNNN.png" } } },
 								{ "recording", json{ { "type", "string" }, { "description", "recording file stem, for correlation (default 'adhoc')" } } },
 								{ "variant", json{ { "type", "string" }, { "description", "variant under test, for correlation (default 'default')" } } },
 								{ "allowNative", json{ { "type", "boolean" }, { "description", "permit kind=auto to fall back to the vanilla path when no provider is registered (default false)" } } },

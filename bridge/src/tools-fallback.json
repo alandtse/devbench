@@ -605,7 +605,7 @@
             "type": "boolean"
           },
           "checkpointId": {
-            "description": "file stem and correlation key (default shot_<epoch ms>); a burst's frames are <checkpointId>_NNNN.png",
+            "description": "file stem and correlation key (default shot_<epoch ms>_<n>; use the returned checkpointId or path); a burst's frames are <checkpointId>_NNNN.png",
             "type": "string"
           },
           "cleanup": {

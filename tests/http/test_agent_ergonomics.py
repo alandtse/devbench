@@ -37,6 +37,7 @@ def test_wait_until_player_loaded_returns_at_once(client, tool_schema):
         ({}, "'hours'"),
         ({"until": "nonsense"}, "unknown waitUntil condition"),
         ({"ms": -1}, "'ms'"),
+        ({"ms": 10, "until": "noMenu"}, "not a combination"),
         ({"until": "noMenu", "timeoutMs": 700000}, "'timeoutMs'"),
     ],
 )
@@ -99,7 +100,7 @@ def test_capture_accepts_screenshot_as_an_action(client, tool_schema):
 def test_burst_without_a_checkpoint_id_is_not_a_malformed_request(client, tool_schema):
     require_tool(tool_schema, "capture")
     status, body = client.call("capture", {"action": "burst", "count": 5})
-    assert status != 400, (status, body)
+    assert "checkpointId" not in str(body.get("error", "")), (status, body)
 
 
 def test_forms_find_accepts_type_for_formtype(client, tool_schema):

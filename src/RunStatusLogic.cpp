@@ -1,9 +1,25 @@
 #include "RunStatusLogic.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <limits>
 
 namespace dvb::RunStatusLogic
 {
+	namespace
+	{
+		// Values above size_t clamp instead of wrapping to a negative.
+		std::size_t PageArg(const json& a_args, const char* a_name, std::size_t a_default)
+		{
+			const auto it = a_args.find(a_name);
+			if (it == a_args.end() || !it->is_number_integer())
+				return a_default;
+			if (it->is_number_unsigned())
+				return static_cast<std::size_t>(std::min<std::uint64_t>(it->get<std::uint64_t>(), std::numeric_limits<std::size_t>::max()));
+			return static_cast<std::size_t>(std::max<std::int64_t>(it->get<std::int64_t>(), 0));
+		}
+	}
+
 	json Compact(const json& a_status, const json& a_args)
 	{
 		if (!a_status.is_object() || !a_status.contains("result") || !a_status["result"].is_object() ||
@@ -21,8 +37,8 @@ namespace dvb::RunStatusLogic
 
 		const bool paged = a_args.is_object() && (a_args.contains("from") || a_args.contains("limit"));
 		if (paged) {
-			const auto        from = std::min(total, static_cast<std::size_t>(std::max(0LL, a_args.value("from", 0LL))));
-			const auto        limit = static_cast<std::size_t>(std::max(0LL, a_args.value("limit", static_cast<long long>(kDefaultPage))));
+			const auto        from = std::min(total, PageArg(a_args, "from", 0));
+			const auto        limit = PageArg(a_args, "limit", kDefaultPage);
 			const std::size_t end = std::min(total, from + limit);
 			result["resultsFrom"] = from;
 			result["results"] = json(steps.begin() + static_cast<std::ptrdiff_t>(from), steps.begin() + static_cast<std::ptrdiff_t>(end));
