@@ -19,7 +19,6 @@ import pytest
         {"action": "burst", "checkpointId": "b", "count": 5, "excludeUi": "yes"},
         {"action": "burst", "checkpointId": "b", "count": 5, "subrect": {"x": 0.6, "y": 0, "w": 0.5, "h": 1}},
         {"action": "burst", "checkpointId": "b", "count": 5, "timeoutMs": 0},
-        {"action": "burst", "count": 5},
         {"action": "burst", "checkpointId": "a/b", "count": 5},
         {"action": "status"},
         {"action": "status", "runId": 0},

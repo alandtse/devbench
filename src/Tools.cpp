@@ -791,7 +791,7 @@ namespace dvb
 				auto entry = ToolExtensions::Find("menu", name);
 				if (!entry)
 					throw ToolError(404, std::format("no handler registered for menu '{}' (see menu list .registered)", name));
-				return entry->handler(a_args, a_ctx);
+				return entry->handler(a_ctx.rawArgs ? *a_ctx.rawArgs : a_args, a_ctx);
 			}
 
 			if (action == "open") {
@@ -1444,6 +1444,16 @@ namespace dvb
 			return SnapshotHands(a_actor, &a_active, &a_budget).report;
 		}
 
+		int InspectLimit(const json& a_args, const char* a_kind)
+		{
+			const auto it = a_args.find("limit");
+			if (it == a_args.end())
+				return 100;
+			if (!it->is_number_integer() || it->get<std::int64_t>() < 0 || it->get<std::int64_t>() > std::numeric_limits<int>::max())
+				throw ToolError(400, std::format("inspect {}: 'limit' must be an integer 0..{}", a_kind, std::numeric_limits<int>::max()));
+			return it->get<int>();
+		}
+
 		// Normalize a form-type filter to a substring needle. The engine's type strings are 4-char
 		// codes (ACHR, NPC_, CONT, WEAP); map common friendly names ('actor', 'weapon') onto them so
 		// a substring match works (a longer friendly name like "weapon" never matches "weap"
@@ -1662,9 +1672,7 @@ namespace dvb
 			if (kind == "inventory") {
 				const std::string formId = a_args.value("formId", std::string{});
 				const std::string typeFilter = a_args.value("formType", std::string{});
-				const int         limit = a_args.value("limit", 100);
-				if (limit < 0)
-					throw ToolError(400, "inspect inventory: 'limit' must be >= 0");
+				const int         limit = InspectLimit(a_args, "inventory");
 				return MainThread::RunAndWait([=]() -> json {
 					auto lower = [](std::string s) {
 						std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -1718,9 +1726,7 @@ namespace dvb
 			// quests: the journal — quests that are running or completed, each with its current stage
 			// and non-dormant objectives. 'active' marks the player's tracked quest. 'limit' default 100.
 			if (kind == "quests") {
-				const int limit = a_args.value("limit", 100);
-				if (limit < 0)
-					throw ToolError(400, "inspect quests: 'limit' must be >= 0");
+				const int limit = InspectLimit(a_args, "quests");
 				return MainThread::RunAndWait([=]() -> json {
 					auto* dh = RE::TESDataHandler::GetSingleton();
 					if (!dh)
@@ -1963,11 +1969,9 @@ namespace dvb
 				const std::string typeFilter = a_args.value("formType", std::string{});
 				const std::string modelFilter = a_args.value("model", std::string{});
 				const double      radius = a_args.value("radius", 0.0);
-				const int         limit = a_args.value("limit", 100);
+				const int         limit = InspectLimit(a_args, "refs");
 				if (radius < 0.0)
 					throw ToolError(400, "inspect refs: 'radius' must be >= 0 (0 scans the whole loaded grid)");
-				if (limit < 0)
-					throw ToolError(400, "inspect refs: 'limit' must be >= 0");
 				return MainThread::RunAndWait([=]() -> json {
 					auto lower = [](std::string s) {
 						std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -2073,7 +2077,7 @@ namespace dvb
 
 			if (kind == "draws") {
 				if (auto provider = ToolExtensions::Find("inspect", "draws"))
-					return DrawStatsLogic::WithSource(provider->handler(a_args, a_ctx), DrawStatsLogic::ProviderSource(provider->descriptor));
+					return DrawStatsLogic::WithSource(provider->handler(a_ctx.rawArgs ? *a_ctx.rawArgs : a_args, a_ctx), DrawStatsLogic::ProviderSource(provider->descriptor));
 				const bool doReset = BooleanArgument(a_args, "reset", false);
 				return MainThread::RunAndWait([doReset]() { return DrawStatsLogic::WithSource(DrawStats::Read(doReset), DrawStatsLogic::kOwnSource); });
 			}
@@ -2092,7 +2096,7 @@ namespace dvb
 
 			// A consumer-registered inspect kind — route to its handler (receives the full args).
 			if (auto entry = ToolExtensions::Find("inspect", kind))
-				return entry->handler(a_args, a_ctx);
+				return entry->handler(a_ctx.rawArgs ? *a_ctx.rawArgs : a_args, a_ctx);
 
 			throw ToolError(400, std::format("unknown kind '{}' (state|vm|scene|mods|player|inventory|quests|effects|refs|lights|draws|registrants|screenshots|extensions, or a registered kind — see inspect kind=extensions)", kind));
 		}
@@ -2550,7 +2554,7 @@ namespace dvb
 		// Live-state conditions for waitUntil. playerLoaded marshals to the main thread;
 		// a mid-load stall (RunAndWait 504) just means "not yet" → keep polling. Menu
 		// conditions read the thread-safe tracked set (no marshal).
-		bool CheckState(const std::string& a_cond)
+		bool CheckState(const std::string& a_cond, milliseconds a_stallLimit = milliseconds(2000))
 		{
 			if (a_cond == "playerLoaded") {
 				try {
@@ -2558,7 +2562,7 @@ namespace dvb
 						auto* pc = RE::PlayerCharacter::GetSingleton();
 						return pc && pc->Get3D() != nullptr;
 					},
-						milliseconds(2000));
+						a_stallLimit);
 					return r.get<bool>();
 				} catch (const ToolError&) {
 					return false;  // main thread stalled mid-load — condition not met yet
@@ -2584,7 +2588,7 @@ namespace dvb
 						const auto& hand = a_cond == "castingArtLeft" ? snap.observation.left : snap.observation.right;
 						return hand.casterPresent && hand.artAttached;
 					},
-						milliseconds(2000));
+						a_stallLimit);
 					return r.get<bool>();
 				} catch (const ToolError&) {
 					return false;
@@ -2597,8 +2601,9 @@ namespace dvb
 			throw ToolError(400, std::format("unknown waitUntil condition '{}' (playerLoaded|noModal|noMenu|noBlockingMenu|weaponDrawn|handsReady|castingArtLeft|castingArtRight)", a_cond));
 		}
 
-		constexpr long long kMaxRealWaitMs = 600000;
-		constexpr long long kDefaultUntilTimeoutMs = 30000;
+		constexpr long long kMaxRealWaitMs = 25000;  // under the bridge's 30 s request timeout
+		constexpr long long kDefaultUntilTimeoutMs = 10000;
+		constexpr long long kStallLimitMs = 2000;
 		constexpr auto      kUntilPollInterval = milliseconds(100);
 
 		json RealTimeWait(const json& a_args)
@@ -2622,10 +2627,11 @@ namespace dvb
 					throw ToolError(400, std::format("'timeoutMs' must be an integer 0..{}", kMaxRealWaitMs));
 				timeoutMs = t.get<long long>();
 			}
-			while (!CheckState(until)) {
+			const auto remainingMs = [&] { return std::max(timeoutMs - elapsedMs(), 1LL); };
+			while (!CheckState(until, milliseconds(std::min(kStallLimitMs, remainingMs())))) {
 				if (elapsedMs() >= timeoutMs)
 					return json{ { "completed", false }, { "reason", "timeout" }, { "until", until }, { "waitedMs", elapsedMs() } };
-				std::this_thread::sleep_for(kUntilPollInterval);
+				std::this_thread::sleep_for(std::min(kUntilPollInterval, milliseconds(remainingMs())));
 			}
 			return json{ { "completed", true }, { "until", until }, { "waitedMs", elapsedMs() } };
 		}
@@ -4226,9 +4232,9 @@ namespace dvb
 			{ "type", "object" },
 			{ "properties", json{
 								{ "hours", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", kMaxWaitHours }, { "description", "game-time hours to wait (> 0); omit for a real-time wait" } } },
-								{ "ms", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", kMaxRealWaitMs }, { "description", "real-time milliseconds to pause" } } },
+								{ "ms", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", kMaxRealWaitMs }, { "description", "real-time milliseconds to pause (max 25000; loop for longer)" } } },
 								{ "until", json{ { "type", "string" }, { "description", "live condition to wait for (see the tool description)" } } },
-								{ "timeoutMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", kMaxRealWaitMs }, { "description", "until: give up after this long (default 30000)" } } },
+								{ "timeoutMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", kMaxRealWaitMs }, { "description", "until: give up after this long (default 10000; max 25000, so the call finishes inside the bridge's request timeout)" } } },
 							} },
 		};
 		a_registry.Register(std::move(wait), [](const json& a_args, const ToolContext&) {

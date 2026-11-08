@@ -232,3 +232,18 @@ TEST_CASE("an argument that does not parse as its declared type is passed throug
 	CHECK(CoerceArgs(schema, json{ { "flag", "yes" }, { "n", "1.5" } }).is_null());
 	CHECK(CoerceArgs(schema, json{ { "flag", true }, { "n", 3 } }).is_null());
 }
+
+TEST_CASE("a handler can reach the caller's arguments as sent")
+{
+	ToolRegistry   reg;
+	ToolDescriptor d = Desc("typed");
+	d.inputSchema = json{ { "type", "object" }, { "properties", json{ { "list", json{ { "type", "array" } } } } } };
+	reg.Register(std::move(d), [](const json& a_args, const ToolContext& a_ctx) {
+		return json{ { "coerced", a_args["list"] }, { "raw", a_ctx.rawArgs ? (*a_ctx.rawArgs)["list"] : json(nullptr) } };
+	});
+
+	const ToolResult r = reg.Invoke("typed", json{ { "list", "[1,2]" } }, ToolContext{});
+	CHECK(r.ok);
+	CHECK(r.value["coerced"] == (json::array({ 1, 2 })));
+	CHECK(r.value["raw"] == "[1,2]");
+}

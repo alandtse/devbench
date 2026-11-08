@@ -39,8 +39,8 @@ namespace dvb::CaptureBurstLogic
 	/// provider's low-fidelity fallback sits beside it under that suffix). Nullopt when the choice is ambiguous.
 	std::optional<std::string> DefaultProvider(const std::vector<std::string>& a_keys);
 
-	/// A file stem for a capture that named none.
-	std::string AutoCheckpointId(long long a_epochMs);
+	/// A file stem for a capture that named none; the sequence keeps two requests in one millisecond apart.
+	std::string AutoCheckpointId(long long a_epochMs, unsigned long long a_sequence);
 
 	/// True when a_name is `<a_prefix>_NNNN.png` with a four-digit index below a_count: a frame this burst writes.
 	bool IsBurstFrame(std::string_view a_name, std::string_view a_prefix, int a_count);

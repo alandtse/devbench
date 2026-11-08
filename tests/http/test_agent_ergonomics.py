@@ -78,16 +78,28 @@ def test_scenario_status_is_compact_and_pageable(client, tool_schema):
 
 def test_capture_without_a_checkpoint_id_names_the_file(client, tool_schema):
     require_tool(tool_schema, "capture")
-    status, body = client.call("capture", {"kind": "native"})
-    assert status != 400 or "checkpointId" not in str(body), (status, body)
+    status, body = client.call("capture", {"kind": "native", "timeoutMs": 1000})
+    assert status in (200, 504), (status, body)
     if status == 200:
         assert body["checkpointId"].startswith("shot_"), body
+    else:
+        assert "no new screenshot" in body["error"], body
 
 
 def test_capture_accepts_screenshot_as_an_action(client, tool_schema):
     require_tool(tool_schema, "capture")
-    status, body = client.call("capture", {"action": "screenshot", "kind": "native"})
-    assert "unknown action" not in str(body), (status, body)
+    args = {"kind": "native", "timeoutMs": 1000}
+    plain_status, plain = client.call("capture", {**args, "action": "capture"})
+    status, body = client.call("capture", {**args, "action": "screenshot"})
+    assert status == plain_status, (status, body, plain_status, plain)
+    assert "action" in tool_schema["capture"]["inputSchema"]["properties"]
+    assert "screenshot" in tool_schema["capture"]["inputSchema"]["properties"]["action"]["enum"]
+
+
+def test_burst_without_a_checkpoint_id_is_not_a_malformed_request(client, tool_schema):
+    require_tool(tool_schema, "capture")
+    status, body = client.call("capture", {"action": "burst", "count": 5})
+    assert status != 400, (status, body)
 
 
 def test_forms_find_accepts_type_for_formtype(client, tool_schema):

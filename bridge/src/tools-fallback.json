@@ -593,7 +593,7 @@
         "properties": {
           "action": {
             "description": "capture (default, one frame) | burst (a PNG sequence through the provider) | status (a burst's progress, by runId)",
-            "enum": ["capture", "burst", "status"],
+            "enum": ["capture", "screenshot", "burst", "status"],
             "type": "string"
           },
           "allowNative": {
@@ -920,8 +920,8 @@
           "ms": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 600000,
-            "description": "real-time milliseconds to pause"
+            "maximum": 25000,
+            "description": "real-time milliseconds to pause (max 25000; loop for longer)"
           },
           "until": {
             "type": "string",
@@ -930,8 +930,8 @@
           "timeoutMs": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 600000,
-            "description": "until: give up after this long (default 30000)"
+            "maximum": 25000,
+            "description": "until: give up after this long (default 10000; max 25000, so the call finishes inside the bridge's request timeout)"
           }
         },
         "type": "object"

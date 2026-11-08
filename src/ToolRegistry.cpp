@@ -181,6 +181,8 @@ namespace dvb
 		}
 		const json  coerced = schema ? CoerceArgs(*schema, a_rawArgs) : json(nullptr);
 		const json& callArgs = coerced.is_null() ? a_rawArgs : coerced;
+		ToolContext ctx = a_ctx;
+		ctx.rawArgs = &a_rawArgs;
 
 		std::string unknownKeys;
 		if (knownKeys && callArgs.is_object()) {
@@ -205,11 +207,11 @@ namespace dvb
 		// hundreds of identical console steps and already logs its own start/finish summary, so
 		// per-step lines were pure noise.
 		if (!a_ctx.internal) {
-			const std::string args = callArgs.is_null() ? std::string{} : Dump(callArgs);
+			const std::string args = a_rawArgs.is_null() ? std::string{} : Dump(a_rawArgs);
 			logs::debug("tool '{}' invoked {}", a_name, args.size() > 160 ? Utf8Prefix(args, 160) + "..." : args);
 		}
 		try {
-			auto result = ToolResult::Success(handler(callArgs, a_ctx));
+			auto result = ToolResult::Success(handler(callArgs, ctx));
 			if (!unknownKeys.empty() && result.value.is_object()) {
 				auto& warnings = result.value["warnings"];
 				if (!warnings.is_array())

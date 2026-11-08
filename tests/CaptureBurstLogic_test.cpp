@@ -190,10 +190,12 @@ TEST_CASE("DefaultProvider takes the sole provider or the only non-native one")
 	CHECK(DefaultProvider({ "openshaders", "openshaders.native" }) == "openshaders");
 	CHECK(!DefaultProvider({}).has_value());
 	CHECK(!DefaultProvider({ "a", "b" }).has_value());
+	CHECK(DefaultProvider({ "OpenShaders", "OpenShaders.Native" }) == "OpenShaders");
 	CHECK(!DefaultProvider({ "a.native", "b.native" }).has_value());
 }
 
 TEST_CASE("AutoCheckpointId is a single path segment")
 {
-	CHECK(AutoCheckpointId(1794000000000) == "shot_1794000000000");
+	CHECK(AutoCheckpointId(1794000000000, 3) == "shot_1794000000000_3");
+	CHECK(AutoCheckpointId(1794000000000, 3) != AutoCheckpointId(1794000000000, 4));
 }

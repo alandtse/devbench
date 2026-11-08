@@ -138,8 +138,9 @@ namespace dvb::Capture
 			const std::string given = a_args.value("checkpointId", std::string{});
 			if (!given.empty())
 				return given;
+			static std::atomic<unsigned long long> sequence{ 0 };
 			return CaptureBurstLogic::AutoCheckpointId(
-				duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
+				duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count(), sequence.fetch_add(1, std::memory_order_relaxed));
 		}
 
 		// ---- game root / directory scanning (shared by the native fallback and inspect kind=screenshots) ----
@@ -798,7 +799,8 @@ namespace dvb::Capture
 			const std::string requestId = std::format("{}#{}#{}", checkpointId,
 				a_args.value("runId", 0), g_requestSeq.fetch_add(1, std::memory_order_relaxed));
 
-			json providerArgs = a_args;
+			json providerArgs = a_ctx.rawArgs ? *a_ctx.rawArgs : a_args;
+			providerArgs["checkpointId"] = checkpointId;
 			providerArgs["outputPath"] = GenericPath(outputPath);
 			providerArgs["requestId"] = requestId;
 
@@ -814,7 +816,7 @@ namespace dvb::Capture
 			const long  pollMs = a_args.value("pollMs", static_cast<long>(100));
 			const Ready ready = AwaitArtifact(sinceSeq, requestId, outputPath, timeoutMs, pollMs);
 			if (!ready.ok) {
-				PublishAbandoned(requestId, GenericPath(outputPath), a_args, "timeout");
+				PublishAbandoned(requestId, GenericPath(outputPath), providerArgs, "timeout");
 				throw ToolError(504, std::format("capture provider '{}' did not deliver: {}", a_providerKey, ready.error));
 			}
 
@@ -1069,7 +1071,7 @@ namespace dvb::Capture
 			{ "type", "object" },
 			{ "properties", json{
 								{ "kind", json{ { "type", "string" }, { "enum", kinds }, { "description", "auto (default) | native | providers | extensions | a registered provider key" } } },
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "capture", "burst", "status" }) }, { "description", "capture (default, one frame) | burst (a PNG sequence through the provider) | status (a burst's progress, by runId)" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "capture", "screenshot", "burst", "status" }) }, { "description", "capture (default, one frame) | burst (a PNG sequence through the provider) | status (a burst's progress, by runId)" } } },
 								{ "count", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", 240 }, { "description", "burst: frames to capture (required)" } } },
 								{ "everyNFrames", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", 600 }, { "description", "burst: capture every Nth presented engine frame (default 1); not game time, so it does not follow the time scale" } } },
 								{ "runId", json{ { "type", "integer" }, { "description", "status: the runId a burst returned" } } },

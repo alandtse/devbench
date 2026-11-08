@@ -80,9 +80,17 @@ async function main(): Promise<void> {
     { capabilities: { tools: { listChanged: true } } },
   );
 
+  let advertisedNames = "";
+  const namesOf = (tools: { name: string }[]): string =>
+    tools
+      .map((t) => t.name)
+      .sort()
+      .join(",");
+
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
       const tools = await listTools(target);
+      advertisedNames = namesOf(tools);
       return { tools: tools.map(toMcpTool) };
     } catch (e) {
       if (e instanceof GameUnavailableError) {
@@ -114,7 +122,10 @@ async function main(): Promise<void> {
       // fetched tools/list, so it still advertises a tool this game lacks: tell it
       // to fetch the list again.
       if (/unknown tool/i.test(message)) {
-        server.sendToolListChanged().catch(() => {});
+        const live = await listTools(target).then(namesOf, () => undefined);
+        if (live !== undefined && live !== advertisedNames) {
+          server.sendToolListChanged().catch(() => {});
+        }
       }
       return {
         content: [
