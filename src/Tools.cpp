@@ -3230,7 +3230,9 @@ namespace dvb
 				"'name' via the UI queue (kShow) — opens hub menus from a plain name (TweenMenu, "
 				"'Journal Menu', MagicMenu, MapMenu, StatsMenu, InventoryMenu, FavoritesMenu); context "
 				"menus that need a target ref (ContainerMenu/BarterMenu/BookMenu) won't open this way. "
-				"'close' hides a menu by 'name' via the UI queue (kHide). 'invoke' dispatches to a "
+				"'close' hides a menu by 'name' via the UI queue (kHide). 'readBook' opens the real BookMenu for a "
+				"book 'formId' (a book form or a reference to one; 'activate' reads a world reference as the player does). "
+				"'invoke' dispatches to a "
 				"consumer-registered (mod) menu by 'name' — NOT 'open' (mod menus aren't engine menus). A mod "
 				"exposes its menu via the C-ABI RegisterMenuHandler; 'list' returns those under 'registered'.";
 			menu.description += RegisteredExtensionSummary("menu", "menus (invoke with action='invoke', name=<x>)");
