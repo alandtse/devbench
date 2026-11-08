@@ -58,6 +58,7 @@ TEST_CASE("unknown tool yields a 404 result, never throws")
 	CHECK_NOTHROW(r = reg.Invoke("nope", json::object(), ToolContext{}));
 	CHECK(!r.ok);
 	CHECK(r.errorCode == 404);
+	CHECK(r.errorMessage.find("inspect kind=registrants") != std::string::npos);
 }
 
 TEST_CASE("ToolError is folded into a failure result with its code")
