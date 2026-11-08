@@ -107,7 +107,22 @@ namespace dvb
 		/// fails with 400 instead of just gaining a `warnings` entry (object replies only). Off by default.
 		void SetStrictArgs(bool a_strict) { m_strictArgs.store(a_strict, std::memory_order_relaxed); }
 
+		/// What to add to a reply: `fields` are merged into an object result (never overwriting a key the
+		/// tool set), and `summary`, when not empty, is appended to a failure's message.
+		struct Annotation
+		{
+			json        fields;
+			std::string summary;
+		};
+		using Annotator = std::function<Annotation()>;
+
+		/// Called after every tool call except scenario/replay-driven ones and calls that pass
+		/// `noNotices: true`, so a blocking menu or a posted notice reaches the agent on its next reply.
+		void SetAnnotator(Annotator a_annotator);
+
 	private:
+		ToolResult InvokeCore(std::string_view a_name, const json& a_args, const ToolContext& a_ctx) const;
+
 		struct Entry
 		{
 			ToolDescriptor desc;
@@ -119,5 +134,7 @@ namespace dvb
 		std::unordered_map<std::string, Entry> m_tools;
 		RegistrationListener                   m_onRegister;
 		std::atomic<bool>                      m_strictArgs{ false };
+		mutable std::mutex                     m_annotatorMutex;
+		Annotator                              m_annotator;
 	};
 }

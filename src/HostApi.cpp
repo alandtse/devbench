@@ -4,6 +4,7 @@
 #include "EventBus.h"
 #include "GameState.h"
 #include "Json.h"
+#include "Notices.h"
 #include "TimeScaleControl.h"
 #include "ToolExtensions.h"
 #include "ToolRegistry.h"
@@ -160,6 +161,22 @@ namespace dvb::HostApi
 			float GetTimeScale() override
 			{
 				return TimeScaleControl::Effective();
+			}
+
+			bool PostNotice(const char* a_key, const char* a_source, const char* a_severity, const char* a_text, std::uint32_t a_ttlMs) override
+			{
+				if (!a_key || !*a_key || !a_text || !*a_text)
+					return false;
+				Notices::Severity severity = Notices::Severity::kInfo;
+				if (a_severity)
+					(void)Notices::ParseSeverity(a_severity, severity);
+				Notices::Global().Post(a_key, a_source && *a_source ? a_source : "plugin", severity, a_text, a_ttlMs, Notices::NowMs());
+				return true;
+			}
+
+			bool ClearNotice(const char* a_key) override
+			{
+				return a_key && Notices::Global().Clear(a_key);
 			}
 		};
 

@@ -81,7 +81,49 @@ namespace dvb
 		return out;
 	}
 
+	void ToolRegistry::SetAnnotator(Annotator a_annotator)
+	{
+		std::lock_guard lock(m_annotatorMutex);
+		m_annotator = std::move(a_annotator);
+	}
+
 	ToolResult ToolRegistry::Invoke(std::string_view a_name, const json& a_args, const ToolContext& a_ctx) const
+	{
+		const bool hasOptOut = a_args.is_object() && a_args.contains("noNotices");
+		const bool quiet = a_ctx.internal || (hasOptOut && a_args.value("noNotices", false));
+		ToolResult result;
+		if (hasOptOut) {
+			json args = a_args;
+			args.erase("noNotices");
+			result = InvokeCore(a_name, args, a_ctx);
+		} else {
+			result = InvokeCore(a_name, a_args, a_ctx);
+		}
+		if (quiet)
+			return result;
+
+		Annotator annotator;
+		{
+			std::lock_guard lock(m_annotatorMutex);
+			annotator = m_annotator;
+		}
+		if (!annotator)
+			return result;
+		try {
+			const Annotation note = annotator();
+			if (result.ok && result.value.is_object()) {
+				for (const auto& [key, value] : note.fields.items())
+					if (!result.value.contains(key))
+						result.value[key] = value;
+			} else if (!result.ok && !note.summary.empty()) {
+				result.errorMessage += std::format(" [{}]", note.summary);
+			}
+		} catch (...) {
+		}
+		return result;
+	}
+
+	ToolResult ToolRegistry::InvokeCore(std::string_view a_name, const json& a_args, const ToolContext& a_ctx) const
 	{
 		// Copy the handler out under the lock; never hold the lock across a handler
 		// (handlers can block on the main thread, re-enter the registry, etc.).

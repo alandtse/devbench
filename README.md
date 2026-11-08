@@ -164,6 +164,10 @@ Missing → auto-created with defaults. Invalid → defaults (logged). All keys 
   // the engine re-enables the feature itself, so devbench pins it off on every camera update. On by default;
   // `camera setPov=vanity` still works.
   "disableVanityCamera": true,
+
+  // Menus hidden the moment they open, so an unattended script is not stuck behind a hint, e.g.
+  // ["Tutorial Menu"]. A message box is never hidden this way (it needs an answered button). Empty = none.
+  "autoDismissMenus": [],
 }
 ```
 
@@ -228,6 +232,22 @@ All tools are reachable over both MCP (`tools/call`) and REST (`POST /api/tool/<
 | `record`   | Capture a manual play-through as a versioned activity trace and replayable scenario. `'start'` samples player pose + POV and OpenVR HMD/controller tracking every `intervalMs`, including exact controller packet/button/touch/axis state, and captures the normalized Skyrim input chain, menu/lifecycle changes, cell transitions, console commands, and a scene manifest on one monotonic clock. `allowNoPlayer=true` permits main-menu/new-game capture before a player exists; optional `correlationId` is retained by start, status, and the recording metadata. Capture stops at the replay contract's 60,000-frame or 30-minute limits and reports `limitReached`/`limitReason`; call `'stop'` to persist the bounded recording. `'stop'` writes compact `devbench-recording-3` JSON. `'replay'` can restore the scene, starts one atomic `vrTrackedSet` sequence, and interleaves keyboard transitions on the recording clock. Legacy recordings are upgraded from wand-indexed controller events; ambiguity and unsupported observational events are reported rather than hidden. Use `replayInputs=false` for pose-only replay. Runtime and scene-coupling gates remain enforced unless explicitly overridden.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 Other mods add their own tools via the C ABI (see [Use devbench from your mod](#use-devbench-from-your-mod)).
+
+### Blocking menus and notices
+
+A tutorial, a survival hint or a message box stops input until it is dismissed, and an agent (or a headless
+script) that does not notice it just sees every action fail. So while a blocking menu is open **every tool
+reply carries `blockedBy`**: `[{ "name": "Tutorial Menu", "hint": "menu action=close name=\"Tutorial Menu\"" }]`.
+A failed call also gets the same text appended to its error. `modal.blocked` and `modal.cleared` events fire
+on the event stream. Always-open menus (`HUD Menu`, `Cursor Menu`, `Fader Menu`, `Mist Menu`, …) never count.
+
+To skip a known hint without a round trip, list it in `autoDismissMenus` (config) or set it live with
+`menu action=autoDismiss names=["Tutorial Menu"]` (`[]` clears; without `names` it returns the list).
+
+The `notice` tool carries any other message the same way: `notice action=post key=… text=… severity=critical`
+(`info | warning | critical`, optional `source`, `ttlMs`) shows up as a `notices` array, most severe first, on
+every reply until `notice action=clear key=…` or it expires. Pass `noNotices=true` on a call to leave both
+fields out.
 
 ## Record, replay, and autorun
 
@@ -431,6 +451,16 @@ if (dvb->GetBuildNumber() >= 12000) {                                // SetTimeS
 
 It returns `false` for an out-of-range scale (0.1..3.0) or while a recording/capture would be made
 incomparable, and the lease always restores the previous scale even if your plugin never calls back.
+
+A registered tool or plugin can also send a message that rides on every tool reply, so an agent sees a
+critical condition on its next call:
+
+```cpp
+if (dvb->GetBuildNumber() >= 13400) {                                // PostNotice: 1.34.0+
+    dvb->PostNotice("yourmod.disk", "yourmod", "critical", "Output disk is full", 0);  // 0 = until cleared
+    dvb->ClearNotice("yourmod.disk");
+}
+```
 
 To add a sub-capability **under an existing base tool** — instead of a whole new tool — register an
 extension keyed by a string (keeps the agent-facing surface small). Opted-in base tools: `menu` and

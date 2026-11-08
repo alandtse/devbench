@@ -105,6 +105,20 @@ namespace DevBenchAPI
 		// ABI: appended after SetTimeScale — call only when GetBuildNumber() >= 12000
 		// (devbench 1.20.0).
 		virtual float GetTimeScale() = 0;
+
+		// Posts a message that every tool reply carries (a `notices` array) until it is cleared or
+		// a_ttlMs elapses (0 = until cleared), so an agent or a headless script sees a critical
+		// condition on its next call. A repeated a_key replaces the notice. a_severity is "info",
+		// "warning" or "critical" (anything else reads as "info"). Returns false for an empty key or text.
+		//
+		// ABI: appended after GetTimeScale — call only when GetBuildNumber() >= 13400
+		// (devbench 1.34.0).
+		virtual bool PostNotice(const char* a_key, const char* a_source, const char* a_severity, const char* a_text, std::uint32_t a_ttlMs) = 0;
+
+		// Removes the notice with a_key. Returns false if there was none.
+		//
+		// ABI: appended after PostNotice — call only when GetBuildNumber() >= 13400.
+		virtual bool ClearNotice(const char* a_key) = 0;
 	};
 }
 
