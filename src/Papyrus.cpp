@@ -225,8 +225,8 @@ namespace dvb::Papyrus
 				v.SetString(ToGame(a_arg.get<std::string>()));
 			} else if (a_arg.is_array()) {
 				return JsonArrayToVariable(a_vm, a_arg);
-			} else if (a_arg.is_object() && a_arg.contains("form")) {
-				const std::string ref = a_arg["form"].get<std::string>();
+			} else if (a_arg.is_object() && (a_arg.contains("form") || a_arg.contains("formId"))) {
+				const std::string ref = a_arg[a_arg.contains("form") ? "form" : "formId"].get<std::string>();
 				RE::TESForm*      form = LookupForm(ref);
 				if (!form)
 					throw ToolError(400, std::format("papyrus call: form '{}' not found (formId hex or EditorID)", ref));

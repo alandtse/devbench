@@ -19,11 +19,9 @@ import pytest
         {"action": "burst", "checkpointId": "b", "count": 5, "excludeUi": "yes"},
         {"action": "burst", "checkpointId": "b", "count": 5, "subrect": {"x": 0.6, "y": 0, "w": 0.5, "h": 1}},
         {"action": "burst", "checkpointId": "b", "count": 5, "timeoutMs": 0},
-        {"action": "burst", "count": 5},
         {"action": "burst", "checkpointId": "a/b", "count": 5},
         {"action": "status"},
         {"action": "status", "runId": 0},
-        {"action": "status", "runId": "1"},
     ],
 )
 def test_burst_rejects_a_malformed_request(client, args):
@@ -43,7 +41,7 @@ def test_burst_refuses_the_native_fallback(client):
     assert "provider" in body["error"], body
 
 
-def test_a_single_capture_still_needs_its_checkpoint_id(client):
-    status, body = client.call("capture", {})
-    assert status == 400, (status, body)
-    assert "checkpointId" in body["error"], body
+def test_a_single_capture_without_a_checkpoint_id_gets_a_generated_one(client, capture_provider):
+    body = client.ok("capture", {})
+    assert body["checkpointId"].startswith("shot_"), body
+    assert body["checkpointId"] in body["path"], body

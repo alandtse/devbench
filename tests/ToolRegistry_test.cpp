@@ -6,6 +6,7 @@
 
 #include "ToolRegistry.h"
 
+using dvb::CoerceArgs;
 using dvb::json;
 using dvb::ToolContext;
 using dvb::ToolDescriptor;
@@ -57,6 +58,7 @@ TEST_CASE("unknown tool yields a 404 result, never throws")
 	CHECK_NOTHROW(r = reg.Invoke("nope", json::object(), ToolContext{}));
 	CHECK(!r.ok);
 	CHECK(r.errorCode == 404);
+	CHECK(r.errorMessage.find("inspect kind=registrants") != std::string::npos);
 }
 
 TEST_CASE("ToolError is folded into a failure result with its code")
@@ -205,4 +207,43 @@ TEST_CASE("strict mode rejects an unknown key with 400 and does not run the hand
 	ToolContext internal;
 	internal.internal = true;  // scenario/replay steps are never rejected
 	CHECK(reg.Invoke("t", json{ { "params", 1 } }, internal).ok);
+}
+
+TEST_CASE("stringified arguments are coerced to the schema's types")
+{
+	ToolRegistry   reg;
+	ToolDescriptor d = Desc("typed");
+	d.inputSchema = json{ { "type", "object" },
+		{ "properties", json{ { "flag", json{ { "type", "boolean" } } }, { "n", json{ { "type", "integer" } } }, { "x", json{ { "type", "number" } } }, { "list", json{ { "type", "array" } } }, { "s", json{ { "type", "string" } } } } } };
+	reg.Register(std::move(d), [](const json& a_args, const ToolContext&) { return a_args; });
+
+	const ToolResult r = reg.Invoke("typed", json{ { "flag", "true" }, { "n", "20000" }, { "x", "1.5" }, { "list", "[\"a\",\"b\"]" }, { "s", "true" } }, ToolContext{});
+	CHECK(r.ok);
+	CHECK(r.value["flag"] == true);
+	CHECK(r.value["n"] == 20000);
+	CHECK(r.value["x"] == 1.5);
+	CHECK(r.value["list"] == (json::array({ "a", "b" })));
+	CHECK(r.value["s"] == "true");  // a string property is left alone
+}
+
+TEST_CASE("an argument that does not parse as its declared type is passed through")
+{
+	const json schema{ { "properties", json{ { "flag", json{ { "type", "boolean" } } }, { "n", json{ { "type", "integer" } } } } } };
+	CHECK(CoerceArgs(schema, json{ { "flag", "yes" }, { "n", "1.5" } }).is_null());
+	CHECK(CoerceArgs(schema, json{ { "flag", true }, { "n", 3 } }).is_null());
+}
+
+TEST_CASE("a handler can reach the caller's arguments as sent")
+{
+	ToolRegistry   reg;
+	ToolDescriptor d = Desc("typed");
+	d.inputSchema = json{ { "type", "object" }, { "properties", json{ { "list", json{ { "type", "array" } } } } } };
+	reg.Register(std::move(d), [](const json& a_args, const ToolContext& a_ctx) {
+		return json{ { "coerced", a_args["list"] }, { "raw", a_ctx.rawArgs ? (*a_ctx.rawArgs)["list"] : json(nullptr) } };
+	});
+
+	const ToolResult r = reg.Invoke("typed", json{ { "list", "[1,2]" } }, ToolContext{});
+	CHECK(r.ok);
+	CHECK(r.value["coerced"] == (json::array({ 1, 2 })));
+	CHECK(r.value["raw"] == "[1,2]");
 }

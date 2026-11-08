@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace dvb::CaptureBurstLogic
 {
@@ -33,6 +34,13 @@ namespace dvb::CaptureBurstLogic
 	/// Validates a `capture action='burst'` request. Nullopt with a_error set when a field is missing, not of its type, or
 	/// outside its range.
 	std::optional<BurstRequest> ParseBurst(const json& a_args, std::string& a_error);
+
+	/// The provider `kind='auto'` uses: the only one, or else the only one whose key does not end in `.native` (a
+	/// provider's low-fidelity fallback sits beside it under that suffix). Nullopt when the choice is ambiguous.
+	std::optional<std::string> DefaultProvider(const std::vector<std::string>& a_keys);
+
+	/// A file stem for a capture that named none; the sequence keeps two requests in one millisecond apart.
+	std::string AutoCheckpointId(long long a_epochMs, unsigned long long a_sequence);
 
 	/// True when a_name is `<a_prefix>_NNNN.png` with a four-digit index below a_count: a frame this burst writes.
 	bool IsBurstFrame(std::string_view a_name, std::string_view a_prefix, int a_count);

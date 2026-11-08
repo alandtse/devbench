@@ -133,6 +133,16 @@ namespace dvb::Capture
 				throw ToolError(400, std::format("invalid '{}': must be a single path segment (no '/', '\\\\', '.', or '..')", a_field));
 		}
 
+		std::string CheckpointIdOf(const json& a_args)
+		{
+			const std::string given = a_args.value("checkpointId", std::string{});
+			if (!given.empty())
+				return given;
+			static std::atomic<unsigned long long> sequence{ 0 };
+			return CaptureBurstLogic::AutoCheckpointId(
+				duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count(), sequence.fetch_add(1, std::memory_order_relaxed));
+		}
+
 		// ---- game root / directory scanning (shared by the native fallback and inspect kind=screenshots) ----
 
 		struct ScannedFile
@@ -406,9 +416,7 @@ namespace dvb::Capture
 		json Native(const json& a_args)
 		{
 			const auto        start = steady_clock::now();
-			const std::string checkpointId = a_args.value("checkpointId", std::string{});
-			if (checkpointId.empty())
-				throw ToolError(400, "capture requires 'checkpointId'");
+			const std::string checkpointId = CheckpointIdOf(a_args);
 			ValidatePathSegment("checkpointId", checkpointId);
 
 			// Preflight: bAllowScreenShot can disable vanilla capture outright.
@@ -474,8 +482,10 @@ namespace dvb::Capture
 				std::string dirList;
 				for (const auto& d : dirs)
 					dirList += (dirList.empty() ? "" : ", ") + d.string();
-				PublishAbandoned("", "", a_args, "timeout");
-				throw ToolError(504, std::format("no new screenshot appeared within {}ms (scanned: {})", timeoutMs, dirList));
+				json abandoned = a_args;
+				abandoned["checkpointId"] = checkpointId;
+				PublishAbandoned("", "", abandoned, "timeout");
+				throw ToolError(504, std::format("no new screenshot appeared within {}ms for checkpointId '{}' (scanned: {})", timeoutMs, checkpointId, dirList));
 			}
 
 			const std::string recording = a_args.value("recording", std::string("adhoc"));
@@ -606,8 +616,8 @@ namespace dvb::Capture
 				return a_kind;
 			}
 			const auto keys = ToolExtensions::Keys("capture");
-			if (keys.size() == 1)
-				return keys.front();
+			if (const auto chosen = CaptureBurstLogic::DefaultProvider(keys))
+				return *chosen;
 			if (keys.empty())
 				throw ToolError(404, "no capture provider registered; a burst needs one (see inspect kind=registrants)");
 			std::string names;
@@ -622,9 +632,7 @@ namespace dvb::Capture
 			const auto  request = CaptureBurstLogic::ParseBurst(a_args, error);
 			if (!request)
 				throw ToolError(400, "capture burst: " + error);
-			const std::string checkpointId = a_args.value("checkpointId", std::string{});
-			if (checkpointId.empty())
-				throw ToolError(400, "capture burst requires 'checkpointId', the file prefix");
+			const std::string checkpointId = CheckpointIdOf(a_args);
 			ValidatePathSegment("checkpointId", checkpointId);
 			const std::string provider = ResolveBurstProvider(a_args.value("kind", std::string("auto")));
 			auto              entry = ToolExtensions::Find("capture", provider);
@@ -777,9 +785,7 @@ namespace dvb::Capture
 			if (!entry)
 				throw ToolError(404, std::format("no capture provider registered under '{}'", a_providerKey));
 
-			const std::string checkpointId = a_args.value("checkpointId", std::string{});
-			if (checkpointId.empty())
-				throw ToolError(400, "capture requires 'checkpointId'");
+			const std::string checkpointId = CheckpointIdOf(a_args);
 			ValidatePathSegment("checkpointId", checkpointId);
 			const std::string recording = a_args.value("recording", std::string("adhoc"));
 			const std::string variant = a_args.value("variant", std::string("default"));
@@ -795,7 +801,8 @@ namespace dvb::Capture
 			const std::string requestId = std::format("{}#{}#{}", checkpointId,
 				a_args.value("runId", 0), g_requestSeq.fetch_add(1, std::memory_order_relaxed));
 
-			json providerArgs = a_args;
+			json providerArgs = a_ctx.rawArgs ? *a_ctx.rawArgs : a_args;
+			providerArgs["checkpointId"] = checkpointId;
 			providerArgs["outputPath"] = GenericPath(outputPath);
 			providerArgs["requestId"] = requestId;
 
@@ -811,7 +818,7 @@ namespace dvb::Capture
 			const long  pollMs = a_args.value("pollMs", static_cast<long>(100));
 			const Ready ready = AwaitArtifact(sinceSeq, requestId, outputPath, timeoutMs, pollMs);
 			if (!ready.ok) {
-				PublishAbandoned(requestId, GenericPath(outputPath), a_args, "timeout");
+				PublishAbandoned(requestId, GenericPath(outputPath), providerArgs, "timeout");
 				throw ToolError(504, std::format("capture provider '{}' did not deliver: {}", a_providerKey, ready.error));
 			}
 
@@ -952,7 +959,9 @@ namespace dvb::Capture
 
 		RejectMisnamedArgs(a_args);
 
-		const std::string action = a_args.value("action", std::string("capture"));
+		std::string action = a_args.value("action", std::string("capture"));
+		if (action == "screenshot")
+			action = "capture";
 		if (action == "status")
 			return BurstStatus(a_args);
 		if (action == "burst")
@@ -979,8 +988,8 @@ namespace dvb::Capture
 
 		if (kind == "auto") {
 			const auto keys = ToolExtensions::Keys("capture");
-			if (keys.size() == 1)
-				return DispatchToProvider(keys.front(), a_args, a_ctx);
+			if (const auto chosen = CaptureBurstLogic::DefaultProvider(keys))
+				return DispatchToProvider(*chosen, a_args, a_ctx);
 			if (keys.empty()) {
 				if (a_args.value("allowNative", false))
 					return Native(a_args);
@@ -1018,8 +1027,8 @@ namespace dvb::Capture
 			"Capture a frame (screenshot) and return its file path plus correlation metadata. "
 			"kind='auto' (default) picks the sole registered capture provider (a mod that "
 			"registered under the C-ABI RegisterToolExtension(\"capture\", <key>, …) — see inspect "
-			"kind=registrants); zero registered providers is a 404 UNLESS allowNative=true, and two "
-			"or more is a 400 naming them (never silently guessed). kind='native' forces the "
+			"kind=registrants) or, among several, the only one not keyed '<name>.native'; zero registered providers is a 404 UNLESS allowNative=true, and an "
+			"ambiguous set is a 400 naming them (never silently guessed). kind='native' forces the "
 			"low-fidelity vanilla fallback (main-thread MenuControls::QueueScreenshot() + a "
 			"directory poll — no path control, no completion signal beyond polling, format fixed by "
 			"the user's .ini, may include open UI) — NOT comparable against a provider-authored "
@@ -1064,11 +1073,11 @@ namespace dvb::Capture
 			{ "type", "object" },
 			{ "properties", json{
 								{ "kind", json{ { "type", "string" }, { "enum", kinds }, { "description", "auto (default) | native | providers | extensions | a registered provider key" } } },
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "capture", "burst", "status" }) }, { "description", "capture (default, one frame) | burst (a PNG sequence through the provider) | status (a burst's progress, by runId)" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "capture", "screenshot", "burst", "status" }) }, { "description", "capture (default, one frame) | burst (a PNG sequence through the provider) | status (a burst's progress, by runId)" } } },
 								{ "count", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", 240 }, { "description", "burst: frames to capture (required)" } } },
 								{ "everyNFrames", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", 600 }, { "description", "burst: capture every Nth presented engine frame (default 1); not game time, so it does not follow the time scale" } } },
 								{ "runId", json{ { "type", "integer" }, { "description", "status: the runId a burst returned" } } },
-								{ "checkpointId", json{ { "type", "string" }, { "description", "REQUIRED for capture and burst (not status) — stable file stem and correlation key; a burst's frames are <checkpointId>_NNNN.png" } } },
+								{ "checkpointId", json{ { "type", "string" }, { "description", "file stem and correlation key (default shot_<epoch ms>_<n>; use the returned checkpointId or path); a burst's frames are <checkpointId>_NNNN.png" } } },
 								{ "recording", json{ { "type", "string" }, { "description", "recording file stem, for correlation (default 'adhoc')" } } },
 								{ "variant", json{ { "type", "string" }, { "description", "variant under test, for correlation (default 'default')" } } },
 								{ "allowNative", json{ { "type", "boolean" }, { "description", "permit kind=auto to fall back to the vanilla path when no provider is registered (default false)" } } },

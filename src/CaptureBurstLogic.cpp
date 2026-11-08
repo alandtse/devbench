@@ -1,10 +1,35 @@
 #include "CaptureBurstLogic.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 namespace dvb::CaptureBurstLogic
 {
+	std::optional<std::string> DefaultProvider(const std::vector<std::string>& a_keys)
+	{
+		if (a_keys.size() == 1)
+			return a_keys.front();
+		constexpr std::string_view kNativeSuffix = ".native";
+		std::optional<std::string> chosen;
+		for (const auto& key : a_keys) {
+			const bool native = key.size() >= kNativeSuffix.size() &&
+			                    std::equal(kNativeSuffix.begin(), kNativeSuffix.end(), key.end() - static_cast<std::ptrdiff_t>(kNativeSuffix.size()),
+									[](char a, char b) { return a == std::tolower(static_cast<unsigned char>(b)); });
+			if (native)
+				continue;
+			if (chosen)
+				return std::nullopt;
+			chosen = key;
+		}
+		return chosen;
+	}
+
+	std::string AutoCheckpointId(long long a_epochMs, unsigned long long a_sequence)
+	{
+		return "shot_" + std::to_string(a_epochMs) + "_" + std::to_string(a_sequence);
+	}
+
 	namespace
 	{
 		constexpr long             kBaseTimeoutMs = 5000;
