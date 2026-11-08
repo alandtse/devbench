@@ -54,8 +54,14 @@ namespace dvb::ModalWatch
 			Notices::Severity severity = Notices::Severity::kInfo;
 			if (a_args.contains("severity") && !Notices::ParseSeverity(a_args.value("severity", std::string{}), severity))
 				throw ToolError(400, "severity must be info, warning or critical");
-			board.Post(key, a_args.value("source", std::string("agent")), severity, text,
-				a_args.value("ttlMs", 0u), Notices::NowMs());
+			std::uint32_t ttlMs = 0;
+			if (a_args.contains("ttlMs")) {
+				const auto& v = a_args["ttlMs"];
+				if (!v.is_number_unsigned() || v.get<std::uint64_t>() > Notices::kMaxTtlMs)
+					throw ToolError(400, std::format("ttlMs must be an integer from 0 to {}", Notices::kMaxTtlMs));
+				ttlMs = v.get<std::uint32_t>();
+			}
+			board.Post(key, a_args.value("source", std::string("agent")), severity, text, ttlMs, Notices::NowMs());
 			return json{ { "posted", true }, { "key", key } };
 		}
 	}
@@ -83,7 +89,7 @@ namespace dvb::ModalWatch
 								{ "text", { { "type", "string" } } },
 								{ "severity", { { "type", "string" }, { "enum", { "info", "warning", "critical" } } } },
 								{ "source", { { "type", "string" } } },
-								{ "ttlMs", { { "type", "integer" }, { "minimum", 0 } } },
+								{ "ttlMs", { { "type", "integer" }, { "minimum", 0 }, { "maximum", Notices::kMaxTtlMs } } },
 							} }
 		};
 		a_registry.Register(std::move(notice), NoticeHandler);

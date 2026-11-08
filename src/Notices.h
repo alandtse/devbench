@@ -25,10 +25,11 @@ namespace dvb::Notices
 		long long   expiresMs = 0;  ///< 0 = until cleared
 	};
 
-	constexpr std::size_t kMaxNotices = 32;
-	constexpr std::size_t kMaxKeyBytes = 64;
-	constexpr std::size_t kMaxSourceBytes = 64;
-	constexpr std::size_t kMaxTextBytes = 500;
+	constexpr std::size_t   kMaxNotices = 32;
+	constexpr std::size_t   kMaxKeyBytes = 64;
+	constexpr std::size_t   kMaxSourceBytes = 64;
+	constexpr std::size_t   kMaxTextBytes = 500;
+	constexpr std::uint32_t kMaxTtlMs = 24 * 60 * 60 * 1000;
 
 	/// "info" | "warning" | "critical"; ParseSeverity returns false (a_out untouched) for any other name.
 	[[nodiscard]] const char* SeverityName(Severity a_severity);

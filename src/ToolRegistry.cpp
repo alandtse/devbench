@@ -90,7 +90,9 @@ namespace dvb
 	ToolResult ToolRegistry::Invoke(std::string_view a_name, const json& a_args, const ToolContext& a_ctx) const
 	{
 		const bool hasOptOut = a_args.is_object() && a_args.contains("noNotices");
-		const bool quiet = a_ctx.internal || (hasOptOut && a_args.value("noNotices", false));
+		if (hasOptOut && !a_args["noNotices"].is_boolean())
+			return ToolResult::Failure(400, "'noNotices' must be a boolean");
+		const bool quiet = a_ctx.internal || (hasOptOut && a_args["noNotices"].get<bool>());
 		ToolResult result;
 		if (hasOptOut) {
 			json args = a_args;
@@ -118,7 +120,10 @@ namespace dvb
 			} else if (!result.ok && !note.summary.empty()) {
 				result.errorMessage += std::format(" [{}]", note.summary);
 			}
+		} catch (const std::exception& e) {
+			logs::warn("tool '{}': annotator failed: {}", a_name, e.what());
 		} catch (...) {
+			logs::warn("tool '{}': annotator failed", a_name);
 		}
 		return result;
 	}

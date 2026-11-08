@@ -40,6 +40,15 @@ TEST_CASE("The board stays at its cap by dropping the oldest notice")
 	CHECK(active.front().key == "k5");
 }
 
+TEST_CASE("A key past the byte cap clears with the same long key")
+{
+	dvb::Notices::Board board;
+	const std::string   longKey(dvb::Notices::kMaxKeyBytes + 1, 'k');
+	board.Post(longKey, "p", Severity::kInfo, "x", 0, 0);
+	CHECK(board.Clear(longKey));
+	CHECK(board.Active(0).empty());
+}
+
 TEST_CASE("ParseSeverity rejects an unknown name")
 {
 	Severity s = Severity::kWarning;
@@ -56,7 +65,7 @@ TEST_CASE("Only non-benign menus block, each with a hint")
 	CHECK(blockers[0].name == "MessageBoxMenu");
 	CHECK(blockers[0].hint.find("accept") != std::string::npos);
 	CHECK(blockers[1].hint == "menu action=close name=\"Tutorial Menu\"");
-	CHECK(dvb::Modal::Blockers({ "HUD Menu", "Mist Menu" }).empty());
+	CHECK(dvb::Modal::Blockers({ "HUD Menu", "Mist Menu", "LootMenu" }).empty());
 }
 
 TEST_CASE("A message box is never auto-dismissed")
@@ -94,6 +103,15 @@ TEST_CASE("The annotator appends its summary to a failure")
 	const auto r = reg.Invoke("bad", json::object(), {});
 	CHECK(!r.ok);
 	CHECK(r.errorMessage == "nope [blocked]");
+}
+
+TEST_CASE("A non-boolean noNotices is a 400")
+{
+	dvb::ToolRegistry reg;
+	Fill(reg);
+	const auto r = reg.Invoke("ok", json{ { "noNotices", "yes" } }, {});
+	CHECK(!r.ok);
+	CHECK(r.errorCode == 400);
 }
 
 TEST_CASE("noNotices and internal calls skip the annotator")

@@ -61,8 +61,9 @@ namespace dvb::Notices
 
 	bool Board::Clear(const std::string& a_key)
 	{
-		std::lock_guard lock(m_mutex);
-		return std::erase_if(m_notices, [&](const Notice& x) { return x.key == a_key; }) > 0;
+		const std::string key = Truncate(a_key, kMaxKeyBytes);
+		std::lock_guard   lock(m_mutex);
+		return std::erase_if(m_notices, [&](const Notice& x) { return x.key == key; }) > 0;
 	}
 
 	std::vector<Notice> Board::Active(long long a_nowMs)

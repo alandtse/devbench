@@ -22,8 +22,8 @@ namespace dvb::Modal
 	/// Menus that are open during normal play and never block.
 	inline bool IsBenign(std::string_view a_name)
 	{
-		static constexpr std::array<std::string_view, 6> kBenign = {
-			"HUD Menu", "Cursor Menu", "Fader Menu", "Mist Menu", "Console", "Overlay Interaction Menu"
+		static constexpr std::array<std::string_view, 7> kBenign = {
+			"HUD Menu", "Cursor Menu", "Fader Menu", "Mist Menu", "LootMenu", "Console", "Overlay Interaction Menu"
 		};
 		return std::find(kBenign.begin(), kBenign.end(), a_name) != kBenign.end();
 	}
@@ -34,13 +34,13 @@ namespace dvb::Modal
 		if (a_name == kMessageBox)
 			return "menu action=describe to read it, then menu action=accept index=N (close does not dismiss a message box)";
 		if (a_name == "Loading Menu")
-			return "a load is in progress; wait for the postLoadGame event";
+			return "a load or door transition is in progress; poll menu action=list until it closes";
 		if (a_name == "MainMenu" || a_name == "Main Menu")
 			return "the game is at the main menu; load a save with game action=load or loadLast";
 		return std::format("menu action=close name=\"{}\"", a_name);
 	}
 
-	/// The open menus that block, in the order given, each with its hint.
+	/// The open menus that block, sorted by name, each with its hint.
 	inline std::vector<Blocker> Blockers(const std::vector<std::string>& a_openMenus)
 	{
 		std::vector<Blocker> out;
