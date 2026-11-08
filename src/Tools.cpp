@@ -19,6 +19,7 @@
 #include "GameEvents.h"
 #include "GameState.h"
 #include "GameText.h"
+#include "Gfx.h"
 #include "HeldLightsLogic.h"
 #include "HostApi.h"
 #include "InspectLogic.h"
@@ -3734,6 +3735,7 @@ namespace dvb
 		a_registry.Register(BuildInspectDescriptor(), &InspectHandler);
 		a_registry.Register(BuildMenuDescriptor(), &MenuHandler);
 		a_registry.Register(Capture::BuildCaptureDescriptor(), &Capture::Handle);
+		a_registry.Register(Gfx::BuildDescriptor(), &Gfx::Handle);
 
 		// When a mod registers a kind/menu/provider, rebuild that base tool's descriptor so the new
 		// key is discoverable on the first call (the registry's registration path re-registers it
