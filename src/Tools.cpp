@@ -25,6 +25,7 @@
 #include "Json.h"
 #include "KeyboardInput.h"
 #include "MainThread.h"
+#include "ModalWatch.h"
 #include "Papyrus.h"
 #include "Recording.h"
 #include "ReplayDriver.h"
@@ -866,6 +867,18 @@ namespace dvb
 						q->AddMessage(name.c_str(), RE::UI_MESSAGE_TYPE::kHide, nullptr);
 				});
 				return json{ { "queued", true }, { "action", "close" }, { "name", name } };
+			}
+
+			if (action == "autoDismiss") {
+				if (a_args.contains("names")) {
+					if (!a_args["names"].is_array())
+						throw ToolError(400, "'names' must be an array of menu names");
+					std::vector<std::string> names;
+					for (const auto& n : a_args["names"])
+						names.push_back(n.get<std::string>());
+					ModalWatch::SetAutoDismiss(names);
+				}
+				return json{ { "autoDismiss", ModalWatch::AutoDismiss() } };
 			}
 
 			if (action == "describe") {
@@ -3233,18 +3246,20 @@ namespace dvb
 				"menus that need a target ref (ContainerMenu/BarterMenu/BookMenu) won't open this way. "
 				"'close' hides a menu by 'name' via the UI queue (kHide). 'readBook' opens the real BookMenu for a "
 				"book 'formId' (a book form or a reference to one; 'activate' reads a world reference as the player does). "
-				"'invoke' dispatches to a "
+				"'autoDismiss' with 'names' (an array; [] clears) hides those menus the moment they open (e.g. [\"Tutorial Menu\"]); without 'names' it "
+				"returns the list; a message box cannot be listed. 'invoke' dispatches to a "
 				"consumer-registered (mod) menu by 'name' — NOT 'open' (mod menus aren't engine menus). A mod "
 				"exposes its menu via the C-ABI RegisterMenuHandler; 'list' returns those under 'registered'.";
 			menu.description += RegisteredExtensionSummary("menu", "menus (invoke with action='invoke', name=<x>)");
 			menu.inputSchema = json{
 				{ "type", "object" },
 				{ "properties", json{
-									{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "open", "close", "invoke", "readBook" }) }, { "description", "list | describe | accept | open | close | invoke | readBook" } } },
+									{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "open", "close", "invoke", "readBook", "autoDismiss" }) }, { "description", "list | describe | accept | open | close | invoke | readBook | autoDismiss" } } },
 									{ "formId", json{ { "type", "string" }, { "description", "readBook: hex FormID or EditorID of a book form (the tool does not check inventory) or of a reference to a book in the world; opens the real BookMenu." } } },
 									{ "activate", json{ { "type", "boolean" }, { "description", "readBook: activate the reference as the player does (TESObjectBOOK::Activate) instead of opening the menu directly; needs a reference." } } },
 									{ "name", json{ { "type", "string" }, { "description", "open/close: ENGINE menu to show/hide (e.g. TweenMenu). invoke/describe: a registered mod menu (see list .registered, or this tool's description)." } } },
 									{ "index", json{ { "type", "integer" }, { "description", "accept: 0-based button index to select (default 0). See describe's buttons/cancelIndex." } } },
+									{ "names", json{ { "type", "array" }, { "items", json{ { "type", "string" } } }, { "description", "autoDismiss: menu names to hide on open ([] clears; omit to list)." } } },
 								} },
 			};
 			return menu;

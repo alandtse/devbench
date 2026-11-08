@@ -13,6 +13,7 @@
 #include "HostApi.h"
 #include "InputHotkeys.h"
 #include "KeyboardInput.h"
+#include "ModalWatch.h"
 #include "Recording.h"
 #include "RecordingsMenu.h"
 #include "Server.h"
@@ -101,6 +102,7 @@ namespace
 				g_server->Events().SetFrameProvider(&dvb::game::CurrentFrame);
 				g_server->Tools().SetStrictArgs(cfg.strictToolArgs);
 				dvb::RegisterCoreTools(g_server->Tools(), g_server->Events());
+				dvb::ModalWatch::Init(g_server->Tools(), g_server->Events(), cfg.autoDismissMenus);
 				dvb::Recording::SetLoadSettleMs(cfg.loadSettleMs);
 				dvb::Recording::SetDefaultIntervalMs(cfg.recordIntervalMs);
 				dvb::Recording::SetCoupling(cfg.couplingAnchorMs, cfg.couplingCellMs, cfg.cleanTransition, cfg.cleanTransitionCell);
