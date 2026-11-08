@@ -200,7 +200,7 @@
             "type": "string"
           },
           "formId": {
-            "description": "readBook: hex FormID or EditorID of a book form (from the player's inventory) or of a reference to a book in the world; opens the real BookMenu.",
+            "description": "readBook: hex FormID or EditorID of a book form (the tool does not check inventory) or of a reference to a book in the world; opens the real BookMenu.",
             "type": "string"
           },
           "index": {

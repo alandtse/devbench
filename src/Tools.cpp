@@ -3230,7 +3230,7 @@ namespace dvb
 				{ "type", "object" },
 				{ "properties", json{
 									{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "open", "close", "invoke", "readBook" }) }, { "description", "list | describe | accept | open | close | invoke | readBook" } } },
-									{ "formId", json{ { "type", "string" }, { "description", "readBook: hex FormID or EditorID of a book form (from the player's inventory) or of a reference to a book in the world; opens the real BookMenu." } } },
+									{ "formId", json{ { "type", "string" }, { "description", "readBook: hex FormID or EditorID of a book form (the tool does not check inventory) or of a reference to a book in the world; opens the real BookMenu." } } },
 									{ "name", json{ { "type", "string" }, { "description", "open/close: ENGINE menu to show/hide (e.g. TweenMenu). invoke/describe: a registered mod menu (see list .registered, or this tool's description)." } } },
 									{ "index", json{ { "type", "integer" }, { "description", "accept: 0-based button index to select (default 0). See describe's buttons/cancelIndex." } } },
 								} },
