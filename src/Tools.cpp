@@ -30,6 +30,7 @@
 #include "Recording.h"
 #include "ReplayDriver.h"
 #include "ReplayTrajectory.h"
+#include "RunStatusLogic.h"
 #include "SaveDelete.h"
 #include "ScenarioPolicy.h"
 #include "Server.h"
@@ -667,7 +668,7 @@ namespace dvb
 				return json{ { "queued", true }, { "action", action }, { "name", name }, { "note", kLoadNote } };
 			}
 			if (action == "save" || action == "load") {
-				const std::string name = a_args.value("name", std::string{});
+				const std::string name = a_args.value("name", a_args.value("save", std::string{}));
 				if (name.empty())
 					throw ToolError(400, std::format("action '{}' requires a 'name'", action));
 				const bool isSave = (action == "save");
@@ -972,12 +973,13 @@ namespace dvb
 
 		json WaitOrSleepHandler(const json& a_args, bool a_sleep)
 		{
-			const auto it = a_args.find("hours");
+			const auto            it = a_args.find("hours");
+			constexpr const char* kHoursHint = "'hours' must be a positive integer of GAME-time hours (use `wait` with 'ms' or 'until' for real time)";
 			if (it == a_args.end() || !it->is_number_integer())
-				throw ToolError(400, "'hours' must be a positive integer");
+				throw ToolError(400, kHoursHint);
 			const long long hours = it->get<long long>();
 			if (hours <= 0)
-				throw ToolError(400, "'hours' must be a positive integer");
+				throw ToolError(400, kHoursHint);
 			if (hours > kMaxWaitHours)
 				throw ToolError(400, std::format("'hours' must be <= {}", kMaxWaitHours));
 
@@ -2595,6 +2597,39 @@ namespace dvb
 			throw ToolError(400, std::format("unknown waitUntil condition '{}' (playerLoaded|noModal|noMenu|noBlockingMenu|weaponDrawn|handsReady|castingArtLeft|castingArtRight)", a_cond));
 		}
 
+		constexpr long long kMaxRealWaitMs = 600000;
+		constexpr long long kDefaultUntilTimeoutMs = 30000;
+		constexpr auto      kUntilPollInterval = milliseconds(100);
+
+		json RealTimeWait(const json& a_args)
+		{
+			const auto start = steady_clock::now();
+			const auto elapsedMs = [&] { return duration_cast<milliseconds>(steady_clock::now() - start).count(); };
+
+			if (a_args.contains("ms")) {
+				const json& ms = a_args["ms"];
+				if (!ms.is_number_integer() || ms.get<long long>() < 0 || ms.get<long long>() > kMaxRealWaitMs)
+					throw ToolError(400, std::format("'ms' must be an integer 0..{}", kMaxRealWaitMs));
+				std::this_thread::sleep_for(milliseconds(ms.get<long long>()));
+				return json{ { "completed", true }, { "waitedMs", elapsedMs() } };
+			}
+
+			const std::string until = a_args.value("until", std::string{});
+			long long         timeoutMs = kDefaultUntilTimeoutMs;
+			if (a_args.contains("timeoutMs")) {
+				const json& t = a_args["timeoutMs"];
+				if (!t.is_number_integer() || t.get<long long>() < 0 || t.get<long long>() > kMaxRealWaitMs)
+					throw ToolError(400, std::format("'timeoutMs' must be an integer 0..{}", kMaxRealWaitMs));
+				timeoutMs = t.get<long long>();
+			}
+			while (!CheckState(until)) {
+				if (elapsedMs() >= timeoutMs)
+					return json{ { "completed", false }, { "reason", "timeout" }, { "until", until }, { "waitedMs", elapsedMs() } };
+				std::this_thread::sleep_for(kUntilPollInterval);
+			}
+			return json{ { "completed", true }, { "until", until }, { "waitedMs", elapsedMs() } };
+		}
+
 		// Caller must already know a_args["runId"] is present. A bare get<uint64_t>() on a
 		// negative or non-numeric value throws json::type_error deep inside a handler — this
 		// gives a clean 400 naming the actual bad value instead.
@@ -2689,6 +2724,20 @@ namespace dvb
 					return json{ { "runId", a_runId }, { "done", false } };
 				json out{ { "runId", a_runId }, { "done", true }, { "ok", st.ok } };
 				out[st.hasResult ? "result" : "error"] = st.hasResult ? st.result : json(st.error);
+				return out;
+			}
+
+			/// Every retained run, oldest first, without transcripts.
+			json List()
+			{
+				std::lock_guard lock(m_mtx);
+				json            out = json::array();
+				for (const auto& [id, st] : m_runs) {
+					json entry{ { "runId", id }, { "done", st.done } };
+					if (st.done)
+						entry["ok"] = st.ok;
+					out.push_back(std::move(entry));
+				}
 				return out;
 			}
 
@@ -3568,6 +3617,8 @@ namespace dvb
 			FormSearch::Query query;
 			query.formType = text("formType");
 			if (query.formType.empty())
+				query.formType = text("type");
+			if (query.formType.empty())
 				throw ToolError(400, std::format("'formType' is required for find ({})", FormSearch::SupportedTypes()));
 			query.name = text("name");
 			query.model = text("model");
@@ -3764,12 +3815,15 @@ namespace dvb
 		scenario.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "run", "status" }) }, { "description", "run (default, requires 'steps') | status (requires 'runId')" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "run", "status", "list" }) }, { "description", "run (default, requires 'steps') | status (requires 'runId') | list (retained run ids and their state)" } } },
 								{ "steps", json{ { "type", "array" }, { "description", "run: ordered steps; each is one of tool/wait/waitFor/waitUntil (see description)" }, { "items", json{ { "type", "object" } } } } },
 								{ "repeat", json{ { "type", "integer" }, { "description", "run: run the whole step list N times (default 1, max 1000)" } } },
 								{ "continueOnError", json{ { "type", "boolean" }, { "description", "run: keep going after a failed/timed-out step instead of aborting (default false)" } } },
 								{ "async", json{ { "type", "boolean" }, { "description", "run: return {queued:true, runId} immediately and run in the background (default false); true does not block" } } },
 								{ "runId", json{ { "type", "integer" }, { "description", "status: poll an async run started earlier (from run's 'runId')" } } },
+								{ "verbose", json{ { "type", "boolean" }, { "description", "status: return every step's result (default: a step count plus the failed steps)" } } },
+								{ "from", json{ { "type", "integer" }, { "description", "status: first step of a slice of the transcript" } } },
+								{ "limit", json{ { "type", "integer" }, { "description", "status: size of that slice (default 20)" } } },
 							} },
 		};
 		a_registry.Register(std::move(scenario),
@@ -3780,11 +3834,13 @@ namespace dvb
 						throw ToolError(400, "action='status' requires 'runId'");
 					const uint64_t runId = ParseRunId(a_args);
 					if (auto st = RunRegistry::Get().Status(runId))
-						return *st;
+						return RunStatusLogic::Compact(*st, a_args);
 					throw ToolError(404, std::format("unknown scenario runId {}", runId));
 				}
+				if (action == "list")
+					return json{ { "runs", RunRegistry::Get().List() } };
 				if (action != "run")
-					throw ToolError(400, std::format("unknown action '{}' (run|status)", action));
+					throw ToolError(400, std::format("unknown action '{}' (run|status|list)", action));
 				if (!a_args.contains("steps") || !a_args["steps"].is_array())
 					throw ToolError(400, "action='run' requires a 'steps' array");
 
@@ -4127,7 +4183,7 @@ namespace dvb
 				if (action == "status" && a_args.contains("runId")) {
 					const uint64_t runId = ParseRunId(a_args);
 					if (auto st = RunRegistry::Get().Status(runId))
-						return *st;
+						return RunStatusLogic::Compact(*st, a_args);
 					throw ToolError(404, std::format("unknown replay runId {}", runId));
 				}
 				return Recording::Handle(a_args, a_events);
@@ -4159,20 +4215,28 @@ namespace dvb
 		ToolDescriptor wait;
 		wait.name = "wait";
 		wait.description =
-			"Advance time by waiting `hours`, synchronously and without touching the Wait "
-			"menu's UI at all: starts the wait and returns once the game has run it to the end, "
-			"one tick per frame as with the menu open (no autosave) — no polling needed. Refuses with "
+			"Three ways to wait. `hours`: advance GAME time, synchronously and without touching the Wait "
+			"menu's UI: starts the wait and returns once the game has run it to the end, "
+			"one tick per frame as with the menu open (no autosave); refuses with "
 			"{ completed:false, reason } on the same gate the menu itself enforces (combat, "
-			"trespassing, midair, hostiles nearby, etc.).";
+			"trespassing, midair, hostiles nearby, etc.). `ms`: pause in REAL time. `until`: poll a live "
+			"condition (playerLoaded|noModal|noMenu|noBlockingMenu|weaponDrawn|handsReady|castingArtLeft|"
+			"castingArtRight) and return when it holds, or { completed:false, reason:'timeout' } after `timeoutMs`.";
 		wait.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "hours", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", kMaxWaitHours }, { "description", "hours to wait (> 0)" } } },
+								{ "hours", json{ { "type", "integer" }, { "minimum", 1 }, { "maximum", kMaxWaitHours }, { "description", "game-time hours to wait (> 0); omit for a real-time wait" } } },
+								{ "ms", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", kMaxRealWaitMs }, { "description", "real-time milliseconds to pause" } } },
+								{ "until", json{ { "type", "string" }, { "description", "live condition to wait for (see the tool description)" } } },
+								{ "timeoutMs", json{ { "type", "integer" }, { "minimum", 0 }, { "maximum", kMaxRealWaitMs }, { "description", "until: give up after this long (default 30000)" } } },
 							} },
-			{ "required", json::array({ "hours" }) },
 		};
 		a_registry.Register(std::move(wait), [](const json& a_args, const ToolContext&) {
-			return WaitOrSleepHandler(a_args, false);
+			if (a_args.contains("hours"))
+				return WaitOrSleepHandler(a_args, false);
+			if (a_args.contains("ms") || a_args.contains("until"))
+				return RealTimeWait(a_args);
+			throw ToolError(400, "wait needs 'hours' (game time), 'ms' (real-time pause) or 'until' (a live condition)");
 		});
 
 		ToolDescriptor sleep;

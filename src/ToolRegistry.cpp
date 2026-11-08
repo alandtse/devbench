@@ -32,6 +32,40 @@ namespace dvb
 		}
 	}
 
+	json CoerceArgs(const json& a_schema, const json& a_args)
+	{
+		if (!a_args.is_object() || !a_schema.is_object() || !a_schema.contains("properties") || !a_schema["properties"].is_object())
+			return nullptr;
+		json out;
+		for (const auto& [key, value] : a_args.items()) {
+			if (!value.is_string() || !a_schema["properties"].contains(key))
+				continue;
+			const json& prop = a_schema["properties"][key];
+			if (!prop.is_object() || !prop.contains("type") || !prop["type"].is_string())
+				continue;
+			const std::string& type = prop["type"].get_ref<const std::string&>();
+			const std::string& text = value.get_ref<const std::string&>();
+			json               parsed;
+			if (type == "boolean") {
+				if (text == "true" || text == "false")
+					parsed = (text == "true");
+			} else if (type == "integer" || type == "number" || type == "array" || type == "object") {
+				parsed = json::parse(text, nullptr, false);
+				const bool fits = !parsed.is_discarded() &&
+				                  ((type == "integer" && parsed.is_number_integer()) || (type == "number" && parsed.is_number()) ||
+									  (type == "array" && parsed.is_array()) || (type == "object" && parsed.is_object()));
+				if (!fits)
+					parsed = nullptr;
+			}
+			if (parsed.is_null())
+				continue;
+			if (out.is_null())
+				out = a_args;
+			out[key] = std::move(parsed);
+		}
+		return out;
+	}
+
 	bool ToolRegistry::Register(ToolDescriptor a_desc, ToolHandler a_handler)
 	{
 		const ToolDescriptor descCopy = a_desc;  // for the listener (notified post-insert)
@@ -42,7 +76,8 @@ namespace dvb
 			replaced = m_tools.contains(a_desc.name);
 			const std::string name = a_desc.name;
 			KeySet            keys = DeclaredKeys(a_desc.inputSchema);
-			m_tools[name] = Entry{ std::move(a_desc), std::move(a_handler), std::move(keys) };
+			auto              schema = std::make_shared<const json>(a_desc.inputSchema);
+			m_tools[name] = Entry{ std::move(a_desc), std::move(a_handler), std::move(keys), std::move(schema) };
 			listener = m_onRegister;
 		}
 		if (listener)
@@ -128,25 +163,29 @@ namespace dvb
 		return result;
 	}
 
-	ToolResult ToolRegistry::InvokeCore(std::string_view a_name, const json& a_args, const ToolContext& a_ctx) const
+	ToolResult ToolRegistry::InvokeCore(std::string_view a_name, const json& a_rawArgs, const ToolContext& a_ctx) const
 	{
 		// Copy the handler out under the lock; never hold the lock across a handler
 		// (handlers can block on the main thread, re-enter the registry, etc.).
-		ToolHandler handler;
-		KeySet      knownKeys;
+		ToolHandler                 handler;
+		KeySet                      knownKeys;
+		std::shared_ptr<const json> schema;
 		{
 			std::lock_guard lock(m_mutex);
 			const auto      it = m_tools.find(std::string(a_name));
 			if (it == m_tools.end())
-				return ToolResult::Failure(404, std::format("unknown tool '{}'", a_name));
+				return ToolResult::Failure(404, std::format("unknown tool '{}' (not registered in this game; see inspect kind=registrants)", a_name));
 			handler = it->second.handler;
 			knownKeys = it->second.knownKeys;
+			schema = it->second.schema;
 		}
+		const json  coerced = schema ? CoerceArgs(*schema, a_rawArgs) : json(nullptr);
+		const json& callArgs = coerced.is_null() ? a_rawArgs : coerced;
 
 		std::string unknownKeys;
-		if (knownKeys && a_args.is_object()) {
+		if (knownKeys && callArgs.is_object()) {
 			std::vector<std::string> unknown;
-			for (const auto& [key, _] : a_args.items())
+			for (const auto& [key, _] : callArgs.items())
 				if (!knownKeys->contains(key))
 					unknown.push_back(key);
 			if (!unknown.empty()) {
@@ -166,11 +205,11 @@ namespace dvb
 		// hundreds of identical console steps and already logs its own start/finish summary, so
 		// per-step lines were pure noise.
 		if (!a_ctx.internal) {
-			const std::string args = a_args.is_null() ? std::string{} : Dump(a_args);
+			const std::string args = callArgs.is_null() ? std::string{} : Dump(callArgs);
 			logs::debug("tool '{}' invoked {}", a_name, args.size() > 160 ? Utf8Prefix(args, 160) + "..." : args);
 		}
 		try {
-			auto result = ToolResult::Success(handler(a_args, a_ctx));
+			auto result = ToolResult::Success(handler(callArgs, a_ctx));
 			if (!unknownKeys.empty() && result.value.is_object()) {
 				auto& warnings = result.value["warnings"];
 				if (!warnings.is_array())

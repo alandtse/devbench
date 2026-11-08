@@ -81,7 +81,7 @@ namespace dvb::MainThread
 				throw TaskTimeout(false, std::format("main-thread task did not start within {}ms; queued task abandoned", a_timeout.count()));
 			if (frameNow == frameAtStart)
 				throw TaskTimeout(false, std::format(
-											 "main-thread task did not start within {}ms; queued task abandoned and the game frame counter has not advanced -- main thread hung or the game is fully paused; if no pause menu is open, only a process restart recovers",
+											 "main-thread task did not start within {}ms; queued task abandoned and the game frame counter has not advanced -- the game is paused, loading or hung; check blockedBy (or menu action=list) and retry once it clears, and only if nothing is open and it persists does a process restart recover",
 											 a_timeout.count()));
 			throw TaskTimeout(false, std::format(
 										 "main-thread task did not start within {}ms; queued task abandoned ({} frames elapsed -- main thread busy)",

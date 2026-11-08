@@ -5,6 +5,27 @@
 
 namespace dvb::CaptureBurstLogic
 {
+	std::optional<std::string> DefaultProvider(const std::vector<std::string>& a_keys)
+	{
+		if (a_keys.size() == 1)
+			return a_keys.front();
+		constexpr std::string_view kNativeSuffix = ".native";
+		std::optional<std::string> chosen;
+		for (const auto& key : a_keys) {
+			if (key.size() >= kNativeSuffix.size() && std::string_view(key).ends_with(kNativeSuffix))
+				continue;
+			if (chosen)
+				return std::nullopt;
+			chosen = key;
+		}
+		return chosen;
+	}
+
+	std::string AutoCheckpointId(long long a_epochMs)
+	{
+		return "shot_" + std::to_string(a_epochMs);
+	}
+
 	namespace
 	{
 		constexpr long             kBaseTimeoutMs = 5000;

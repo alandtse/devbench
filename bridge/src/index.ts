@@ -77,7 +77,7 @@ async function main(): Promise<void> {
 
   const server = new Server(
     { name: "devbench-bridge", version: "0.1.0" },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: { listChanged: true } } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -110,6 +110,12 @@ async function main(): Promise<void> {
         e instanceof GameUnavailableError
           ? `game not running (target: ${target.label})`
           : (e as Error).message;
+      // The game restarted (or a provider plugin did not load) since the client
+      // fetched tools/list, so it still advertises a tool this game lacks: tell it
+      // to fetch the list again.
+      if (/unknown tool/i.test(message)) {
+        server.sendToolListChanged().catch(() => {});
+      }
       return {
         content: [
           {

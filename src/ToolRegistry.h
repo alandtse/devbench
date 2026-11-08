@@ -71,6 +71,11 @@ namespace dvb
 		}
 	};
 
+	/// Rewrites top-level string arguments to the type a_schema declares for them: "true"/"false" to a boolean,
+	/// a numeric string to a number, a JSON text to an array or object. Null when nothing changed, otherwise the
+	/// rewritten copy. A string that does not parse as the declared type is left for the handler to reject.
+	json CoerceArgs(const json& a_schema, const json& a_args);
+
 	/// Transport-agnostic registry. Adapters (MCP, REST) reflect this and never
 	/// reference individual tool names, so registering a tool exposes it on every
 	/// transport at once. Registration is expected at startup; all methods are
@@ -125,9 +130,10 @@ namespace dvb
 
 		struct Entry
 		{
-			ToolDescriptor desc;
-			ToolHandler    handler;
-			KeySet         knownKeys;  ///< null = schema doesn't enumerate its keys; skip the check
+			ToolDescriptor              desc;
+			ToolHandler                 handler;
+			KeySet                      knownKeys;  ///< null = schema doesn't enumerate its keys; skip the check
+			std::shared_ptr<const json> schema;     ///< the inputSchema, shared so a call needn't copy it
 		};
 
 		mutable std::mutex                     m_mutex;
