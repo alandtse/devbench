@@ -446,7 +446,7 @@
     },
     {
       "name": "gfx",
-      "description": "Read, set or call anything inside an open Scaleform (Flash) menu, such as RaceMenu, the HUD or a mod's menu, by a dotted path from _root or _global. Numbers in a path index arrays. op='get' reads a value (`truncated` is true when a limit cut the result; methods read as {}), 'set' writes `value`, 'call' invokes a function with `args`. 'batch' runs `ops` in one UI task and stops at the first failure, returning `failedIndex`. set and call act on the live menu with no safety net: a native function given a wrong argument type can crash the game. Open menu names come from menu action='list'.",
+      "description": "Read, set or call anything inside an open Scaleform (Flash) menu, such as RaceMenu, the HUD or a mod's menu, by a dotted path from _root or _global. Numbers in a path index arrays. op='get' reads a value (`truncated` is true when the limit, the depth or the node budget cut the result; methods read as {}), 'set' writes `value`, 'call' invokes a function with `args`. 'batch' runs `ops` in one UI task and stops at the first failure, returning `failedIndex`. set and call act on the live menu with no safety net: a native function given a wrong argument type can crash the game. Open menu names come from menu action='list'.",
       "inputSchema": {
         "properties": {
           "args": {
@@ -458,7 +458,7 @@
             "type": "integer"
           },
           "limit": {
-            "description": "get: array items; default 500",
+            "description": "get: array items, 0 to 4294967295; default 500",
             "type": "integer"
           },
           "menu": {

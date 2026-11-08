@@ -56,3 +56,32 @@ def test_a_path_through_a_number_is_refused_not_a_crash(client, gfx):
     client.ok("gfx", {"op": "set", "menu": HUD, "path": path, "value": 1})
     status, _ = client.call("gfx", {"op": "get", "menu": HUD, "path": path + ".child"})
     assert status == 400
+
+
+@pytest.mark.parametrize("limit", [-1, 4294967296, 1.5, "x"])
+def test_an_invalid_limit_is_refused(client, gfx, limit):
+    status, body = client.call("gfx", {"op": "get", "menu": HUD, "path": "_root", "limit": limit})
+    assert status == 400 and "limit" in body["error"], (status, body)
+
+
+def test_args_must_be_an_array(client, gfx):
+    status, body = client.call("gfx", {"op": "call", "menu": HUD, "path": "_global.Math.max", "args": {"a": 1}})
+    assert status == 400 and "args" in body["error"], (status, body)
+
+
+def test_ops_must_be_an_array(client, gfx):
+    status, body = client.call("gfx", {"op": "batch", "menu": HUD, "ops": {"op": "get", "path": "_root"}})
+    assert status == 400 and "ops" in body["error"], (status, body)
+
+
+def test_a_depth_cut_reports_truncated(client, gfx):
+    body = client.ok("gfx", {"op": "get", "menu": HUD, "path": "_root", "depth": 0})
+    assert body["truncated"] is True, body
+
+
+def test_the_node_budget_stops_a_huge_array(client, gfx):
+    path = "_root.devbenchGfxBig"
+    client.ok("gfx", {"op": "set", "menu": HUD, "path": path, "value": [0] * 25000})
+    body = client.ok("gfx", {"op": "get", "menu": HUD, "path": path, "limit": 4294967295})
+    assert body["truncated"] is True and body["nodes"] <= 20000, body
+    assert len(body["value"]) < 20000, len(body["value"])

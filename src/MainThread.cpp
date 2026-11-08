@@ -33,19 +33,24 @@ namespace dvb::MainThread
 		auto       invocation = std::make_shared<QueuedTask>(std::move(a_fn), deadline);
 		auto       future = invocation->GetFuture();
 
-		g_pendingTasks.fetch_add(1, std::memory_order_relaxed);
-		auto run = [invocation]() {
+		const bool countsTowardHealth = a_queue == Queue::kMain;
+		if (countsTowardHealth)
+			g_pendingTasks.fetch_add(1, std::memory_order_relaxed);
+		auto run = [invocation, countsTowardHealth]() {
 			// Stamp completion + drop the pending count on the main thread whether fn()
 			// returns or throws — a routine ToolError must not leave the markers looking
 			// like a stalled queue.
 			struct Finally
 			{
+				bool countsTowardHealth;
 				~Finally()
 				{
+					if (!countsTowardHealth)
+						return;
 					g_lastTaskFrame.store(game::CurrentFrame(), std::memory_order_relaxed);
 					g_pendingTasks.fetch_sub(1, std::memory_order_relaxed);
 				}
-			} finally;
+			} finally{ countsTowardHealth };
 			invocation->Run();
 		};
 		if (a_queue == Queue::kUi)

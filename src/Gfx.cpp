@@ -17,26 +17,21 @@ namespace dvb::Gfx
 		constexpr int           kMaxNodes = 20000;  // display objects link back to parents, so depth alone is not a budget
 		constexpr std::size_t   kMaxBatch = 64;
 
-		struct Budget
-		{
-			int  nodes = 0;
-			bool truncated = false;
-		};
+		using GfxLogic::Budget;
 
 		json ToJson(const RE::GFxValue& a_value, int a_depth, std::uint32_t a_limit, Budget& a_budget)
 		{
 			using Type = RE::GFxValue::ValueType;
-			if (++a_budget.nodes > kMaxNodes) {
-				a_budget.truncated = true;
+			if (a_budget.Exhausted(kMaxNodes))
 				return "<node limit>";
-			}
+			++a_budget.nodes;
 			switch (a_value.GetType()) {
 			case Type::kBoolean:
 				return a_value.GetBool();
 			case Type::kNumber:
 				return a_value.GetNumber();
 			case Type::kString:
-				return a_value.GetString() ? a_value.GetString() : "";
+				return a_value.GetString() ? GfxLogic::ToUtf8(a_value.GetString()) : "";
 			case Type::kStringW:
 				return a_value.GetStringW() ? SKSE::stl::utf16_to_utf8(a_value.GetStringW()).value_or("") : "";
 			case Type::kUndefined:
@@ -44,11 +39,15 @@ namespace dvb::Gfx
 			case Type::kArray:
 				{
 					const auto size = a_value.GetArraySize();
-					if (a_depth <= 0)
+					if (a_depth <= 0) {
+						a_budget.truncated = true;
 						return std::format("<array {}>", size);
+					}
 					a_budget.truncated |= size > a_limit;
 					json out = json::array();
 					for (std::uint32_t i = 0; i < size && i < a_limit; ++i) {
+						if (a_budget.Exhausted(kMaxNodes))
+							break;
 						RE::GFxValue item;
 						a_value.GetElement(i, &item);
 						out.push_back(ToJson(item, a_depth - 1, a_limit, a_budget));
@@ -58,12 +57,15 @@ namespace dvb::Gfx
 			case Type::kObject:
 			case Type::kDisplayObject:
 				{
-					if (a_depth <= 0)
+					if (a_depth <= 0) {
+						a_budget.truncated = true;
 						return "<object>";
+					}
 					json out = json::object();
 					// This Scaleform has no function type: methods arrive as objects and print as {}.
 					a_value.VisitMembers([&](const char* a_name, const RE::GFxValue& a_member) {
-						out[a_name] = ToJson(a_member, a_depth - 1, a_limit, a_budget);
+						if (!a_budget.Exhausted(kMaxNodes))
+							out[GfxLogic::ToUtf8(a_name)] = ToJson(a_member, a_depth - 1, a_limit, a_budget);
 					});
 					return out;
 				}
@@ -138,8 +140,10 @@ namespace dvb::Gfx
 				RE::GFxValue value;
 				Resolve(a_movie, segments, segments.size(), value);
 				const int  depth = std::clamp(a_args.value("depth", kDefaultDepth), 0, kMaxDepth);
-				const auto limit = a_args.value("limit", kDefaultLimit);
-				json       result = { { "ok", true }, { "value", ToJson(value, depth, limit, budget) } };
+				const auto limit = GfxLogic::ReadLimit(a_args, kDefaultLimit);
+				if (!limit)
+					throw ToolError(400, "limit must be an integer from 0 to 4294967295");
+				json result = { { "ok", true }, { "value", ToJson(value, depth, *limit, budget) } };
 				result["nodes"] = budget.nodes;
 				result["truncated"] = budget.truncated;
 				return result;
@@ -166,9 +170,13 @@ namespace dvb::Gfx
 				return { { "ok", true } };
 			}
 
+			const auto argsIt = a_args.find("args");
+			if (argsIt != a_args.end() && !argsIt->is_array())
+				throw ToolError(400, "args must be an array");
 			std::vector<RE::GFxValue> args;
-			for (const auto& arg : a_args.value("args", json::array()))
-				FromJson(a_movie, arg, args.emplace_back());
+			if (argsIt != a_args.end())
+				for (const auto& arg : *argsIt)
+					FromJson(a_movie, arg, args.emplace_back());
 			RE::GFxValue result;
 			if (!parent.Invoke(leaf.c_str(), &result, args.data(), args.size()))
 				throw ToolError(422, "call failed: " + leaf);
@@ -193,8 +201,8 @@ namespace dvb::Gfx
 
 			// One UI task, so the steps cannot interleave with a frame. Stops at the first failure.
 			const auto ops = a_args.value("ops", json::array());
-			if (ops.empty() || ops.size() > kMaxBatch)
-				throw ToolError(400, std::format("batch needs 1 to {} ops", kMaxBatch));
+			if (!ops.is_array() || ops.empty() || ops.size() > kMaxBatch)
+				throw ToolError(400, std::format("batch needs an ops array of 1 to {} steps", kMaxBatch));
 			json results = json::array();
 			for (const auto& op : ops) {
 				try {
@@ -215,7 +223,7 @@ namespace dvb::Gfx
 		gfx.description =
 			"Read, set or call anything inside an open Scaleform (Flash) menu, such as RaceMenu, the HUD or a mod's menu, "
 			"by a dotted path from _root or _global. Numbers in a path index arrays. op='get' reads a value "
-			"(`truncated` is true when a limit cut the result; methods read as {}), 'set' writes `value`, 'call' invokes a "
+			"(`truncated` is true when the limit, the depth or the node budget cut the result; methods read as {}), 'set' writes `value`, 'call' invokes a "
 			"function with `args`. 'batch' runs `ops` in one UI task and stops at the first failure, returning `failedIndex`. "
 			"set and call act on the live menu with no safety net: a native function given a wrong argument type can crash the game. Open menu names come from menu action='list'.";
 		gfx.inputSchema = json{
@@ -226,7 +234,7 @@ namespace dvb::Gfx
 								{ "menu", json{ { "type", "string" }, { "description", "Open menu name, for example 'RaceSex Menu'" } } },
 								{ "path", json{ { "type", "string" }, { "description", "Dotted path from _root or _global" } } },
 								{ "depth", json{ { "type", "integer" }, { "description", "get: levels to expand; default 2, maximum 8" } } },
-								{ "limit", json{ { "type", "integer" }, { "description", "get: array items; default 500" } } },
+								{ "limit", json{ { "type", "integer" }, { "description", "get: array items, 0 to 4294967295; default 500" } } },
 								{ "value", json{ { "description", "set: the new value" } } },
 								{ "args", json{ { "type", "array" }, { "description", "call: arguments; objects allowed" } } },
 								{ "ops", json{ { "type", "array" }, { "items", json{ { "type", "object" } } }, { "description", "batch: up to 64 steps of op, path, value, args, depth, limit" } } },
@@ -238,8 +246,6 @@ namespace dvb::Gfx
 	json Handle(const json& a_args, const ToolContext&)
 	{
 		// The task owns its args: one that overruns the timeout finishes after this call returns.
-		json result = MainThread::RunAndWait([args = a_args]() { return Run(args); }, std::chrono::milliseconds(5000), nullptr, MainThread::Queue::kUi);
-		// shortcut: menu text can be Windows-1252, which throws in a plain dump(); drop when PR #157's Dump() lands.
-		return json::parse(result.dump(-1, ' ', false, json::error_handler_t::replace));
+		return MainThread::RunAndWait([args = a_args]() { return Run(args); }, std::chrono::milliseconds(5000), nullptr, MainThread::Queue::kUi);
 	}
 }
