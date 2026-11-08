@@ -2758,10 +2758,10 @@ namespace dvb
 				// captures if rep N+1's own scene assert succeeds.
 				bool runSceneMismatch = false;
 				// A waitFor right after a waitFor resumes from the event the previous one matched.
-				std::optional<uint64_t> chainedSince;
+				ScenarioPolicy::WaitForChain waitChain;
 				for (size_t i = 0; i < steps.size() && !aborted; ++i) {
 					// Taken by every step: only a waitFor branch that runs and matches sets it again.
-					const std::optional<uint64_t> prevWaitForSince = std::exchange(chainedSince, std::nullopt);
+					const std::optional<uint64_t> prevWaitForSince = waitChain.Take();
 					if (a_options.beforeStep)
 						a_options.beforeStep(i);
 					const json& step = steps[i];
@@ -2887,7 +2887,7 @@ namespace dvb
 							}
 							r["satisfied"] = satisfied;
 							if (satisfied)
-								chainedSince = since;
+								waitChain.Matched(since);
 							else {
 								r["timedOut"] = true;
 								stepFailed = true;

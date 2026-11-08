@@ -176,3 +176,15 @@ TEST_CASE("a v1 setpos trajectory spans its trailing wait")
 	CHECK(span->first == 2);
 	CHECK(span->last == 7);
 }
+
+TEST_CASE("a waitFor resumes from the previous waitFor's match, and any other step breaks the chain")
+{
+	dvb::ScenarioPolicy::WaitForChain chain;
+	CHECK(!chain.Take().has_value());
+	chain.Matched(41);
+	CHECK(chain.Take() == 41);
+	CHECK(!chain.Take().has_value());
+	chain.Matched(7);
+	CHECK(chain.Take() == 7);
+	CHECK(!chain.Take().has_value());
+}
