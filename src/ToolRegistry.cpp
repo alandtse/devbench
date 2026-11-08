@@ -120,7 +120,7 @@ namespace dvb
 		// per-step lines were pure noise.
 		if (!a_ctx.internal) {
 			const std::string args = a_args.is_null() ? std::string{} : Dump(a_args);
-			logs::debug("tool '{}' invoked {}", a_name, args.size() > 160 ? args.substr(0, 160) + "..." : args);
+			logs::debug("tool '{}' invoked {}", a_name, args.size() > 160 ? Utf8Prefix(args, 160) + "..." : args);
 		}
 		try {
 			auto result = ToolResult::Success(handler(a_args, a_ctx));

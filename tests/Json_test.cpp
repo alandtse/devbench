@@ -43,3 +43,13 @@ TEST_CASE("MCP content of a Windows-1252 payload serializes")
 	const json str = dvb::ToContentBlocks(json("R\xE1n"));
 	CHECK(str[0]["text"] == "R\xC3\xA1n");
 }
+
+TEST_CASE("Utf8Prefix never cuts a multibyte character")
+{
+	const std::string text = "ab\xC3\xA1\xE2\x82\xAC";  // a, b, U+00E1 (2 bytes), U+20AC (3 bytes)
+	CHECK(dvb::Utf8Prefix(text, 100) == text);
+	CHECK(dvb::Utf8Prefix(text, 4) == "ab\xC3\xA1");
+	CHECK(dvb::Utf8Prefix(text, 3) == "ab");
+	CHECK(dvb::Utf8Prefix(text, 5) == "ab\xC3\xA1");
+	CHECK(dvb::Utf8Prefix(text, 2) == "ab");
+}

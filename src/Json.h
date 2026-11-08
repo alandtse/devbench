@@ -71,6 +71,17 @@ namespace dvb
 		return out;
 	}
 
+	// The first a_maxBytes bytes of a_text, shortened so a multibyte character is never cut in half.
+	inline std::string Utf8Prefix(const std::string& a_text, std::size_t a_maxBytes)
+	{
+		if (a_text.size() <= a_maxBytes)
+			return a_text;
+		std::size_t n = a_maxBytes;
+		while (n > 0 && (static_cast<unsigned char>(a_text[n]) & 0xC0) == 0x80)
+			--n;
+		return a_text.substr(0, n);
+	}
+
 	inline std::string Dump(const json& a_value, int a_indent = -1)
 	{
 		try {
