@@ -423,6 +423,10 @@
           "waitMs": {
             "description": "setTimeScale: how long to wait, after admission, for this request to settle (reached, expired or displaced) before answering (default 2000, 0..30000)",
             "type": "integer"
+          },
+          "save": {
+            "type": "string",
+            "description": "alias for name"
           }
         },
         "type": "object"
@@ -481,6 +485,10 @@
           "slot": {
             "description": "find: Armor/ArmorAddon: a biped slot number 30..61 that must be set (31 hair, 30 head, 41 long hair)",
             "type": "integer"
+          },
+          "type": {
+            "type": "string",
+            "description": "alias for formType"
           }
         },
         "required": ["action"],

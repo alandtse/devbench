@@ -366,6 +366,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 @pytest.fixture
+def capture_provider(client: Client) -> None:
+    status, body = client.call("inspect", {"kind": "registrants"})
+    if status != 200 or not isinstance(body, dict) or not body.get("capabilities", {}).get("capture"):
+        pytest.skip("needs a registered capture provider (see inspect kind=registrants)")
+
+
+@pytest.fixture
 def requires_player(player_loaded: bool) -> None:
     """Skip only if no player is loaded and the bootstrap couldn't establish one
     (DEVBENCH_BOOTSTRAP=off, or it timed out)."""

@@ -41,6 +41,7 @@ def test_burst_refuses_the_native_fallback(client):
     assert "provider" in body["error"], body
 
 
-def test_a_single_capture_without_a_checkpoint_id_is_not_rejected_for_it(client):
-    status, body = client.call("capture", {"timeoutMs": 1000})
-    assert "checkpointId" not in str(body.get("error", "")), (status, body)
+def test_a_single_capture_without_a_checkpoint_id_gets_a_generated_one(client, capture_provider):
+    body = client.ok("capture", {})
+    assert body["checkpointId"].startswith("shot_"), body
+    assert body["checkpointId"] in body["path"], body

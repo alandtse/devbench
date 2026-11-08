@@ -84,7 +84,7 @@ def test_capture_without_a_checkpoint_id_names_the_file(client, tool_schema):
     if status == 200:
         assert body["checkpointId"].startswith("shot_"), body
     else:
-        assert "no new screenshot" in body["error"], body
+        assert "no new screenshot" in body["error"] and "checkpointId 'shot_" in body["error"], body
 
 
 def test_capture_accepts_screenshot_as_an_action(client, tool_schema):

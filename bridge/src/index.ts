@@ -81,8 +81,24 @@ async function main(): Promise<void> {
   );
 
   let advertised = "";
-  const signatureOf = (tools: { name: string }[]): string =>
-    JSON.stringify([...tools].sort((a, b) => a.name.localeCompare(b.name)));
+  const signatureOf = (tools: DevbenchTool[]): string =>
+    JSON.stringify(
+      tools.map(toMcpTool).sort((a, b) => a.name.localeCompare(b.name)),
+    );
+
+  const notifyIfToolListChanged = async (): Promise<void> => {
+    try {
+      if (signatureOf(await listTools(target)) !== advertised) {
+        await server.sendToolListChanged();
+      }
+    } catch (e) {
+      if (!(e instanceof GameUnavailableError)) {
+        console.error(
+          `devbench-bridge: tools/list_changed check failed: ${(e as Error).message}`,
+        );
+      }
+    }
+  };
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
@@ -120,14 +136,7 @@ async function main(): Promise<void> {
       // fetched tools/list, so it still advertises a tool this game lacks: tell it
       // to fetch the list again.
       if (/unknown tool/i.test(message)) {
-        const live = await listTools(target).then(signatureOf, () => undefined);
-        if (live !== undefined && live !== advertised) {
-          server.sendToolListChanged().catch((err: Error) => {
-            console.error(
-              `devbench-bridge: tools/list_changed failed: ${err.message}`,
-            );
-          });
-        }
+        void notifyIfToolListChanged();
       }
       return {
         content: [

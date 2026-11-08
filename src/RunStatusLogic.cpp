@@ -39,7 +39,7 @@ namespace dvb::RunStatusLogic
 		if (paged) {
 			const auto        from = std::min(total, PageArg(a_args, "from", 0));
 			const auto        limit = PageArg(a_args, "limit", kDefaultPage);
-			const std::size_t end = std::min(total, from + limit);
+			const std::size_t end = limit >= total - from ? total : from + limit;
 			result["resultsFrom"] = from;
 			result["results"] = json(steps.begin() + static_cast<std::ptrdiff_t>(from), steps.begin() + static_cast<std::ptrdiff_t>(end));
 			return out;

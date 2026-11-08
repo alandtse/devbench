@@ -2078,7 +2078,7 @@ namespace dvb
 
 			if (kind == "draws") {
 				if (auto provider = ToolExtensions::Find("inspect", "draws"))
-					return DrawStatsLogic::WithSource(provider->handler(a_ctx.rawArgs ? *a_ctx.rawArgs : a_args, a_ctx), DrawStatsLogic::ProviderSource(provider->descriptor));
+					return DrawStatsLogic::WithSource(provider->handler(a_args, a_ctx), DrawStatsLogic::ProviderSource(provider->descriptor));
 				const bool doReset = BooleanArgument(a_args, "reset", false);
 				return MainThread::RunAndWait([doReset]() { return DrawStatsLogic::WithSource(DrawStats::Read(doReset), DrawStatsLogic::kOwnSource); });
 			}
@@ -3404,6 +3404,7 @@ namespace dvb
 			{ "properties", json{
 								{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "save", "load", "loadLast", "delete", "advanceTime", "getTimeScale", "setTimeScale", "getDifficulty", "setDifficulty", "getAlwaysActive", "setAlwaysActive" }) }, { "description", "list | save | load | loadLast | delete | advanceTime | getTimeScale | setTimeScale | getDifficulty | setDifficulty | getAlwaysActive | setAlwaysActive" } } },
 								{ "name", json{ { "type", "string" }, { "description", "save file name (required for save/load/delete; from action='list')" } } },
+								{ "save", json{ { "type", "string" }, { "description", "alias for name" } } },
 								{ "dir", json{ { "type", "string" }, { "description", "list/load/loadLast: override the saves directory (default resolves from sLocalSavePath; delete does not take it)" } } },
 								{ "filter", json{ { "type", "string" }, { "description", "list only: case-insensitive substring to match against save names" } } },
 								{ "limit", json{ { "type", "integer" }, { "description", "list only: cap the number of saves returned (newest-first); must be > 0 if given" } } },
@@ -3546,6 +3547,7 @@ namespace dvb
 			{ "properties", json{
 								{ "action", json{ { "type", "string" }, { "enum", json::array({ "find", "headParts", "describe", "plugins", "asset" }) }, { "description", "find | headParts | describe | plugins | asset" } } },
 								{ "formType", json{ { "type", "string" }, { "description", "find: Armor | ArmorAddon | HeadPart | Idle | NPC | Weapon | Misc" } } },
+								{ "type", json{ { "type", "string" }, { "description", "alias for formType" } } },
 								{ "name", json{ { "type", "string" }, { "description", "find: case-insensitive substring of the name or EditorID; plugins: of the plugin name, author or description (see filter)" } } },
 								{ "model", json{ { "type", "string" }, { "description", "find: case-insensitive substring of any model path (Armor, ArmorAddon, HeadPart)" } } },
 								{ "plugin", json{ { "type", "string" }, { "description", "find: case-insensitive substring of the plugin the form comes from" } } },

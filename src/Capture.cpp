@@ -485,7 +485,7 @@ namespace dvb::Capture
 				json abandoned = a_args;
 				abandoned["checkpointId"] = checkpointId;
 				PublishAbandoned("", "", abandoned, "timeout");
-				throw ToolError(504, std::format("no new screenshot appeared within {}ms (scanned: {})", timeoutMs, dirList));
+				throw ToolError(504, std::format("no new screenshot appeared within {}ms for checkpointId '{}' (scanned: {})", timeoutMs, checkpointId, dirList));
 			}
 
 			const std::string recording = a_args.value("recording", std::string("adhoc"));
