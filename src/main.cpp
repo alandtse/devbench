@@ -9,6 +9,7 @@
 #include "FreeCamera.h"
 #include "GameEvents.h"
 #include "GameState.h"
+#include "GameText.h"
 #include "HostApi.h"
 #include "InputHotkeys.h"
 #include "KeyboardInput.h"
@@ -193,7 +194,7 @@ namespace
 					a_msg->type == SKSE::MessagingInterface::kSaveGame) &&
 				a_msg->data) {
 				const char* raw = static_cast<const char*>(a_msg->data);
-				std::string name(raw, strnlen(raw, 255));  // capped; never trust dataLen
+				std::string name = dvb::FromGame(std::string_view(raw, strnlen(raw, 255)));  // capped; never trust dataLen
 				if (name.size() > 4 && name.compare(name.size() - 4, 4, ".ess") == 0)
 					name.resize(name.size() - 4);  // the load tool takes the stem, not the filename
 				if (!name.empty())

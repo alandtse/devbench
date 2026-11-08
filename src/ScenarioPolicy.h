@@ -3,15 +3,30 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "Json.h"
 
 namespace dvb::ScenarioPolicy
 {
 	inline constexpr int kEmbeddedToolFallbackErrorCode = 422;
+
+	/// Where a waitFor that directly follows a matching waitFor resumes: the event the earlier one matched, so events
+	/// published between the two steps are not lost. Any other step in between breaks the chain.
+	class WaitForChain
+	{
+	public:
+		/// Called at the top of every step; returns the resume point once, then nothing until the next Matched().
+		[[nodiscard]] std::optional<std::uint64_t> Take() { return std::exchange(m_since, std::nullopt); }
+		void                                       Matched(std::uint64_t a_since) { m_since = a_since; }
+
+	private:
+		std::optional<std::uint64_t> m_since;
+	};
 
 	/// A replay holds the free camera so the recording's own camera transform drives the view, which is how a flat
 	/// recording is replayed. A replay on VR that injects a recorded tracked set must not: the injected HMD drives the real

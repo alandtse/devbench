@@ -2,6 +2,7 @@
 
 #include "AssetInfo.h"
 #include "FormSearchLogic.h"
+#include "GameText.h"
 #include "ToolRegistry.h"
 
 #include <RE/A/Actor.h>
@@ -45,7 +46,7 @@ namespace dvb::FormSearch
 
 		std::string Str(const char* a_text)
 		{
-			return a_text ? a_text : "";
+			return FromGame(a_text);
 		}
 
 		json Identity(RE::TESForm* a_form)
@@ -193,7 +194,7 @@ namespace dvb::FormSearch
 		{
 			if (!a_query.plugin.empty() && !ContainsCI(PluginOf(a_form), a_query.plugin))
 				return false;
-			if (!a_query.name.empty() && !ContainsCI(Utf8Text(Str(a_form->GetName())), a_query.name) && !ContainsCI(Str(a_form->GetFormEditorID()), a_query.name))
+			if (!a_query.name.empty() && !ContainsCI(Str(a_form->GetName()), a_query.name) && !ContainsCI(Str(a_form->GetFormEditorID()), a_query.name))
 				return false;
 			if (a_query.slotMask) {
 				const auto mask = SlotMaskOf(a_form);

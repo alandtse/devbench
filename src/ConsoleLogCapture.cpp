@@ -1,6 +1,7 @@
 #include "ConsoleLogCapture.h"
 
 #include "GameState.h"
+#include "GameText.h"
 #include "MainThread.h"
 #include "PrologueScan.h"
 #include "ToolRegistry.h"
@@ -225,13 +226,13 @@ namespace dvb::ConsoleLogCapture
 		void Queue(std::string a_command)
 		{
 			if (auto* task = SKSE::GetTaskInterface())
-				task->AddTask([c = std::move(a_command)]() { RE::Console::ExecuteCommand(c.c_str()); });
+				task->AddTask([c = ToGame(a_command)]() { RE::Console::ExecuteCommand(c.c_str()); });
 		}
 
 		void QueueThenEndMarker(std::string a_command, std::string a_end)
 		{
 			if (auto* task = SKSE::GetTaskInterface())
-				task->AddTask([c = std::move(a_command), e = std::move(a_end)]() {
+				task->AddTask([c = ToGame(a_command), e = std::move(a_end)]() {
 					RE::Console::ExecuteCommand(c.c_str());
 					RE::Console::ExecuteCommand(e.c_str());
 				});
@@ -394,8 +395,11 @@ namespace dvb::ConsoleLogCapture
 		try {
 			MainThread::RunAndWait([source, output, a_maxLines]() -> json {
 				TakeSnapshot(source);
-				if (output)
+				if (output) {
 					*output = ReadFenced(a_maxLines);
+					for (auto& line : output->lines)
+						line = FromGame(line);
+				}
 				return true;
 			},
 				kLookTimeout);

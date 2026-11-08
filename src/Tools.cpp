@@ -18,6 +18,7 @@
 #include "FreeCamera.h"
 #include "GameEvents.h"
 #include "GameState.h"
+#include "GameText.h"
 #include "HeldLightsLogic.h"
 #include "HostApi.h"
 #include "InspectLogic.h"
@@ -218,7 +219,7 @@ namespace dvb
 				throw ToolError(500, "SKSE TaskInterface unavailable");
 
 			if (!capture) {
-				task->AddTask([command]() { RE::Console::ExecuteCommand(command.c_str()); });
+				task->AddTask([command = ToGame(command)]() { RE::Console::ExecuteCommand(command.c_str()); });
 				return json{ { "queued", true }, { "command", command }, { "capturing", false } };
 			}
 			// The output comes back with the exec, saving the 'read' round trip; it is this capture's
@@ -277,7 +278,7 @@ namespace dvb
 			std::error_code        ec;
 			for (const auto& e : fs::directory_iterator(a_dir, ec)) {
 				if (e.path().extension() == ".ess")
-					out.push_back({ e.path().stem().string(), e.last_write_time(ec) });
+					out.push_back({ Utf8(e.path().stem()), e.last_write_time(ec) });
 			}
 			std::sort(out.begin(), out.end(), [](const SaveEntry& a, const SaveEntry& b) { return a.mtime > b.mtime; });
 			return out;
@@ -439,7 +440,7 @@ namespace dvb
 				auto           entries = EnumerateSaves(saveDir);  // already newest-first by mtime
 				if (const std::string filter = a_args.value("filter", std::string{}); !filter.empty()) {
 					const std::string needle = Lower(filter);
-					std::erase_if(entries, [&](const SaveEntry& s) { return Lower(Utf8Text(s.name)).find(needle) == std::string::npos; });
+					std::erase_if(entries, [&](const SaveEntry& s) { return Lower(s.name).find(needle) == std::string::npos; });
 				}
 				const size_t matched = entries.size();  // post-filter, pre-limit — see count/truncated below
 				if (a_args.contains("limit")) {
@@ -657,8 +658,8 @@ namespace dvb
 				if (saves.empty())
 					throw ToolError(404, std::format("no .ess saves in {}", saveDir.string()));
 				const std::string name = saves.front().name;
-				Recording::NoteLoadEntry(Utf8Text(name));  // reproducible entry point for a later recording
-				task->AddTask([name]() {
+				Recording::NoteLoadEntry(name);  // reproducible entry point for a later recording
+				task->AddTask([name = ToGame(name)]() {
 					if (auto* m = RE::BGSSaveLoadManager::GetSingleton())
 						m->Load(name.c_str(), false);
 				});
@@ -677,7 +678,7 @@ namespace dvb
 					const fs::path saveDir = ResolveSaveDir(a_args);
 					const auto     saves = EnumerateSaves(saveDir);
 					const auto     it = std::find_if(saves.begin(), saves.end(),
-						[&](const SaveEntry& s) { return Utf8Text(s.name) == name; });
+						[&](const SaveEntry& s) { return s.name == name; });
 					if (it == saves.end())
 						throw ToolError(404, std::format("save '{}' not found in {} — use action='list' for valid names", name, saveDir.string()));
 					file = it->name;
@@ -688,7 +689,7 @@ namespace dvb
 					// against the main thread's VM lock, so use SKSE's save request.
 					Papyrus::QueueCall(json{ { "script", "Game" }, { "function", "SaveGame" }, { "args", json::array({ name }) } });
 				} else {
-					task->AddTask([file]() {
+					task->AddTask([file = ToGame(file)]() {
 						auto* m = RE::BGSSaveLoadManager::GetSingleton();
 						if (!m)
 							return;
@@ -726,7 +727,7 @@ namespace dvb
 					int expected = DeleteJob::kPending;
 					if (!job->state.compare_exchange_strong(expected, DeleteJob::kStarted))
 						return;  // the caller already gave up; deleting now would be unreported
-					job->result.set_value(SaveDelete::Delete(target));
+					job->result.set_value(SaveDelete::Delete(ToGame(target)));
 				});
 				if (result.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
 					int expected = DeleteJob::kPending;
@@ -747,7 +748,8 @@ namespace dvb
 			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|delete|advanceTime|getTimeScale|setTimeScale|getDifficulty|setDifficulty|getAlwaysActive|setAlwaysActive)", action));
 		}
 
-		bool ContainsCI(const std::string& a_hay, const std::string& a_needle);  // defined below (near CheckState)
+		bool         ContainsCI(const std::string& a_hay, const std::string& a_needle);  // defined below (near CheckState)
+		RE::TESForm* LookupFormArg(const std::string& a_arg);                            // defined below (with 'inspect refs')
 
 		// menu: detect/answer menus. 'list' = open menus + messageBoxOpen (tracked live from
 		// MenuOpenCloseEvent) + consumer-registered handler names; 'describe' = the active
@@ -815,6 +817,41 @@ namespace dvb
 				return json{ { "queued", true }, { "action", "open" }, { "name", name } };
 			}
 
+			if (action == "readBook") {
+				// BookMenu needs the book itself, so 'open' cannot show it: a world reference opens through
+				// OpenMenuFromReference and an inventory book through OpenMenuFromBaseForm.
+				const std::string arg = a_args.value("formId", std::string{});
+				if (arg.empty())
+					throw ToolError(400, "action 'readBook' requires a 'formId' (a book form or a reference to one)");
+				const bool activate = a_args.value("activate", false);
+				return MainThread::RunAndWait([arg, activate]() -> json {
+					auto* form = LookupFormArg(arg);
+					if (!form)
+						throw ToolError(404, std::format("no form for '{}'", arg));
+					auto* player = RE::PlayerCharacter::GetSingleton();
+					if (!player)
+						throw ToolError(409, "player is not loaded");
+					auto* ref = form->As<RE::TESObjectREFR>();
+					auto* base = ref ? ref->GetBaseObject() : form;
+					auto* book = base ? base->As<RE::TESObjectBOOK>() : nullptr;
+					if (!book)
+						throw ToolError(400, std::format("'{}' is not a book or a reference to one", arg));
+					if (activate) {
+						if (!ref)
+							throw ToolError(400, "readBook 'activate' needs a reference to a book; an inventory book has no entry point outside the InventoryMenu");
+						// The player's own activation: TESObjectBOOK::Activate, so a hook on its BookMenu call site fires.
+						const bool activated = ref->ActivateRef(player, 0, nullptr, 1, false);
+						return json{ { "action", "readBook" }, { "queued", true }, { "formId", std::format("{:08X}", book->GetFormID()) }, { "viaRef", true }, { "viaActivate", true }, { "activated", activated } };
+					}
+					if (ref) {
+						RE::BookMenu::OpenMenuFromReference(ref);
+					} else {
+						RE::BookMenu::OpenMenuFromBaseForm(book);
+					}
+					return json{ { "action", "readBook" }, { "queued", true }, { "formId", std::format("{:08X}", book->GetFormID()) }, { "viaRef", ref != nullptr } };
+				});
+			}
+
 			if (action == "close") {
 				// Dismiss a menu by name via the UI message queue (kHide). For a modal
 				// MessageBoxMenu this cancels/closes it — unblocking automated flows (e.g.
@@ -879,7 +916,7 @@ namespace dvb
 						auto* data = RE::MessageBoxMenu::GetCurrentMessageBoxData();
 						if (!data)
 							return json{ { "accepted", false }, { "reason", "no active MessageBoxMenu" } };
-						if (!data->bodyText.c_str() || !ContainsCI(Utf8Text(data->bodyText.c_str()), matchBody))
+						if (!data->bodyText.c_str() || !ContainsCI(FromGame(data->bodyText.c_str()), matchBody))
 							return json{ { "accepted", false }, { "reason", "body did not match matchBody" } };
 						// Non-cancel button, but never out of range: fall back to 0 on a one-button box.
 						const int pick = (data->cancelButtonIndex == 0 && data->buttonText.size() > 1) ? 1 : 0;
@@ -897,7 +934,7 @@ namespace dvb
 				return json{ { "queued", true }, { "action", "accept" }, { "index", index } };
 			}
 
-			throw ToolError(400, std::format("unknown action '{}' (list|open|close|describe|accept|invoke)", action));
+			throw ToolError(400, std::format("unknown action '{}' (list|open|close|describe|accept|invoke|readBook)", action));
 		}
 
 		constexpr long long kMaxWaitHours = 100000;
@@ -997,7 +1034,7 @@ namespace dvb
 				{ "formType", std::string(RE::FormTypeToString(a_form->GetFormType())) },
 			};
 			if (const char* n = a_form->GetName(); n && *n)
-				j["name"] = n;
+				j["name"] = FromGame(n);
 			if (const char* e = a_form->GetFormEditorID(); e && *e)
 				j["editorId"] = e;
 			return j;
@@ -1575,7 +1612,7 @@ namespace dvb
 						{ "gold", pc->GetGoldAmount() },
 					};
 					if (const char* n = pc->GetName(); n && *n)
-						j["name"] = n;
+						j["name"] = FromGame(n);
 					if (auto* base = pc->GetActorBase()) {
 						switch (base->GetSex()) {
 						case RE::SEX::kMale:
@@ -2458,7 +2495,7 @@ namespace dvb
 			try {
 				return MainThread::RunAndWait([&a_matchBody]() -> json {
 					auto* data = RE::MessageBoxMenu::GetCurrentMessageBoxData();
-					if (!data || !data->bodyText.c_str() || !ContainsCI(Utf8Text(data->bodyText.c_str()), a_matchBody))
+					if (!data || !data->bodyText.c_str() || !ContainsCI(FromGame(data->bodyText.c_str()), a_matchBody))
 						return false;
 					RE::MessageBoxMenu::SelectOption((data->cancelButtonIndex == 0 && data->buttonText.size() > 1) ? 1 : 0);
 					return true;
@@ -2734,10 +2771,10 @@ namespace dvb
 				// captures if rep N+1's own scene assert succeeds.
 				bool runSceneMismatch = false;
 				// A waitFor right after a waitFor resumes from the event the previous one matched.
-				std::optional<uint64_t> chainedSince;
+				ScenarioPolicy::WaitForChain waitChain;
 				for (size_t i = 0; i < steps.size() && !aborted; ++i) {
 					// Taken by every step: only a waitFor branch that runs and matches sets it again.
-					const std::optional<uint64_t> prevWaitForSince = std::exchange(chainedSince, std::nullopt);
+					const std::optional<uint64_t> prevWaitForSince = waitChain.Take();
 					if (a_options.beforeStep)
 						a_options.beforeStep(i);
 					const json& step = steps[i];
@@ -2863,7 +2900,7 @@ namespace dvb
 							}
 							r["satisfied"] = satisfied;
 							if (satisfied)
-								chainedSince = since;
+								waitChain.Matched(since);
 							else {
 								r["timedOut"] = true;
 								stepFailed = true;
@@ -3207,8 +3244,9 @@ namespace dvb
 				"'name' via the UI queue (kShow) — opens hub menus from a plain name (TweenMenu, "
 				"'Journal Menu', MagicMenu, MapMenu, StatsMenu, InventoryMenu, FavoritesMenu); context "
 				"menus that need a target ref (ContainerMenu/BarterMenu/BookMenu) won't open this way. "
-				"'close' hides a menu by 'name' via the UI queue (kHide). 'autoDismiss' with 'names' (an array; [] "
-				"clears) hides those menus the moment they open (e.g. [\"Tutorial Menu\"]); without 'names' it "
+				"'close' hides a menu by 'name' via the UI queue (kHide). 'readBook' opens the real BookMenu for a "
+				"book 'formId' (a book form or a reference to one; 'activate' reads a world reference as the player does). "
+				"'autoDismiss' with 'names' (an array; [] clears) hides those menus the moment they open (e.g. [\"Tutorial Menu\"]); without 'names' it "
 				"returns the list; a message box cannot be listed. 'invoke' dispatches to a "
 				"consumer-registered (mod) menu by 'name' — NOT 'open' (mod menus aren't engine menus). A mod "
 				"exposes its menu via the C-ABI RegisterMenuHandler; 'list' returns those under 'registered'.";
@@ -3216,7 +3254,9 @@ namespace dvb
 			menu.inputSchema = json{
 				{ "type", "object" },
 				{ "properties", json{
-									{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "open", "close", "invoke", "autoDismiss" }) }, { "description", "list | describe | accept | open | close | invoke | autoDismiss" } } },
+									{ "action", json{ { "type", "string" }, { "enum", json::array({ "list", "describe", "accept", "open", "close", "invoke", "readBook", "autoDismiss" }) }, { "description", "list | describe | accept | open | close | invoke | readBook | autoDismiss" } } },
+									{ "formId", json{ { "type", "string" }, { "description", "readBook: hex FormID or EditorID of a book form (the tool does not check inventory) or of a reference to a book in the world; opens the real BookMenu." } } },
+									{ "activate", json{ { "type", "boolean" }, { "description", "readBook: activate the reference as the player does (TESObjectBOOK::Activate) instead of opening the menu directly; needs a reference." } } },
 									{ "name", json{ { "type", "string" }, { "description", "open/close: ENGINE menu to show/hide (e.g. TweenMenu). invoke/describe: a registered mod menu (see list .registered, or this tool's description)." } } },
 									{ "index", json{ { "type", "integer" }, { "description", "accept: 0-based button index to select (default 0). See describe's buttons/cancelIndex." } } },
 									{ "names", json{ { "type", "array" }, { "items", json{ { "type", "string" } } }, { "description", "autoDismiss: menu names to hide on open ([] clears; omit to list)." } } },
