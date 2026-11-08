@@ -50,7 +50,7 @@ namespace dvb::Capture
 
 		std::string GenericPath(const fs::path& a_p)
 		{
-			return a_p.generic_string();  // forward slashes, per the provider contract
+			return Utf8(fs::path(a_p.generic_wstring()));  // forward slashes, per the provider contract
 		}
 
 		struct HandleCloser
