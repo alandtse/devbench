@@ -2,6 +2,7 @@
 
 #include "ConsoleLogCapture.h"
 #include "EventBus.h"
+#include "GameText.h"
 #include "Json.h"
 #include "Recording.h"
 
@@ -36,8 +37,8 @@ namespace dvb::ConsoleHook
 						// pollute events or recordings.
 						if (cmd && *cmd && !ConsoleLogCapture::IsFenceCommand(cmd)) {
 							if (g_events)
-								g_events->Publish("console.command", json{ { "command", cmd } });
-							Recording::NoteConsoleCommand(cmd);
+								g_events->Publish("console.command", json{ { "command", FromGame(cmd) } });
+							Recording::NoteConsoleCommand(FromGame(cmd));
 						}
 					}
 				}

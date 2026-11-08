@@ -20,7 +20,7 @@ namespace dvb
 	/// Skyrim — this is the exact seam that regressed (see tests/McpContent_test.cpp).
 	inline json ToContentBlocks(const json& a_value)
 	{
-		const std::string text = a_value.is_string() ? a_value.get<std::string>() : a_value.dump(2);
+		const std::string text = a_value.is_string() ? Utf8Scrub(a_value.get<std::string>()) : Dump(a_value, 2);
 		return json::array({ json{ { "type", "text" }, { "text", text } } });
 	}
 }

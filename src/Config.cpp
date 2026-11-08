@@ -47,6 +47,8 @@ namespace dvb
 				{ "stallWatchdogMs", a_cfg.stallWatchdogMs },
 				{ "strictToolArgs", a_cfg.strictToolArgs },
 				{ "alwaysActive", a_cfg.alwaysActive },
+				{ "disableVanityCamera", a_cfg.disableVanityCamera },
+				{ "autoDismissMenus", a_cfg.autoDismissMenus },
 			};
 			out << j.dump(2) << '\n';
 		}
@@ -128,6 +130,8 @@ namespace dvb
 			cfg.strictToolArgs = j.value("strictToolArgs", cfg.strictToolArgs);
 			if (const auto it = j.find("alwaysActive"); it != j.end() && it->is_boolean())
 				cfg.alwaysActive = it->get<bool>();
+			cfg.disableVanityCamera = j.value("disableVanityCamera", cfg.disableVanityCamera);
+			cfg.autoDismissMenus = j.value("autoDismissMenus", cfg.autoDismissMenus);
 
 			// Migrate forward: if the file predates any key (e.g. an install from before
 			// the record hotkeys existed), rewrite it so the new keys appear with their
@@ -139,7 +143,8 @@ namespace dvb
 				"recordIntervalMs", "autoRunPath", "autoRunRestoreScene", "loadSettleMs",
 				"couplingAnchorMs", "couplingCellMs", "cleanTransition", "cleanTransitionCell",
 				"captureDir", "captureScanDirs", "captureTimeoutMs", "captureSettleMs",
-				"stallWatchdogMs", "strictToolArgs", "alwaysActive"
+				"stallWatchdogMs", "strictToolArgs", "alwaysActive",
+				"disableVanityCamera", "autoDismissMenus"
 			};
 			const bool complete = std::all_of(std::begin(kKeys), std::end(kKeys),
 				[&](const char* k) { return j.contains(k); });
