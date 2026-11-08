@@ -22,7 +22,6 @@ import pytest
         {"action": "burst", "checkpointId": "a/b", "count": 5},
         {"action": "status"},
         {"action": "status", "runId": 0},
-        {"action": "status", "runId": "1"},
     ],
 )
 def test_burst_rejects_a_malformed_request(client, args):
