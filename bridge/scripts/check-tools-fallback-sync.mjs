@@ -29,8 +29,10 @@ const DESCRIPTOR_FILE = "src/ToolRegistry.h";
 const DESCRIPTOR_TOKENS =
   /\b(DefaultInputSchema|ToolDescriptor|inputSchema|readOnly)\b/;
 const STRING_LITERAL = /"(?:[^"\\]|\\.){3,}"/;
-// A result field built from a call, `{ "key", Fn(x) },`, is runtime data, not tool text.
-const RESULT_FIELD = /^\{\s*"\w+",\s*[^"]*\([^"]*\},?$/;
+// Runtime code, not tool text: an #include, a result field built from a call
+// (`{ "key", Fn(x) },`), or a result field assigned from a non-literal (`j["key"] = x;`).
+const RESULT_FIELD =
+  /^(?:#include\s|\{\s*"\w+",\s*[^"]*\([^"]*\},?$|\w+\["\w+"\]\s*=\s*[^"]*;$)/;
 const FALLBACK_FILE = "bridge/src/tools-fallback.json";
 
 // Structural validation, independent of whether a registration file changed --

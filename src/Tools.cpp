@@ -18,6 +18,7 @@
 #include "FreeCamera.h"
 #include "GameEvents.h"
 #include "GameState.h"
+#include "GameText.h"
 #include "HeldLightsLogic.h"
 #include "HostApi.h"
 #include "InspectLogic.h"
@@ -217,7 +218,7 @@ namespace dvb
 				throw ToolError(500, "SKSE TaskInterface unavailable");
 
 			if (!capture) {
-				task->AddTask([command]() { RE::Console::ExecuteCommand(command.c_str()); });
+				task->AddTask([command = ToGame(command)]() { RE::Console::ExecuteCommand(command.c_str()); });
 				return json{ { "queued", true }, { "command", command }, { "capturing", false } };
 			}
 			// The output comes back with the exec, saving the 'read' round trip; it is this capture's
@@ -276,7 +277,7 @@ namespace dvb
 			std::error_code        ec;
 			for (const auto& e : fs::directory_iterator(a_dir, ec)) {
 				if (e.path().extension() == ".ess")
-					out.push_back({ e.path().stem().string(), e.last_write_time(ec) });
+					out.push_back({ Utf8(e.path().stem()), e.last_write_time(ec) });
 			}
 			std::sort(out.begin(), out.end(), [](const SaveEntry& a, const SaveEntry& b) { return a.mtime > b.mtime; });
 			return out;
@@ -438,7 +439,7 @@ namespace dvb
 				auto           entries = EnumerateSaves(saveDir);  // already newest-first by mtime
 				if (const std::string filter = a_args.value("filter", std::string{}); !filter.empty()) {
 					const std::string needle = Lower(filter);
-					std::erase_if(entries, [&](const SaveEntry& s) { return Lower(Utf8Text(s.name)).find(needle) == std::string::npos; });
+					std::erase_if(entries, [&](const SaveEntry& s) { return Lower(s.name).find(needle) == std::string::npos; });
 				}
 				const size_t matched = entries.size();  // post-filter, pre-limit — see count/truncated below
 				if (a_args.contains("limit")) {
@@ -656,8 +657,8 @@ namespace dvb
 				if (saves.empty())
 					throw ToolError(404, std::format("no .ess saves in {}", saveDir.string()));
 				const std::string name = saves.front().name;
-				Recording::NoteLoadEntry(Utf8Text(name));  // reproducible entry point for a later recording
-				task->AddTask([name]() {
+				Recording::NoteLoadEntry(name);  // reproducible entry point for a later recording
+				task->AddTask([name = ToGame(name)]() {
 					if (auto* m = RE::BGSSaveLoadManager::GetSingleton())
 						m->Load(name.c_str(), false);
 				});
@@ -676,7 +677,7 @@ namespace dvb
 					const fs::path saveDir = ResolveSaveDir(a_args);
 					const auto     saves = EnumerateSaves(saveDir);
 					const auto     it = std::find_if(saves.begin(), saves.end(),
-						[&](const SaveEntry& s) { return Utf8Text(s.name) == name; });
+						[&](const SaveEntry& s) { return s.name == name; });
 					if (it == saves.end())
 						throw ToolError(404, std::format("save '{}' not found in {} — use action='list' for valid names", name, saveDir.string()));
 					file = it->name;
@@ -687,7 +688,7 @@ namespace dvb
 					// against the main thread's VM lock, so use SKSE's save request.
 					Papyrus::QueueCall(json{ { "script", "Game" }, { "function", "SaveGame" }, { "args", json::array({ name }) } });
 				} else {
-					task->AddTask([file]() {
+					task->AddTask([file = ToGame(file)]() {
 						auto* m = RE::BGSSaveLoadManager::GetSingleton();
 						if (!m)
 							return;
@@ -725,7 +726,7 @@ namespace dvb
 					int expected = DeleteJob::kPending;
 					if (!job->state.compare_exchange_strong(expected, DeleteJob::kStarted))
 						return;  // the caller already gave up; deleting now would be unreported
-					job->result.set_value(SaveDelete::Delete(target));
+					job->result.set_value(SaveDelete::Delete(ToGame(target)));
 				});
 				if (result.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
 					int expected = DeleteJob::kPending;
@@ -866,7 +867,7 @@ namespace dvb
 						auto* data = RE::MessageBoxMenu::GetCurrentMessageBoxData();
 						if (!data)
 							return json{ { "accepted", false }, { "reason", "no active MessageBoxMenu" } };
-						if (!data->bodyText.c_str() || !ContainsCI(Utf8Text(data->bodyText.c_str()), matchBody))
+						if (!data->bodyText.c_str() || !ContainsCI(FromGame(data->bodyText.c_str()), matchBody))
 							return json{ { "accepted", false }, { "reason", "body did not match matchBody" } };
 						// Non-cancel button, but never out of range: fall back to 0 on a one-button box.
 						const int pick = (data->cancelButtonIndex == 0 && data->buttonText.size() > 1) ? 1 : 0;
@@ -984,7 +985,7 @@ namespace dvb
 				{ "formType", std::string(RE::FormTypeToString(a_form->GetFormType())) },
 			};
 			if (const char* n = a_form->GetName(); n && *n)
-				j["name"] = n;
+				j["name"] = FromGame(n);
 			if (const char* e = a_form->GetFormEditorID(); e && *e)
 				j["editorId"] = e;
 			return j;
@@ -1562,7 +1563,7 @@ namespace dvb
 						{ "gold", pc->GetGoldAmount() },
 					};
 					if (const char* n = pc->GetName(); n && *n)
-						j["name"] = n;
+						j["name"] = FromGame(n);
 					if (auto* base = pc->GetActorBase()) {
 						switch (base->GetSex()) {
 						case RE::SEX::kMale:
@@ -2445,7 +2446,7 @@ namespace dvb
 			try {
 				return MainThread::RunAndWait([&a_matchBody]() -> json {
 					auto* data = RE::MessageBoxMenu::GetCurrentMessageBoxData();
-					if (!data || !data->bodyText.c_str() || !ContainsCI(Utf8Text(data->bodyText.c_str()), a_matchBody))
+					if (!data || !data->bodyText.c_str() || !ContainsCI(FromGame(data->bodyText.c_str()), a_matchBody))
 						return false;
 					RE::MessageBoxMenu::SelectOption((data->cancelButtonIndex == 0 && data->buttonText.size() > 1) ? 1 : 0);
 					return true;
