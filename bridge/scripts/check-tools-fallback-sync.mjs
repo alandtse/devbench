@@ -19,6 +19,7 @@ if (!baseRef) {
 const REGISTRATION_FILES = [
   "src/Tools.cpp",
   "src/Capture.cpp",
+  "src/Map.cpp",
   "src/HostApi.cpp",
   "src/KeyboardInput.cpp",
 ];

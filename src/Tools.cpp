@@ -13,6 +13,7 @@
 #include "DrawStats.h"
 #include "DrawStatsLogic.h"
 #include "EventBus.h"
+#include "FormLookup.h"
 #include "FormSearch.h"
 #include "FormSearchLogic.h"
 #include "FreeCamera.h"
@@ -26,6 +27,7 @@
 #include "Json.h"
 #include "KeyboardInput.h"
 #include "MainThread.h"
+#include "Map.h"
 #include "ModalWatch.h"
 #include "Papyrus.h"
 #include "Recording.h"
@@ -750,8 +752,8 @@ namespace dvb
 			throw ToolError(400, std::format("unknown action '{}' (list|save|load|loadLast|delete|advanceTime|getTimeScale|setTimeScale|getDifficulty|setDifficulty|getAlwaysActive|setAlwaysActive)", action));
 		}
 
-		bool         ContainsCI(const std::string& a_hay, const std::string& a_needle);  // defined below (near CheckState)
-		RE::TESForm* LookupFormArg(const std::string& a_arg);                            // defined below (with 'inspect refs')
+		bool ContainsCI(const std::string& a_hay, const std::string& a_needle);  // defined below (near CheckState)
+		using FormLookup::LookupFormArg;
 
 		// menu: detect/answer menus. 'list' = open menus + messageBoxOpen (tracked live from
 		// MenuOpenCloseEvent) + consumer-registered handler names; 'describe' = the active
@@ -1041,31 +1043,6 @@ namespace dvb
 			if (const char* e = a_form->GetFormEditorID(); e && *e)
 				j["editorId"] = e;
 			return j;
-		}
-
-		// Resolve a form argument: an explicit 0x.. FormID, else an EditorID (tried first so an all-hex
-		// EditorID isn't misread as a FormID), else a bare hex FormID. The hex must be the whole string
-		// and fit 32 bits, so "14G" or an overflow can't truncate to a valid FormID and resolve the
-		// wrong form. Shared by 'inspect refs' formId and 'camera frame'.
-		RE::TESForm* LookupFormArg(const std::string& a_arg)
-		{
-			auto byHex = [](const std::string& s) -> RE::TESForm* {
-				std::size_t        consumed = 0;
-				unsigned long long id = 0;
-				try {
-					id = std::stoull(s, &consumed, 16);
-				} catch (...) {
-					return nullptr;
-				}
-				if (consumed != s.size() || id > 0xFFFFFFFFull)
-					return nullptr;
-				return RE::TESForm::LookupByID(static_cast<RE::FormID>(id));
-			};
-			if (a_arg.size() > 2 && a_arg[0] == '0' && (a_arg[1] == 'x' || a_arg[1] == 'X'))
-				return byHex(a_arg.substr(2));
-			if (auto* f = RE::TESForm::LookupByEditorID(a_arg))
-				return f;
-			return byHex(a_arg);
 		}
 
 		// Identify a placed reference — the form's identity plus its base object and position.
@@ -3738,6 +3715,7 @@ namespace dvb
 		a_registry.Register(BuildMenuDescriptor(), &MenuHandler);
 		a_registry.Register(Capture::BuildCaptureDescriptor(), &Capture::Handle);
 		a_registry.Register(Gfx::BuildDescriptor(), &Gfx::Handle);
+		a_registry.Register(Map::BuildDescriptor(), &Map::Handle);
 
 		// When a mod registers a kind/menu/provider, rebuild that base tool's descriptor so the new
 		// key is discoverable on the first call (the registry's registration path re-registers it
