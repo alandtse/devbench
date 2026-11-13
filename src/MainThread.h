@@ -33,6 +33,8 @@ namespace dvb::MainThread
 	/// does not finish within `a_timeout` (e.g. the main thread is stalled mid-load).
 	/// Tasks still queued at their deadline are abandoned and will not invoke a_fn.
 	/// Already-running tasks cannot be interrupted and may finish after a timeout.
+	/// A frame observation during this wait is not a hang diagnosis, readiness proof,
+	/// or evidence that a process restart is necessary. Do not replay started work.
 	///
 	/// MUST be called from a non-main thread (the server listener). Calling it on the
 	/// main thread would deadlock — the task can never run while this blocks.
