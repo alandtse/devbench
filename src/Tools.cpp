@@ -2433,7 +2433,7 @@ namespace dvb
 			try {
 				const json names = MainThread::RunAndWait([]() -> json {
 					const auto inventory = GetMenuInventory();
-					auto* ui = RE::UI::GetSingleton();
+					auto*      ui = RE::UI::GetSingleton();
 					return ReadBlockingMenus(inventory, ui != nullptr, RE::Console::MENU_NAME,
 						[ui](const std::string& a_name) -> std::optional<MenuBlockingFlags> {
 							const auto menu = ui->GetMenu(a_name);

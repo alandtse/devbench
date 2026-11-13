@@ -883,7 +883,7 @@ namespace dvb::Recording
 			}
 			if (!correlationId.empty())
 				manifest["correlationId"] = correlationId;
-			json openMenus = json::array();
+			json       openMenus = json::array();
 			const auto menuInventory = GetMenuInventory();
 			for (const auto& menu : menuInventory.openMenus)
 				openMenus.push_back(menu);

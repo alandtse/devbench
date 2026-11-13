@@ -16,13 +16,14 @@ namespace dvb
 	struct MenuInventorySnapshot
 	{
 		std::vector<std::string> openMenus;
-		bool initialized{ false };
-		bool eventsSubscribed{ false };
+		bool                     initialized{ false };
+		bool                     eventsSubscribed{ false };
 
 		const char* Source() const
 		{
-			return initialized ? "initial-ui-snapshot-and-events" :
-			       eventsSubscribed ? "events-only-incomplete" : "ui-unavailable-no-sink";
+			return initialized      ? "initial-ui-snapshot-and-events" :
+			       eventsSubscribed ? "events-only-incomplete" :
+			                          "ui-unavailable-no-sink";
 		}
 
 		bool KnownAbsent(std::string_view a_name) const
@@ -85,7 +86,12 @@ namespace dvb
 	class MenuInventory
 	{
 	public:
-		enum class InstallResult { UiUnavailable, Ready, SeedRaced };
+		enum class InstallResult
+		{
+			UiUnavailable,
+			Ready,
+			SeedRaced
+		};
 
 		// Main-thread-only installer, also used by the existing deferred milestone
 		// drain. Engine callbacks run WITHOUT mutex_: subscribing may deliver events.
@@ -116,7 +122,7 @@ namespace dvb
 		bool Seed(std::uint64_t a_revision, const std::vector<std::string>& a_names)
 		{
 			std::unordered_set<std::string> names(a_names.begin(), a_names.end());
-			std::lock_guard lock(mutex_);
+			std::lock_guard                 lock(mutex_);
 			// Never overwrite an event delivered during collection with a stale seed.
 			if (!eventsSubscribed_ || revision_ != a_revision)
 				return false;
@@ -138,17 +144,17 @@ namespace dvb
 
 		MenuInventorySnapshot Snapshot() const
 		{
-			std::lock_guard lock(mutex_);
+			std::lock_guard       lock(mutex_);
 			MenuInventorySnapshot out{ { openMenus_.begin(), openMenus_.end() }, initialized_, eventsSubscribed_ };
 			std::sort(out.openMenus.begin(), out.openMenus.end());
 			return out;
 		}
 
 	private:
-		mutable std::mutex mutex_;
+		mutable std::mutex              mutex_;
 		std::unordered_set<std::string> openMenus_;
-		std::uint64_t revision_{ 0 };
-		bool initialized_{ false };
-		bool eventsSubscribed_{ false };
+		std::uint64_t                   revision_{ 0 };
+		bool                            initialized_{ false };
+		bool                            eventsSubscribed_{ false };
 	};
 }

@@ -107,18 +107,15 @@ namespace dvb
 
 	void RefreshMenuEventInventory()
 	{
-		auto* ui = RE::UI::GetSingleton();
-		const auto result = g_menus.Install(ui != nullptr, [ui] {
-			ui->AddEventSink<RE::MenuOpenCloseEvent>(&g_menuSink);
-		}, [ui] {
+		auto*      ui = RE::UI::GetSingleton();
+		const auto result = g_menus.Install(ui != nullptr, [ui] { ui->AddEventSink<RE::MenuOpenCloseEvent>(&g_menuSink); }, [ui] {
 			std::vector<std::string> open;
 			// This stage runs on the main thread. A registered factory or retained
 			// menu instance is not enough: match UI::IsMenuOpen's OnStack predicate.
 			for (const auto& entry : ui->menuMap)
 				if (entry.second.menu && entry.second.menu->OnStack())
 					open.emplace_back(entry.first.c_str());
-			return open;
-		});
+			return open; });
 		if (result == MenuInventory::InstallResult::SeedRaced)
 			logs::warn("devbench: initial menu snapshot raced an event; inventory absence remains unknown");
 		else if (result == MenuInventory::InstallResult::UiUnavailable)

@@ -1,5 +1,5 @@
-#include "test_framework.h"
 #include "MenuInventory.h"
+#include "test_framework.h"
 
 #include <stdexcept>
 
@@ -26,7 +26,7 @@ TEST_CASE("Menu inventory: late installation seeds an already open Main Menu")
 TEST_CASE("Menu inventory: unavailable initial snapshot never proves menu or modal absence")
 {
 	dvb::MenuInventory inventory;
-	const auto snapshot = inventory.Snapshot();
+	const auto         snapshot = inventory.Snapshot();
 	CHECK(!snapshot.initialized);
 	CHECK(!snapshot.KnownEmpty());
 	CHECK(!snapshot.KnownAbsent("MessageBoxMenu"));
@@ -56,8 +56,7 @@ TEST_CASE("Menu inventory: an event during seed collection cannot be overwritten
 	dvb::MenuInventory inventory;
 	CHECK(inventory.Install(true, [] {}, [&] {
 		inventory.OnEvent("MessageBoxMenu", true);
-		return std::vector<std::string>{ "Main Menu" };
-	}) == dvb::MenuInventory::InstallResult::SeedRaced);
+		return std::vector<std::string>{ "Main Menu" }; }) == dvb::MenuInventory::InstallResult::SeedRaced);
 	const auto snapshot = inventory.Snapshot();
 	CHECK(!snapshot.initialized);
 	CHECK(snapshot.openMenus == std::vector<std::string>{ "MessageBoxMenu" });
@@ -92,9 +91,9 @@ TEST_CASE("Menu inventory: snapshots own sorted unique names and cannot mutate s
 TEST_CASE("Menu inventory: production installer retries unavailable UI once without duplicate subscription")
 {
 	dvb::MenuInventory inventory;
-	int subscriptions = 0, collections = 0;
-	auto subscribe = [&] { ++subscriptions; };
-	auto collect = [&] { ++collections; return std::vector<std::string>{ "Main Menu" }; };
+	int                subscriptions = 0, collections = 0;
+	auto               subscribe = [&] { ++subscriptions; };
+	auto               collect = [&] { ++collections; return std::vector<std::string>{ "Main Menu" }; };
 	CHECK(inventory.Install(false, subscribe, collect) == dvb::MenuInventory::InstallResult::UiUnavailable);
 	CHECK(subscriptions == 0);
 	CHECK(collections == 0);
@@ -113,8 +112,8 @@ TEST_CASE("Menu inventory: production installer retries unavailable UI once with
 TEST_CASE("Menu inventory: raced seed retries collection but never installs a second sink")
 {
 	dvb::MenuInventory inventory;
-	int subscriptions = 0;
-	auto subscribe = [&] { ++subscriptions; };
+	int                subscriptions = 0;
+	auto               subscribe = [&] { ++subscriptions; };
 	CHECK(inventory.Install(true, subscribe, [&] {
 		inventory.OnEvent("MessageBoxMenu", true);
 		return std::vector<std::string>{};
@@ -139,7 +138,7 @@ TEST_CASE("Menu inventory: production blocking reader retains unresolved positiv
 {
 	dvb::MenuInventory inventory;
 	Install(inventory, { "MessageBoxMenu" });
-	int lookups = 0;
+	int        lookups = 0;
 	const auto blocking = dvb::ReadBlockingMenus(inventory.Snapshot(), true, "Console",
 		[&](const std::string& a_name) -> std::optional<dvb::MenuBlockingFlags> {
 			++lookups;
@@ -152,7 +151,7 @@ TEST_CASE("Menu inventory: production blocking reader retains unresolved positiv
 	// consume this same production reader's empty/nonempty decision (call-site map
 	// supplied with the review). This is not an engine/handler execution claim.
 	CHECK(!blocking.empty());
-	CHECK(blocking.front() != "MessageBoxMenu"); // not eligible for automatic modal closure
+	CHECK(blocking.front() != "MessageBoxMenu");  // not eligible for automatic modal closure
 }
 
 TEST_CASE("Menu inventory: production blocking reader preserves resolved flag policy and console exemption")
@@ -171,8 +170,8 @@ TEST_CASE("Menu inventory: production blocking reader preserves resolved flag po
 TEST_CASE("Menu inventory: production blocking reader never consults unavailable UI or infers unknown absence")
 {
 	dvb::MenuInventory inventory;
-	int lookups = 0;
-	auto lookup = [&](const std::string&) -> std::optional<dvb::MenuBlockingFlags> { ++lookups; return std::nullopt; };
+	int                lookups = 0;
+	auto               lookup = [&](const std::string&) -> std::optional<dvb::MenuBlockingFlags> { ++lookups; return std::nullopt; };
 	CHECK(dvb::ReadBlockingMenus(inventory.Snapshot(), true, "Console", lookup) == std::vector<std::string>{ "<menu-inventory-unknown>" });
 	Install(inventory, {});
 	CHECK(dvb::ReadBlockingMenus(inventory.Snapshot(), false, "Console", lookup) == std::vector<std::string>{ "<ui-unavailable>" });
@@ -183,13 +182,13 @@ TEST_CASE("Menu inventory: production blocking reader never consults unavailable
 TEST_CASE("Menu inventory: collection failure preserves subscription and unknown absence for later retry")
 {
 	dvb::MenuInventory inventory;
-	int subscriptions = 0;
-	bool caught = false;
+	int                subscriptions = 0;
+	bool               caught = false;
 	try {
-		(void)inventory.Install(true, [&] { ++subscriptions; }, []() -> std::vector<std::string> {
-			throw std::runtime_error("injected collection failure");
-		});
-	} catch (const std::runtime_error&) { caught = true; }
+		(void)inventory.Install(true, [&] { ++subscriptions; }, []() -> std::vector<std::string> { throw std::runtime_error("injected collection failure"); });
+	} catch (const std::runtime_error&) {
+		caught = true;
+	}
 	CHECK(caught);
 	CHECK(inventory.Snapshot().eventsSubscribed);
 	CHECK(!inventory.Snapshot().KnownEmpty());
