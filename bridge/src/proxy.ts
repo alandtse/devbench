@@ -2,6 +2,7 @@
 // whatever DLL build is actually running.
 
 import { resolveBaseUrl, type Target } from "./runtime.js";
+import { fetchToolJson } from "./rest-policy.js";
 
 interface DevbenchToolDescriptor {
   name: string;
@@ -67,11 +68,12 @@ export async function callTool(
   target: Target,
   name: string,
   args: Record<string, unknown>,
+  restTimeoutMs?: number,
 ): Promise<unknown> {
   const base = resolveBaseUrlOrThrowUnavailable(target);
-  return fetchJson(`${base}/api/tool/${encodeURIComponent(name)}`, {
+  return fetchToolJson(`${base}/api/tool/${encodeURIComponent(name)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(args ?? {}),
-  });
+  }, restTimeoutMs);
 }

@@ -4,7 +4,7 @@
 export function printSetupSnippet(
   exePath: string,
   scriptArgs: (string | undefined)[],
-  args: { game?: string; install?: string },
+  args: { game?: string; install?: string; restTimeoutMs?: number },
 ): void {
   const name = `devbench-${args.game ?? "custom"}`;
   const cliArgs = [
@@ -12,6 +12,8 @@ export function printSetupSnippet(
     ...(args.install
       ? ["--install", args.install]
       : ["--game", args.game ?? "se"]),
+    ...(args.restTimeoutMs !== undefined
+      ? ["--rest-timeout-ms", String(args.restTimeoutMs)] : []),
   ];
   const snippet = {
     mcpServers: {

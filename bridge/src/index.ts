@@ -9,6 +9,7 @@ import {
 import { callTool, GameUnavailableError, listTools } from "./proxy.js";
 import { isSupportedGame, resolveTarget } from "./runtime.js";
 import { printSetupSnippet } from "./setup.js";
+import { isUnknownToolError, parseBridgeArgs, RestCallError } from "./rest-policy.js";
 import toolsFallback from "./tools-fallback.json" with { type: "json" };
 
 interface DevbenchTool {
@@ -35,32 +36,8 @@ function isCompiledExecutable(): boolean {
   return process.argv[1]?.includes("~BUN") ?? false;
 }
 
-function parseArgs(argv: string[]): {
-  game?: string;
-  install?: string;
-  setup: boolean;
-} {
-  let game: string | undefined;
-  let install: string | undefined;
-  let setup = false;
-  for (let i = 0; i < argv.length; i++) {
-    switch (argv[i]) {
-      case "--game":
-        game = argv[++i];
-        break;
-      case "--install":
-        install = argv[++i];
-        break;
-      case "setup":
-        setup = true;
-        break;
-    }
-  }
-  return { game, install, setup };
-}
-
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const args = parseBridgeArgs(process.argv.slice(2));
 
   if (args.setup) {
     if (!args.install && !isSupportedGame(args.game)) {
@@ -123,6 +100,7 @@ async function main(): Promise<void> {
         target,
         request.params.name,
         request.params.arguments ?? {},
+        args.restTimeoutMs,
       );
       return {
         content: [{ type: "text", text: JSON.stringify(result ?? null) }],
@@ -135,14 +113,18 @@ async function main(): Promise<void> {
       // The game restarted (or a provider plugin did not load) since the client
       // fetched tools/list, so it still advertises a tool this game lacks: tell it
       // to fetch the list again.
-      if (/unknown tool/i.test(message)) {
+      if (isUnknownToolError(e)) {
         void notifyIfToolListChanged();
       }
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify({ ok: false, reason: message }),
+            text: JSON.stringify({
+              ok: false,
+              reason: message,
+              ...(e instanceof RestCallError ? { restError: e.details() } : {}),
+            }),
           },
         ],
         isError: true,

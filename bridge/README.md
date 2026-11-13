@@ -66,6 +66,32 @@ You can also get this exact snippet live from a running game: `GET /api/tools`'s
 - `--install <path>` — target a specific Skyrim install directory (required if devbench
   isn't in one of the default Steam locations, or you're running a non-default copy).
 - `setup` — print the `.mcp.json` snippet instead of running as an MCP server.
+- `--rest-timeout-ms <milliseconds>` — deadline for one forwarded tool call.
+  Accepts integers from 1 to 540,000 and defaults to 30,000. The deadline covers
+  response headers and the complete body. Tool discovery keeps its own
+  30-second deadline. The `setup` snippet includes the option when supplied.
+
+## Long calls and uncertain results
+
+Set the option on the bridge process. For example, use
+`--game vr --rest-timeout-ms 124000` for a native call that may take 120
+seconds. Configure the MCP client to wait longer than the bridge deadline.
+
+A timeout stops the bridge waiting for a response. Native work may still
+complete. The MCP error includes `restError.outcome = "unknown"` and
+`restError.retrySafe = false`, along with the configured deadline and any
+received HTTP status and response body. Use the original request identity to
+check what happened before deciding whether to retry.
+
+The bridge rejects redirects on tool POSTs. This keeps the call on its
+original endpoint and preserves the redirect response in the error.
+
+Run the policy and loopback HTTP tests with Node.js 24 from `bridge/`:
+
+```sh
+node --test test/rest-policy.test.mjs
+```
+
 
 ## Development
 
