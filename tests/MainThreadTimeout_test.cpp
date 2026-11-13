@@ -1,5 +1,5 @@
-#include "test_framework.h"
 #include "MainThreadTimeout.h"
+#include "test_framework.h"
 #include <utility>
 
 using dvb::MainThread::DescribeTaskTimeout;
@@ -17,7 +17,7 @@ TEST_CASE("Main-thread timeout: started work remains uncertain and must not be r
 
 TEST_CASE("Main-thread timeout: missing frame samples leave the cause unknown")
 {
-	for (const auto pair : { std::pair{-1, 0}, std::pair{0, -1}, std::pair{-1, -1} }) {
+	for (const auto pair : { std::pair{ -1, 0 }, std::pair{ 0, -1 }, std::pair{ -1, -1 } }) {
 		const auto text = DescribeTaskTimeout(250ms, false, pair.first, pair.second);
 		CHECK(text.find("abandoned before entry") != std::string::npos);
 		CHECK(text.find("frame progress unavailable") != std::string::npos);
