@@ -31,6 +31,7 @@ TEST_CASE("Main-thread timeout: cold startup with no frame advance does not pres
 	CHECK(text.find("abandoned before entry") != std::string::npos);
 	CHECK(text.find("no frame advance observed during this wait") != std::string::npos);
 	CHECK(text.find("loading/compilation") != std::string::npos);
+	CHECK(text.find("check blockedBy or menu action=list") != std::string::npos);
 	CHECK(text.find("does not establish a hang or a need to restart") != std::string::npos);
 	CHECK(text.find("only a process restart") == std::string::npos);
 }
