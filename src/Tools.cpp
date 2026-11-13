@@ -755,8 +755,8 @@ namespace dvb
 		bool ContainsCI(const std::string& a_hay, const std::string& a_needle);  // defined below (near CheckState)
 		using FormLookup::LookupFormArg;
 
-		// menu: detect/answer menus. 'list' = open menus + messageBoxOpen (tracked live from
-		// MenuOpenCloseEvent) + consumer-registered handler names; 'describe' = the active
+		// menu: detect/answer menus. 'list' = seeded menu-event inventory + completeness
+		// and consumer-registered handler names; 'describe' = the active
 		// MessageBoxMenu's body + buttons, or (with 'name') a registered handler's descriptor;
 		// 'accept' = select a button by index (answers + dismisses); 'open' = show a menu by name
 		// (kShow); 'close' = hide a menu by name (kHide); 'invoke' = dispatch to a consumer-registered
@@ -768,20 +768,9 @@ namespace dvb
 			const std::string action = a_args.value("action", std::string("list"));
 
 			if (action == "list") {
-				json open = json::array();
-				bool messageBox = false;
-				for (const auto& m : GetOpenMenus()) {
-					if (m == RE::MessageBoxMenu::MENU_NAME)
-						messageBox = true;
-					open.push_back(m);
-				}
 				// `registered` = menus a consumer mod exposed via the C-ABI RegisterMenuHandler,
 				// invocable with action='invoke' (kept under this one tool, not separate tools).
-				return json{
-					{ "openMenus", std::move(open) },
-					{ "messageBoxOpen", messageBox },
-					{ "registered", ToolExtensions::Keys("menu") },
-				};
+				return GetMenuInventory().Describe(ToolExtensions::Keys("menu"));
 			}
 
 			if (action == "invoke") {
@@ -2443,31 +2432,28 @@ namespace dvb
 		{
 			try {
 				const json names = MainThread::RunAndWait([]() -> json {
-					json out = json::array();
-					if (auto* ui = RE::UI::GetSingleton())
-						for (const auto& name : GetOpenMenus()) {
-							if (name == RE::Console::MENU_NAME)
-								continue;
-							const auto menu = ui->GetMenu(name);
-							auto*      m = menu.get();
-							if (!m || m->AlwaysOpen())
-								continue;
-							if (m->PausesGame() || m->Modal() || m->UsesCursor() || m->FreezeFramePause())
-								out.push_back(name);
-						}
-					return out;
+					const auto inventory = GetMenuInventory();
+					auto*      ui = RE::UI::GetSingleton();
+					return ReadBlockingMenus(inventory, ui != nullptr, RE::Console::MENU_NAME,
+						[ui](const std::string& a_name) -> std::optional<MenuBlockingFlags> {
+							const auto menu = ui->GetMenu(a_name);
+							if (!menu)
+								return std::nullopt;
+							return MenuBlockingFlags{ menu->AlwaysOpen(), menu->PausesGame(), menu->Modal(),
+								menu->UsesCursor(), menu->FreezeFramePause() };
+						});
 				},
 					a_stallLimit);
 				return names.get<std::vector<std::string>>();
 			} catch (const ToolError&) {
-				// A pausing menu froze the frame counter → RunAndWait 504; that IS blocked. Name it from
-				// the tracked set instead (no marshal); "<paused>" if only benign names remain.
+				// A failed read is not proof of a pausing menu. Keep the negative
+				// guard conservative; use only best-effort names, without marshalling.
 				std::vector<std::string> out;
 				for (const auto& n : GetOpenMenus())
 					if (n != "HUD Menu" && n != "Cursor Menu" && n != RE::Console::MENU_NAME)
 						out.push_back(n);
 				if (out.empty())
-					out.emplace_back("<paused>");
+					out.emplace_back("<menu-state-unavailable>");
 				return out;
 			}
 		}
@@ -2547,10 +2533,7 @@ namespace dvb
 				}
 			}
 			if (a_cond == "noModal") {
-				for (const auto& m : GetOpenMenus())
-					if (m == RE::MessageBoxMenu::MENU_NAME)
-						return false;
-				return true;
+				return GetMenuInventory().KnownAbsent(RE::MessageBoxMenu::MENU_NAME);
 			}
 			if (a_cond == "weaponDrawn" || a_cond == "handsReady" || a_cond == "castingArtLeft" || a_cond == "castingArtRight") {
 				try {
@@ -2573,7 +2556,7 @@ namespace dvb
 				}
 			}
 			if (a_cond == "noMenu")
-				return GetOpenMenus().empty();
+				return GetMenuInventory().KnownEmpty();
 			if (a_cond == "noBlockingMenu")
 				return BlockingMenus(std::min(a_stallLimit, milliseconds(1000))).empty();
 			throw ToolError(400, std::format("unknown waitUntil condition '{}' (playerLoaded|noModal|noMenu|noBlockingMenu|weaponDrawn|handsReady|castingArtLeft|castingArtRight)", a_cond));
@@ -3268,7 +3251,10 @@ namespace dvb
 			menu.name = "menu";
 			menu.description =
 				"Inspect, open, answer, or dismiss menus. action='list' returns { openMenus, "
-				"messageBoxOpen, registered } tracked live from menu open/close events. 'describe' returns the "
+				"messageBoxOpen, inventoryInitialized, inventorySource, registered }. Inventory is seeded "
+				"from current UI during main-thread sink installation, then tracked by events. Before a "
+				"successful seed, absent names are unknown and messageBoxOpen is null unless observed open; "
+				"an empty list is not proof of no menus. 'describe' returns the "
 				"active MessageBoxMenu as { messageBoxOpen, bodyText, buttons:[…], cancelIndex } (read "
 				"the buttons, then pick one), or with a 'name' the registered menu's descriptor. 'accept' "
 				"answers a MessageBoxMenu by button 'index' "
