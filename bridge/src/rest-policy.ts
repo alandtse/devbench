@@ -3,8 +3,14 @@ export const DEFAULT_REST_TIMEOUT_MS = 30_000;
 export const MAX_REST_TIMEOUT_MS = 540_000;
 
 export function validateRestTimeout(value: number): number {
-  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_REST_TIMEOUT_MS) {
-    throw new Error(`REST timeout must be an integer in 1..${MAX_REST_TIMEOUT_MS} ms`);
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > MAX_REST_TIMEOUT_MS
+  ) {
+    throw new Error(
+      `REST timeout must be an integer in 1..${MAX_REST_TIMEOUT_MS} ms`,
+    );
   }
   return value;
 }
@@ -22,14 +28,21 @@ export function parseBridgeArgs(argv: string[]): BridgeArgs {
     const arg = argv[i];
     if (arg === "setup") {
       out.setup = true;
-    } else if (arg === "--game" || arg === "--install" || arg === "--rest-timeout-ms") {
+    } else if (
+      arg === "--game" ||
+      arg === "--install" ||
+      arg === "--rest-timeout-ms"
+    ) {
       const value = argv[++i];
-      if (!value || value.startsWith("--")) throw new Error(`${arg} requires a value`);
+      if (!value || value.startsWith("--"))
+        throw new Error(`${arg} requires a value`);
       if (arg === "--game") out.game = value;
       else if (arg === "--install") out.install = value;
       else {
-        if (out.restTimeoutMs !== undefined) throw new Error("duplicate --rest-timeout-ms");
-        if (!/^[0-9]+$/.test(value)) throw new Error("--rest-timeout-ms requires decimal milliseconds");
+        if (out.restTimeoutMs !== undefined)
+          throw new Error("duplicate --rest-timeout-ms");
+        if (!/^[0-9]+$/.test(value))
+          throw new Error("--rest-timeout-ms requires decimal milliseconds");
         out.restTimeoutMs = validateRestTimeout(Number(value));
       }
     } else {
@@ -42,14 +55,22 @@ export function parseBridgeArgs(argv: string[]): BridgeArgs {
 export class RestCallError extends Error {
   readonly outcome = "unknown";
   readonly retrySafe = false;
-  readonly code: "REST_TIMEOUT" | "REST_TRANSPORT_ERROR" | "REST_HTTP_ERROR" | "REST_INVALID_JSON";
+  readonly code:
+    | "REST_TIMEOUT"
+    | "REST_TRANSPORT_ERROR"
+    | "REST_HTTP_ERROR"
+    | "REST_INVALID_JSON";
   readonly timeoutMs: number;
   readonly httpStatus?: number;
   readonly responseBody?: unknown;
 
   constructor(
     message: string,
-    code: "REST_TIMEOUT" | "REST_TRANSPORT_ERROR" | "REST_HTTP_ERROR" | "REST_INVALID_JSON",
+    code:
+      | "REST_TIMEOUT"
+      | "REST_TRANSPORT_ERROR"
+      | "REST_HTTP_ERROR"
+      | "REST_INVALID_JSON",
     timeoutMs: number,
     httpStatus?: number,
     responseBody?: unknown,
@@ -69,7 +90,9 @@ export class RestCallError extends Error {
       retrySafe: this.retrySafe,
       timeoutMs: this.timeoutMs,
       ...(this.httpStatus !== undefined ? { httpStatus: this.httpStatus } : {}),
-      ...(this.responseBody !== undefined ? { responseBody: this.responseBody } : {}),
+      ...(this.responseBody !== undefined
+        ? { responseBody: this.responseBody }
+        : {}),
     };
   }
 }
@@ -119,13 +142,18 @@ export async function fetchToolJson(
     throw new RestCallError(
       `devbench returned ${response.status} with a non-JSON body; native outcome unknown; do not automatically replay`,
       response.ok ? "REST_INVALID_JSON" : "REST_HTTP_ERROR",
-      deadline, response.status, text,
+      deadline,
+      response.status,
+      text,
     );
   }
   if (!response.ok) {
     throw new RestCallError(
       `devbench returned ${response.status}; native outcome unknown; do not automatically replay`,
-      "REST_HTTP_ERROR", deadline, response.status, body,
+      "REST_HTTP_ERROR",
+      deadline,
+      response.status,
+      body,
     );
   }
   return body;

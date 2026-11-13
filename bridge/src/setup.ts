@@ -13,7 +13,8 @@ export function printSetupSnippet(
       ? ["--install", args.install]
       : ["--game", args.game ?? "se"]),
     ...(args.restTimeoutMs !== undefined
-      ? ["--rest-timeout-ms", String(args.restTimeoutMs)] : []),
+      ? ["--rest-timeout-ms", String(args.restTimeoutMs)]
+      : []),
   ];
   const snippet = {
     mcpServers: {

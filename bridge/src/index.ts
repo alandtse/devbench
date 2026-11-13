@@ -9,7 +9,11 @@ import {
 import { callTool, GameUnavailableError, listTools } from "./proxy.js";
 import { isSupportedGame, resolveTarget } from "./runtime.js";
 import { printSetupSnippet } from "./setup.js";
-import { isUnknownToolError, parseBridgeArgs, RestCallError } from "./rest-policy.js";
+import {
+  isUnknownToolError,
+  parseBridgeArgs,
+  RestCallError,
+} from "./rest-policy.js";
 import toolsFallback from "./tools-fallback.json" with { type: "json" };
 
 interface DevbenchTool {

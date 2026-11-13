@@ -71,9 +71,13 @@ export async function callTool(
   restTimeoutMs?: number,
 ): Promise<unknown> {
   const base = resolveBaseUrlOrThrowUnavailable(target);
-  return fetchToolJson(`${base}/api/tool/${encodeURIComponent(name)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(args ?? {}),
-  }, restTimeoutMs);
+  return fetchToolJson(
+    `${base}/api/tool/${encodeURIComponent(name)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(args ?? {}),
+    },
+    restTimeoutMs,
+  );
 }

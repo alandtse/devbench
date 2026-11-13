@@ -92,7 +92,6 @@ Run the policy and loopback HTTP tests with Node.js 24 from `bridge/`:
 node --test test/rest-policy.test.mjs
 ```
 
-
 ## Development
 
 ```
