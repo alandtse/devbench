@@ -884,9 +884,13 @@ namespace dvb::Recording
 			if (!correlationId.empty())
 				manifest["correlationId"] = correlationId;
 			json openMenus = json::array();
-			for (const auto& menu : GetOpenMenus())
+			const auto menuInventory = GetMenuInventory();
+			for (const auto& menu : menuInventory.openMenus)
 				openMenus.push_back(menu);
 			manifest["openMenusAtStart"] = std::move(openMenus);
+			manifest["menuInventoryInitializedAtStart"] = menuInventory.initialized;
+			manifest["menuInventoryEventsSubscribedAtStart"] = menuInventory.eventsSubscribed;
+			manifest["menuInventorySourceAtStart"] = menuInventory.Source();
 			manifest["startState"] = anchored ? "playerLoaded" : "noPlayer";
 			if (manifest.value("entryPoint", json::object()).value("kind", std::string{}) == "unknown")
 				logs::info(

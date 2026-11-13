@@ -149,6 +149,7 @@ namespace
 		// Register input hotkeys at kInputLoaded — BSInputDeviceManager is null at kPostLoad,
 		// so registering then silently no-ops. kInputLoaded fires once the input subsystem is up.
 		if (a_msg->type == SKSE::MessagingInterface::kInputLoaded && g_server) {
+		dvb::RefreshMenuEventInventory();
 			dvb::MarkKeyboardInputReady();
 			dvb::MarkVRInputReady(g_server->Events());
 			dvb::InstallInputHotkeys(g_server->Tools(), g_config);
@@ -158,6 +159,7 @@ namespace
 		// is inert if its framework isn't installed; both drive devbench via dvb::RunTool, so they
 		// need the server (g_server). SMF and FUCK are independent — host either, both, or neither.
 		if (a_msg->type == SKSE::MessagingInterface::kDataLoaded && g_server) {
+		dvb::RefreshMenuEventInventory();
 			if (g_config.alwaysActive) {
 				if (dvb::BackgroundRun::SetAlwaysActive(true))
 					logs::info("devbench: bAlwaysActive forced on (alwaysActive config)");

@@ -8,8 +8,6 @@
 #include <atomic>
 #include <cmath>
 #include <format>
-#include <mutex>
-#include <unordered_set>
 
 namespace dvb
 {
@@ -17,8 +15,7 @@ namespace dvb
 	{
 		EventBus* g_bus = nullptr;
 
-		std::mutex                      g_menuMutex;
-		std::unordered_set<std::string> g_openMenus;  // live set, updated from the sink
+		MenuInventory g_menus;
 
 		// Sink for menu open/close — covers loading screens, the main menu, and the
 		// new-game message boxes / RaceSex menu that block automated flows.
@@ -30,13 +27,7 @@ namespace dvb
 			{
 				if (a_event) {
 					const std::string name = a_event->menuName.c_str();
-					{
-						std::lock_guard lock(g_menuMutex);
-						if (a_event->opening)
-							g_openMenus.insert(name);
-						else
-							g_openMenus.erase(name);
-					}
+					g_menus.OnEvent(name, a_event->opening);
 					if (g_bus)
 						g_bus->Publish("menu", json{ { "name", name }, { "opening", a_event->opening } });
 					Recording::NoteMenuState(name, a_event->opening);
@@ -114,11 +105,29 @@ namespace dvb
 		// replay, if ever wanted, needs a lower-frequency or off-main-thread approach, not this.
 	}
 
+	void RefreshMenuEventInventory()
+	{
+		auto* ui = RE::UI::GetSingleton();
+		const auto result = g_menus.Install(ui != nullptr, [ui] {
+			ui->AddEventSink<RE::MenuOpenCloseEvent>(&g_menuSink);
+		}, [ui] {
+			std::vector<std::string> open;
+			// This stage runs on the main thread. A registered factory or retained
+			// menu instance is not enough: match UI::IsMenuOpen's OnStack predicate.
+			for (const auto& entry : ui->menuMap)
+				if (entry.second.menu && entry.second.menu->OnStack())
+					open.emplace_back(entry.first.c_str());
+			return open;
+		});
+		if (result == MenuInventory::InstallResult::SeedRaced)
+			logs::warn("devbench: initial menu snapshot raced an event; inventory absence remains unknown");
+		else if (result == MenuInventory::InstallResult::UiUnavailable)
+			logs::warn("devbench: UI unavailable; menu subscription/seed deferred to later main-thread milestones");
+	}
+
 	void InstallGameEvents(EventBus& a_bus)
 	{
 		g_bus = &a_bus;
-		if (auto* ui = RE::UI::GetSingleton())
-			ui->AddEventSink<RE::MenuOpenCloseEvent>(&g_menuSink);
 		if (auto* holder = RE::ScriptEventSourceHolder::GetSingleton())
 			holder->AddEventSink<RE::TESCellFullyLoadedEvent>(&g_cellSink);
 	}
@@ -156,7 +165,11 @@ namespace dvb
 
 	std::vector<std::string> GetOpenMenus()
 	{
-		std::lock_guard<std::mutex> lock(g_menuMutex);
-		return { g_openMenus.begin(), g_openMenus.end() };
+		return GetMenuInventory().openMenus;
+	}
+
+	MenuInventorySnapshot GetMenuInventory()
+	{
+		return g_menus.Snapshot();
 	}
 }
