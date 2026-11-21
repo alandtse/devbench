@@ -20,8 +20,8 @@ namespace dvb::MainThread
 			return message + "; frame progress unavailable; cause and recovery are unknown";
 		if (a_frameAtStart == a_frameNow)
 			return message + "; no frame advance observed during this wait; startup, loading/compilation, a full pause or a stall can delay task service; check blockedBy or menu action=list for a known blocker; this observation does not establish a hang or a need to restart";
-		// Do not subtract signed counters: a reset/wrap is not a positive elapsed
-		// frame count or proof of a healthy, ready main-thread task queue.
+		// Do not subtract the counters: a reset is not a positive elapsed frame count
+		// or proof of a healthy, ready main-thread task queue.
 		return message + std::format("; frame counter changed from {} to {} during this wait; task service was delayed, but cause and readiness are not established", a_frameAtStart, a_frameNow);
 	}
 }

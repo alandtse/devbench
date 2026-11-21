@@ -33,7 +33,7 @@ TEST_CASE("Main-thread timeout: cold startup with no frame advance does not pres
 	CHECK(text.find("loading/compilation") != std::string::npos);
 	CHECK(text.find("check blockedBy or menu action=list") != std::string::npos);
 	CHECK(text.find("does not establish a hang or a need to restart") != std::string::npos);
-	CHECK(text.find("only a process restart") == std::string::npos);
+	CHECK(text.find("process restart recover") == std::string::npos);
 }
 
 TEST_CASE("Main-thread timeout: advancing counters are observations not readiness proof")
@@ -42,6 +42,13 @@ TEST_CASE("Main-thread timeout: advancing counters are observations not readines
 	CHECK(text.find("abandoned before entry") != std::string::npos);
 	CHECK(text.find("changed from 0 to 358") != std::string::npos);
 	CHECK(text.find("cause and readiness are not established") != std::string::npos);
+}
+
+TEST_CASE("Main-thread timeout: a negative sample is unavailable, not an elapsed count")
+{
+	const auto text = DescribeTaskTimeout(5000ms, false, 2147483647, -2147483647 - 1);
+	CHECK(text.find("frame progress unavailable") != std::string::npos);
+	CHECK(text.find("changed from") == std::string::npos);
 }
 
 TEST_CASE("Main-thread timeout: a decreasing counter is not an elapsed frame count")
