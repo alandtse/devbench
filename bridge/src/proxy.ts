@@ -2,6 +2,7 @@
 // whatever DLL build is actually running.
 
 import { resolveBaseUrl, type Target } from "./runtime.js";
+import { fetchToolJson, GameUnavailableError } from "./rest-policy.js";
 
 interface DevbenchToolDescriptor {
   name: string;
@@ -15,7 +16,7 @@ interface DevbenchToolsResponse {
   mcp_bridge?: unknown;
 }
 
-export class GameUnavailableError extends Error {}
+export { GameUnavailableError };
 
 // A stale/wrong port can accept the connection but never respond; bound how long
 // a call waits before treating it as unreachable rather than hanging indefinitely.
@@ -67,11 +68,16 @@ export async function callTool(
   target: Target,
   name: string,
   args: Record<string, unknown>,
+  restTimeoutMs?: number,
 ): Promise<unknown> {
   const base = resolveBaseUrlOrThrowUnavailable(target);
-  return fetchJson(`${base}/api/tool/${encodeURIComponent(name)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(args ?? {}),
-  });
+  return fetchToolJson(
+    `${base}/api/tool/${encodeURIComponent(name)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(args ?? {}),
+    },
+    restTimeoutMs,
+  );
 }
