@@ -11,6 +11,7 @@ import {
   validateRestTimeout,
   fetchToolJson,
   RestCallError,
+  GameUnavailableError,
   isUnknownToolError,
   DEFAULT_REST_TIMEOUT_MS,
   MAX_REST_TIMEOUT_MS,
@@ -58,7 +59,9 @@ test("a structured unknown-tool 404 still triggers catalogue refresh", async () 
     (url) =>
       targetFixture(url, async (target) => {
         await assert.rejects(callTool(target, "gone", {}), (error) => {
-          assert.equal(error.retrySafe, false);
+          assert.equal(error.outcome, "rejected");
+          assert.equal(error.retrySafe, true);
+          assert.match(error.message, /unknown tool 'gone'/);
           assert.equal(isUnknownToolError(error), true);
           return true;
         });
@@ -104,6 +107,7 @@ test("rest policy: defaults and explicit long-call envelopes remain bounded", ()
   assert.equal(DEFAULT_REST_TIMEOUT_MS, 30000);
   assert.deepEqual(parseBridgeArgs(["--game", "vr"]), {
     setup: false,
+    unknown: [],
     game: "vr",
   });
   for (const [native, bridge, client] of [
@@ -147,7 +151,99 @@ test("rest policy: invalid and duplicate CLI deadlines fail before any call", ()
       "124000",
     ]),
   );
-  assert.throws(() => parseBridgeArgs(["--rest-timeot-ms", "124000"]));
+});
+
+test("rest policy: unknown arguments are collected, not fatal", () => {
+  const parsed = parseBridgeArgs(["--rest-timeot-ms", "124000", "--game", "vr"]);
+  assert.deepEqual(parsed.unknown, ["--rest-timeot-ms", "124000"]);
+  assert.equal(parsed.game, "vr");
+  assert.equal(parsed.restTimeoutMs, undefined);
+});
+
+test("rest policy: a refused connection is game-unavailable, not an uncertain outcome", async () => {
+  const server = createServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  await assert.rejects(
+    fetchToolJson(`http://127.0.0.1:${port}/api/tool/x`, { method: "POST" }, 1000),
+    (error) => {
+      assert.ok(error instanceof GameUnavailableError);
+      assert.ok(!(error instanceof RestCallError));
+      assert.match(error.message, /not reachable/);
+      return true;
+    },
+  );
+});
+
+test("rest policy: a 409 after partial work stays uncertain and keeps the server message", async () => {
+  await fixture(
+    (req, res) => {
+      req.resume();
+      res.writeHead(409, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: "the engine cursor was moved but the OS cursor was not",
+          code: 409,
+        }),
+      );
+    },
+    async (url) => {
+      await assert.rejects(
+        fetchToolJson(url, { method: "POST" }, 1000),
+        (error) => {
+          assert.ok(error instanceof RestCallError);
+          assert.equal(error.outcome, "unknown");
+          assert.equal(error.retrySafe, false);
+          assert.match(error.message, /409: the engine cursor was moved/);
+          assert.match(error.message, /native outcome unknown/);
+          return true;
+        },
+      );
+    },
+  );
+});
+
+test("rest policy: an empty error detail falls back instead of leaving a dangling colon", async () => {
+  await fixture(
+    (req, res) => {
+      req.resume();
+      res.writeHead(400, "", { "Content-Type": "application/json" });
+      res.end("{}");
+    },
+    async (url) => {
+      await assert.rejects(
+        fetchToolJson(url, { method: "POST" }, 1000),
+        (error) => {
+          assert.doesNotMatch(error.message, /: ;|: $/);
+          return true;
+        },
+      );
+    },
+  );
+});
+
+test("rest policy: a 5xx keeps the server message and stays uncertain", async () => {
+  await fixture(
+    (req, res) => {
+      req.resume();
+      res.writeHead(504, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "main-thread task did not finish", code: 504 }));
+    },
+    async (url) => {
+      await assert.rejects(
+        fetchToolJson(url, { method: "POST" }, 1000),
+        (error) => {
+          assert.equal(error.outcome, "unknown");
+          assert.equal(error.retrySafe, false);
+          assert.match(error.message, /504: main-thread task did not finish/);
+          assert.match(error.message, /native outcome unknown/);
+          return true;
+        },
+      );
+    },
+  );
 });
 
 test("rest policy: one unchanged POST and successful native JSON pass through", async () => {

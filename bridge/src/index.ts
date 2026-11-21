@@ -42,6 +42,8 @@ function isCompiledExecutable(): boolean {
 
 async function main(): Promise<void> {
   const args = parseBridgeArgs(process.argv.slice(2));
+  for (const arg of args.unknown)
+    console.error(`devbench-bridge: ignoring unknown argument: ${arg}`);
 
   if (args.setup) {
     if (!args.install && !isSupportedGame(args.game)) {

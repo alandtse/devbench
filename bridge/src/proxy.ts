@@ -2,7 +2,7 @@
 // whatever DLL build is actually running.
 
 import { resolveBaseUrl, type Target } from "./runtime.js";
-import { fetchToolJson } from "./rest-policy.js";
+import { fetchToolJson, GameUnavailableError } from "./rest-policy.js";
 
 interface DevbenchToolDescriptor {
   name: string;
@@ -16,7 +16,7 @@ interface DevbenchToolsResponse {
   mcp_bridge?: unknown;
 }
 
-export class GameUnavailableError extends Error {}
+export { GameUnavailableError };
 
 // A stale/wrong port can accept the connection but never respond; bound how long
 // a call waits before treating it as unreachable rather than hanging indefinitely.

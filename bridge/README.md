@@ -78,13 +78,19 @@ Set the option on the bridge process. For example, use
 seconds. Configure the MCP client to wait longer than the bridge deadline.
 
 A timeout stops the bridge waiting for a response. Native work may still
-complete. The MCP error includes `restError.outcome = "unknown"` and
+complete. After a timeout, a failure past the request being sent, or an HTTP error, the MCP error
+includes `restError.outcome = "unknown"` and
 `restError.retrySafe = false`, along with the configured deadline and any
-received HTTP status and response body. Use the original request identity to
+received HTTP status and response body. Only an unknown-tool 404, which devbench
+answers before any handler runs, is reported as `outcome = "rejected"` with
+`retrySafe = true`; other HTTP errors keep the server message and stay uncertain,
+because a handler can return 409 or 400 after partial work. A connection
+that cannot be opened reports "game not running". Unknown command-line arguments
+are ignored with a warning on stderr. Use the original request identity to
 check what happened before deciding whether to retry.
 
 The bridge rejects redirects on tool POSTs. This keeps the call on its
-original endpoint and preserves the redirect response in the error.
+original endpoint and keeps the redirect status and body in the error.
 
 Run the policy and loopback HTTP tests with Node.js 24 from `bridge/`:
 

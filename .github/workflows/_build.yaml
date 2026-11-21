@@ -114,11 +114,15 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install bridge dependencies
         working-directory: bridge
         run: npm ci
+
+      - name: Test bridge
+        working-directory: bridge
+        run: npm test
 
       - name: Set up bun
         uses: oven-sh/setup-bun@v2

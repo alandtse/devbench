@@ -20,10 +20,11 @@ export interface BridgeArgs {
   install?: string;
   setup: boolean;
   restTimeoutMs?: number;
+  unknown: string[];
 }
 
 export function parseBridgeArgs(argv: string[]): BridgeArgs {
-  const out: BridgeArgs = { setup: false };
+  const out: BridgeArgs = { setup: false, unknown: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "setup") {
@@ -46,15 +47,20 @@ export function parseBridgeArgs(argv: string[]): BridgeArgs {
         out.restTimeoutMs = validateRestTimeout(Number(value));
       }
     } else {
-      throw new Error(`unknown argument: ${arg}`);
+      out.unknown.push(arg);
     }
   }
   return out;
 }
 
+export type RestOutcome = "unknown" | "rejected";
+
+// Thrown when the request never reached devbench (nothing listening on the port).
+export class GameUnavailableError extends Error {}
+
 export class RestCallError extends Error {
-  readonly outcome = "unknown";
-  readonly retrySafe = false;
+  readonly outcome: RestOutcome;
+  readonly retrySafe: boolean;
   readonly code:
     | "REST_TIMEOUT"
     | "REST_TRANSPORT_ERROR"
@@ -74,9 +80,12 @@ export class RestCallError extends Error {
     timeoutMs: number,
     httpStatus?: number,
     responseBody?: unknown,
+    outcome: RestOutcome = "unknown",
   ) {
     super(message);
     this.name = "RestCallError";
+    this.outcome = outcome;
+    this.retrySafe = outcome === "rejected";
     this.code = code;
     this.timeoutMs = timeoutMs;
     this.httpStatus = httpStatus;
@@ -101,15 +110,43 @@ export function isUnknownToolError(error: unknown): boolean {
   if (!(error instanceof RestCallError)) {
     return error instanceof Error && /unknown tool/i.test(error.message);
   }
-  const body = error.responseBody;
   return (
-    error.httpStatus === 404 &&
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof body.error === "string" &&
-    /unknown tool/i.test(body.error)
+    error.httpStatus !== undefined &&
+    isPreHandlerRejection(error.httpStatus, error.responseBody)
   );
+}
+
+const CONNECT_FAILURE_CODES = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ConnectionRefused",
+  "FailedToOpenSocket",
+]);
+
+// True only when the connection was never established, so no request bytes were sent.
+function isConnectFailure(error: unknown): boolean {
+  for (let e: unknown = error, depth = 0; e && depth < 4; depth++) {
+    const code = (e as { code?: unknown }).code;
+    if (typeof code === "string" && CONNECT_FAILURE_CODES.has(code)) return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+// Only the registry's unknown-tool 404 is answered before a handler runs. Other 4xx can follow
+// partial work (e.g. a 409 after the engine cursor moved), so they stay uncertain.
+function isPreHandlerRejection(status: number, body: unknown): boolean {
+  const message = (body as { error?: unknown } | null)?.error;
+  return (
+    status === 404 && typeof message === "string" && /unknown tool/i.test(message)
+  );
+}
+
+function serverMessage(body: unknown, fallback: string): string {
+  const message = (body as { error?: unknown } | null)?.error;
+  return typeof message === "string" && message ? message : fallback || "no detail";
 }
 
 // The one deadline covers both response headers and the complete body. A timeout
@@ -129,6 +166,11 @@ export async function fetchToolJson(
     text = await response.text();
   } catch (error) {
     const timeout = signal.aborted;
+    if (!timeout && isConnectFailure(error)) {
+      throw new GameUnavailableError(
+        `devbench not reachable at ${url}: ${String(error)}`,
+      );
+    }
     throw new RestCallError(
       `${timeout ? "REST deadline exceeded" : "REST transport failed"} (${deadline}ms): ${String(error)}; native outcome unknown; do not automatically replay`,
       timeout ? "REST_TIMEOUT" : "REST_TRANSPORT_ERROR",
@@ -148,12 +190,17 @@ export async function fetchToolJson(
     );
   }
   if (!response.ok) {
+    const rejected = isPreHandlerRejection(response.status, body);
+    const detail = serverMessage(body, response.statusText);
     throw new RestCallError(
-      `devbench returned ${response.status}; native outcome unknown; do not automatically replay`,
+      rejected
+        ? `devbench returned ${response.status}: ${detail}`
+        : `devbench returned ${response.status}: ${detail}; native outcome unknown; do not automatically replay`,
       "REST_HTTP_ERROR",
       deadline,
       response.status,
       body,
+      rejected ? "rejected" : "unknown",
     );
   }
   return body;
