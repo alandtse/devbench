@@ -154,7 +154,12 @@ test("rest policy: invalid and duplicate CLI deadlines fail before any call", ()
 });
 
 test("rest policy: unknown arguments are collected, not fatal", () => {
-  const parsed = parseBridgeArgs(["--rest-timeot-ms", "124000", "--game", "vr"]);
+  const parsed = parseBridgeArgs([
+    "--rest-timeot-ms",
+    "124000",
+    "--game",
+    "vr",
+  ]);
   assert.deepEqual(parsed.unknown, ["--rest-timeot-ms", "124000"]);
   assert.equal(parsed.game, "vr");
   assert.equal(parsed.restTimeoutMs, undefined);
@@ -167,7 +172,11 @@ test("rest policy: a refused connection is game-unavailable, not an uncertain ou
   const { port } = server.address();
   await new Promise((resolve) => server.close(resolve));
   await assert.rejects(
-    fetchToolJson(`http://127.0.0.1:${port}/api/tool/x`, { method: "POST" }, 1000),
+    fetchToolJson(
+      `http://127.0.0.1:${port}/api/tool/x`,
+      { method: "POST" },
+      1000,
+    ),
     (error) => {
       assert.ok(error instanceof GameUnavailableError);
       assert.ok(!(error instanceof RestCallError));
@@ -229,7 +238,9 @@ test("rest policy: a 5xx keeps the server message and stays uncertain", async ()
     (req, res) => {
       req.resume();
       res.writeHead(504, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "main-thread task did not finish", code: 504 }));
+      res.end(
+        JSON.stringify({ error: "main-thread task did not finish", code: 504 }),
+      );
     },
     async (url) => {
       await assert.rejects(

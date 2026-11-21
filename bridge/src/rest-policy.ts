@@ -129,7 +129,8 @@ const CONNECT_FAILURE_CODES = new Set([
 function isConnectFailure(error: unknown): boolean {
   for (let e: unknown = error, depth = 0; e && depth < 4; depth++) {
     const code = (e as { code?: unknown }).code;
-    if (typeof code === "string" && CONNECT_FAILURE_CODES.has(code)) return true;
+    if (typeof code === "string" && CONNECT_FAILURE_CODES.has(code))
+      return true;
     e = (e as { cause?: unknown }).cause;
   }
   return false;
@@ -140,13 +141,17 @@ function isConnectFailure(error: unknown): boolean {
 function isPreHandlerRejection(status: number, body: unknown): boolean {
   const message = (body as { error?: unknown } | null)?.error;
   return (
-    status === 404 && typeof message === "string" && /unknown tool/i.test(message)
+    status === 404 &&
+    typeof message === "string" &&
+    /unknown tool/i.test(message)
   );
 }
 
 function serverMessage(body: unknown, fallback: string): string {
   const message = (body as { error?: unknown } | null)?.error;
-  return typeof message === "string" && message ? message : fallback || "no detail";
+  return typeof message === "string" && message
+    ? message
+    : fallback || "no detail";
 }
 
 // The one deadline covers both response headers and the complete body. A timeout
