@@ -98,7 +98,10 @@ namespace dvb::ModalWatch
 	json CurrentFields()
 	{
 		json       out = json::object();
-		const auto blockers = Modal::Blockers(GetOpenMenus());
+		const auto inventory = GetMenuInventory();
+		const auto blockers = Modal::Blockers(inventory.openMenus);
+		if (!inventory.initialized)
+			out["menuInventoryInitialized"] = false;
 		if (!blockers.empty()) {
 			json list = json::array();
 			for (const auto& b : blockers)
@@ -130,7 +133,8 @@ namespace dvb::ModalWatch
 		if (!g_events || Modal::IsBenign(a_name))
 			return;
 		if (!a_opening) {
-			if (Modal::Blockers(GetOpenMenus()).empty())
+			const auto inventory = GetMenuInventory();
+			if (inventory.initialized && Modal::Blockers(inventory.openMenus).empty())
 				g_events->Publish("modal.cleared", json{ { "name", a_name } });
 			return;
 		}
