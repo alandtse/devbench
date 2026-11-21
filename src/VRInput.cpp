@@ -624,13 +624,13 @@ namespace dvb
 			vr::TrackedDeviceIndex_t, vr::VRControllerState_t*, std::uint32_t,
 			vr::TrackedDevicePose_t*);
 
-		REL::Relocation<WaitGetPosesFn>        g_waitGetPoses;
-		REL::Relocation<WaitGetPosesFn>        g_getLastPoses;
-		REL::Relocation<GetTrackingPoseFn>     g_getTrackingPose;
-		REL::Relocation<RoleIndexFn>           g_roleIndex;
-		REL::Relocation<IndexRoleFn>           g_indexRole;
-		REL::Relocation<DeviceClassFn>         g_deviceClass;
-		REL::Relocation<ConnectedFn>           g_connected;
+		REL::Relocation<WaitGetPosesFn>    g_waitGetPoses;
+		REL::Relocation<WaitGetPosesFn>    g_getLastPoses;
+		REL::Relocation<GetTrackingPoseFn> g_getTrackingPose;
+		REL::Relocation<RoleIndexFn>       g_roleIndex;
+		REL::Relocation<IndexRoleFn>       g_indexRole;
+		REL::Relocation<DeviceClassFn>     g_deviceClass;
+		REL::Relocation<ConnectedFn>       g_connected;
 		using Int32PropertyFn = std::int32_t (*)(vr::IVRSystem*, vr::TrackedDeviceIndex_t,
 			vr::ETrackedDeviceProperty, vr::ETrackedPropertyError*);
 		using Uint64PropertyFn = std::uint64_t (*)(vr::IVRSystem*, vr::TrackedDeviceIndex_t,
@@ -804,7 +804,7 @@ namespace dvb
 			return g_connected(a_self, a_index);
 		}
 
-		std::mutex                        g_recentMutex;
+		std::mutex                       g_recentMutex;
 		VRControllerProps::RecentIndices g_recentIndices;
 
 		std::int64_t SteadyNowMs()
@@ -815,8 +815,8 @@ namespace dvb
 		// True for a controller index the active sequence drives, or one it drove within the release grace window.
 		bool IsSyntheticControllerIndex(vr::TrackedDeviceIndex_t a_index)
 		{
-			const auto frame = VRTrackedSetManager::Get().Current();
-			const auto now = SteadyNowMs();
+			const auto      frame = VRTrackedSetManager::Get().Current();
+			const auto      now = SteadyNowMs();
 			std::lock_guard lock(g_recentMutex);
 			if (frame) {
 				for (const auto* device : { &frame->left, &frame->right })
