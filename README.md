@@ -464,6 +464,20 @@ if (dvb->GetBuildNumber() >= 13400) {                                // PostNoti
 }
 ```
 
+The `frame` that `inspect` `kind=state`, the recordings and the `capture` burst manifests (`gameFrame`) carry is the
+engine's presented-frame counter: a 32-bit global at `REL::RelocationID(525008, 411489)`, read with a relaxed
+atomic load, and -1 when the address cannot be resolved. A plugin that records its own per-frame data can read the
+same global to stamp its samples, so they join with devbench's data on equal frame numbers. There is no devbench
+call for it, since the plugin does not need devbench to read an engine global, and a change of this source would be a
+breaking change to those fields:
+
+```cpp
+auto* counter = reinterpret_cast<std::int32_t*>(REL::RelocationID(525008, 411489).address());
+const std::int32_t frame = std::atomic_ref<std::int32_t>(*counter).load(std::memory_order_relaxed);
+```
+
+Resolve the address once, after the game has loaded, and keep the result.
+
 To add a sub-capability **under an existing base tool** — instead of a whole new tool — register an
 extension keyed by a string (keeps the agent-facing surface small). Opted-in base tools: `menu` and
 `inspect`. E.g. expose load-timing data as a custom `inspect` kind:
