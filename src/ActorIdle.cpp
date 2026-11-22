@@ -5,12 +5,15 @@
 
 #include <RE/A/AIProcess.h>
 #include <RE/A/Actor.h>
+#include <RE/P/PlayerCamera.h>
 #include <RE/P/PlayerCharacter.h>
 #include <RE/T/TESFile.h>
 #include <RE/T/TESIdleForm.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -30,8 +33,22 @@ namespace dvb::ActorIdle
 			std::int64_t freezeAtMs{ -1 };  // -1: none
 		};
 
-		std::vector<Entry> g_entries;  // main thread
-		bool               g_ticking{ false };
+		struct Locomotion
+		{
+			RE::FormID    actor{ 0 };
+			float         speed{ 0.0f };
+			std::uint64_t speedPolls{ 0 };
+		};
+
+		std::vector<Entry>      g_entries;  // main thread
+		bool                    g_ticking{ false };
+		bool                    g_locomotionHooked{ false };
+
+		// The graph polls channels off the main thread, so the in-place runs are guarded; the count lets the hook skip the lock
+		// when none is active.
+		std::mutex               g_locomotionLock;
+		std::vector<Locomotion>  g_locomotion;
+		std::atomic<std::size_t> g_locomotionCount{ 0 };
 
 		std::int64_t NowMs()
 		{
@@ -52,6 +69,82 @@ namespace dvb::ActorIdle
 		void Drop(RE::FormID a_actor)
 		{
 			std::erase_if(g_entries, [&](const Entry& e) { return e.actor == a_actor; });
+		}
+
+		// The graph's Speed variable is rebuilt every update by a data channel, which caches the value it polls in a float at
+		// +0x18. Overwriting that float after the channel's PollChannelUpdateImpl (virtual 1) is what the graph then reads; the
+		// actor pointer is at +0x28.
+		constexpr std::size_t kPollSlot = 1;
+		constexpr std::size_t kChannelValueOffset = 0x18;
+		constexpr std::size_t kChannelActorOffset = 0x28;
+
+		// Caller holds g_locomotionLock.
+		Locomotion* FindLocomotion(RE::FormID a_actor)
+		{
+			const auto it = std::ranges::find(g_locomotion, a_actor, &Locomotion::actor);
+			return it != g_locomotion.end() ? &*it : nullptr;
+		}
+
+		struct SpeedPollHook
+		{
+			static void thunk(void* a_channel, std::uintptr_t a_arg)
+			{
+				func(a_channel, a_arg);
+				if (g_locomotionCount.load(std::memory_order_acquire) == 0)
+					return;
+				const auto base = reinterpret_cast<std::uintptr_t>(a_channel);
+				const auto* actor = *reinterpret_cast<RE::Actor**>(base + kChannelActorOffset);
+				if (!actor)
+					return;
+				const std::lock_guard lock{ g_locomotionLock };
+				if (auto* loco = FindLocomotion(actor->GetFormID())) {
+					*reinterpret_cast<float*>(base + kChannelValueOffset) = loco->speed;
+					++loco->speedPolls;
+				}
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		// Offset of the speed channel's vtable by runtime; only the AE builds that have been analysed.
+		struct ChannelVtable
+		{
+			REL::Version  version;
+			std::uint64_t speed;
+		};
+		constexpr ChannelVtable kChannelVtables[] = {
+			{ REL::Version{ 1, 6, 1170, 0 }, 0x189E568 },
+			{ REL::Version{ 1, 7, 104, 0 }, 0x191C240 },
+		};
+
+		/// False when this runtime's channel vtables are not known.
+		bool InstallLocomotionHook()
+		{
+			if (g_locomotionHooked)
+				return true;
+			const auto version = REL::Module::get().version();
+			const auto it = std::ranges::find(kChannelVtables, version, &ChannelVtable::version);
+			if (it == std::end(kChannelVtables))
+				return false;
+			REL::Relocation<std::uintptr_t> speedVtbl{ REL::Offset(it->speed) };
+			SpeedPollHook::func = speedVtbl.write_vfunc(kPollSlot, SpeedPollHook::thunk);
+			g_locomotionHooked = true;
+			return true;
+		}
+
+		/// Returns whether an in-place run was removed.
+		bool DropLocomotion(RE::FormID a_actor)
+		{
+			const std::lock_guard lock{ g_locomotionLock };
+			const auto            removed = std::erase_if(g_locomotion, [&](const Locomotion& l) { return l.actor == a_actor; });
+			g_locomotionCount.store(g_locomotion.size(), std::memory_order_release);
+			return removed != 0;
+		}
+
+		void AddLocomotion(RE::FormID a_actor, float a_speed)
+		{
+			const std::lock_guard lock{ g_locomotionLock };
+			g_locomotion.push_back({ a_actor, a_speed });
+			g_locomotionCount.store(g_locomotion.size(), std::memory_order_release);
 		}
 
 		void Tick();
@@ -109,11 +202,11 @@ namespace dvb::ActorIdle
 			return json{ { "ref", std::format("0x{:08X}", a_actor->GetFormID()) } };
 		}
 
-		void Require(RE::Actor* a_actor)
+		void Require(RE::Actor* a_actor, bool a_allowPlayer = false)
 		{
 			if (!a_actor)
 				throw ToolError(409, "not an actor");
-			if (a_actor->IsPlayerRef())
+			if (a_actor->IsPlayerRef() && !a_allowPlayer)
 				throw ToolError(409, "the player is not driven by idle control");
 			if (a_actor->IsDead())
 				throw ToolError(409, "the actor is dead");
@@ -128,6 +221,7 @@ namespace dvb::ActorIdle
 		if (!a_idle)
 			throw ToolError(404, "idle not found");
 
+		DropLocomotion(a_actor->GetFormID());
 		// Do not drop EnableAI(true): PlayIdle does not animate while the actor's AI is off.
 		a_actor->InitiateDoNothingPackage();
 		a_actor->EnableAI(true);
@@ -155,6 +249,7 @@ namespace dvb::ActorIdle
 	{
 		Require(a_actor);
 		Drop(a_actor->GetFormID());
+		DropLocomotion(a_actor->GetFormID());
 
 		a_actor->EnableAI(true);
 		auto* process = ProcessOf(a_actor);
@@ -172,6 +267,48 @@ namespace dvb::ActorIdle
 		out["aiFrozen"] = a_freezeAi;
 		if (!reset)
 			out["note"] = "ResetRoot idle not found; the current idle was stopped but no neutral pose was forced";
+		return out;
+	}
+
+	json StartLocomotion(RE::Actor* a_actor, float a_speed)
+	{
+		Require(a_actor, true);
+		const bool player = a_actor->IsPlayerRef();
+		if (player) {
+			const auto* camera = RE::PlayerCamera::GetSingleton();
+			if (!camera || camera->IsInFirstPerson())
+				throw ToolError(409, "the player runs in place only outside first person: switch with camera setPov third");
+		}
+		if (REL::Module::IsVR())
+			throw ToolError(501, "in-place locomotion is not supported on Skyrim VR yet");
+		if (!InstallLocomotionHook())
+			throw ToolError(501, "in-place locomotion is not supported on this game version");
+		Drop(a_actor->GetFormID());
+		DropLocomotion(a_actor->GetFormID());
+
+		if (!player) {
+			a_actor->InitiateDoNothingPackage();
+			a_actor->EnableAI(true);
+		}
+		AddLocomotion(a_actor->GetFormID(), a_speed);
+		const bool notified = a_actor->NotifyAnimationGraph("moveStart");
+
+		json out = Describe(a_actor);
+		out["ok"] = true;
+		out["speed"] = a_speed;
+		out["moveStartAccepted"] = notified;
+		return out;
+	}
+
+	json StopLocomotion(RE::Actor* a_actor)
+	{
+		Require(a_actor, true);
+		const bool wasRunning = DropLocomotion(a_actor->GetFormID());
+		a_actor->NotifyAnimationGraph("moveStop");
+
+		json out = Describe(a_actor);
+		out["ok"] = true;
+		out["wasRunning"] = wasRunning;
 		return out;
 	}
 
@@ -242,17 +379,23 @@ namespace dvb::ActorIdle
 
 	json Status(RE::Actor* a_actor)
 	{
-		Require(a_actor);
+		Require(a_actor, true);
 		json        out = Describe(a_actor);
 		const auto  it = std::ranges::find(g_entries, a_actor->GetFormID(), &Entry::actor);
 		const auto* idle = it != g_entries.end() && it->idle ? RE::TESForm::LookupByID<RE::TESIdleForm>(it->idle) : nullptr;
 		out["looping"] = idle != nullptr;
 		out["loopIdle"] = idle ? json(idle->GetFormEditorID()) : json(nullptr);
+		const std::lock_guard lock{ g_locomotionLock };
+		const auto*           loco = FindLocomotion(a_actor->GetFormID());
+		out["locomotion"] = loco ? json{ { "speed", loco->speed }, { "speedPolls", loco->speedPolls } } : json(nullptr);
 		return out;
 	}
 
 	void EndSession()
 	{
 		g_entries.clear();
+		const std::lock_guard lock{ g_locomotionLock };
+		g_locomotion.clear();
+		g_locomotionCount.store(0, std::memory_order_release);
 	}
 }

@@ -15,6 +15,13 @@ namespace dvb::ActorIdleLogic
 	/// else is nullopt. The engine does not report when an idle ends, so a loop is timed: set this to the clip's length.
 	std::optional<std::int64_t> ParseRepeatMs(const json& a_value);
 
+	inline constexpr double kDefaultLocomotionSpeed = 300.0;
+	inline constexpr double kMaxLocomotionSpeed = 1000.0;
+
+	/// The movement speed for an in-place run: a number within 0..kMaxLocomotionSpeed, absent -> the default; anything else
+	/// is nullopt.
+	std::optional<float> ParseLocomotionSpeed(const json& a_value);
+
 	/// A looping idle is replayed once a_repeatMs has passed since it was last played.
 	bool ReplayDue(std::int64_t a_nowMs, std::int64_t a_lastPlayMs, std::int64_t a_repeatMs);
 }

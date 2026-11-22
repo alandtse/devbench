@@ -14,6 +14,26 @@ namespace dvb::ActorIdleLogic
 		return ms;
 	}
 
+	namespace
+	{
+		std::optional<float> ParseRange(const json& a_value, double a_default, double a_min, double a_max)
+		{
+			if (a_value.is_null())
+				return static_cast<float>(a_default);
+			if (!a_value.is_number())
+				return std::nullopt;
+			const auto v = a_value.get<double>();
+			if (!(v >= a_min && v <= a_max))
+				return std::nullopt;
+			return static_cast<float>(v);
+		}
+	}
+
+	std::optional<float> ParseLocomotionSpeed(const json& a_value)
+	{
+		return ParseRange(a_value, kDefaultLocomotionSpeed, 0.0, kMaxLocomotionSpeed);
+	}
+
 	bool ReplayDue(std::int64_t a_nowMs, std::int64_t a_lastPlayMs, std::int64_t a_repeatMs)
 	{
 		return a_nowMs - a_lastPlayMs >= a_repeatMs;

@@ -3411,12 +3411,17 @@ namespace dvb
 			"(the engine does not report when an idle ends, so set it to the clip's length) until 'stopIdle' or the NPC "
 			"unloads, dies, or a load starts. Idles only animate while the NPC's AI runs, so a loop keeps the AI on; "
 			"freezeAi (single play only) turns the AI back off after the pose settles. 'stopIdle' ends any loop and "
-			"returns the NPC to its default idle (ResetRoot), optional 'freezeAi'. 'status' returns whether a loop is active and its idle. playIdle and stopIdle return { ref, ok, ... }; every action "
-			"refuses (409) the player, a dead or unloaded NPC. Main thread; SE and VR.";
+			"returns the NPC to its default idle (ResetRoot), optional 'freezeAi'. 'startLocomotion' (optional 'speed' 0..1000 "
+			"default 300) runs the NPC's locomotion cycle in place: it overrides the animation graph's Speed channel "
+			"and holds the NPC on the do-nothing package so it does not travel (speed 300 is a run); 'stopLocomotion' ends it. 'status' returns whether a loop is active and its idle, and any "
+			"in-place run. playIdle and stopIdle return { ref, ok, ... }; every action "
+			"refuses (409) a dead or unloaded NPC, and all but startLocomotion, stopLocomotion and status refuse the player "
+			"(formId 0x14 runs in place in third person only, and keeps its AI). Main thread; SE and VR (startLocomotion is refused 501 on VR and on game versions other than AE 1.6.1170 / 1.7.104).";
 		actor.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "listIdles", "playIdle", "stopIdle", "status" }) }, { "description", "listIdles | playIdle | stopIdle | status" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "listIdles", "playIdle", "stopIdle", "startLocomotion", "stopLocomotion", "status" }) }, { "description", "listIdles | playIdle | stopIdle | startLocomotion | stopLocomotion | status" } } },
+								{ "speed", json{ { "type", "number" }, { "description", "startLocomotion: the graph Speed, 0..1000 (default 300, a run)" } } },
 								{ "formId", json{ { "type", "string" }, { "description", "the NPC reference (FormID like 0x000A2C8F, or EditorID)" } } },
 								{ "idle", json{ { "type", "string" }, { "description", "playIdle: the idle's EditorID or FormID" } } },
 								{ "loop", json{ { "type", "boolean" }, { "description", "playIdle: keep replaying the idle once the NPC stops running it (default false)" } } },
@@ -3437,8 +3442,8 @@ namespace dvb
 			};
 			const std::string action = text("action");
 			const std::string formId = text("formId");
-			if (action != "listIdles" && action != "playIdle" && action != "stopIdle" && action != "status")
-				throw ToolError(400, std::format("unknown action '{}' (listIdles|playIdle|stopIdle|status)", action));
+			if (action != "listIdles" && action != "playIdle" && action != "stopIdle" && action != "startLocomotion" && action != "stopLocomotion" && action != "status")
+				throw ToolError(400, std::format("unknown action '{}' (listIdles|playIdle|stopIdle|startLocomotion|stopLocomotion|status)", action));
 			if (formId.empty())
 				throw ToolError(400, "'formId' (the NPC reference) is required");
 			const bool freezeAi = BooleanArgument(a_args, "freezeAi", false);
@@ -3448,6 +3453,7 @@ namespace dvb
 			std::int64_t repeatMs = ActorIdleLogic::kDefaultRepeatMs;
 			std::size_t  limit = 200;
 			std::string  filter;
+			float        speed = 0.0f;
 			if (action == "playIdle") {
 				idleArg = text("idle");
 				if (idleArg.empty())
@@ -3458,6 +3464,11 @@ namespace dvb
 				if (!gap)
 					throw ToolError(400, "'repeatMs' must be an integer 250..60000");
 				repeatMs = *gap;
+			} else if (action == "startLocomotion") {
+				const auto parsedSpeed = ActorIdleLogic::ParseLocomotionSpeed(a_args.contains("speed") ? a_args["speed"] : json(nullptr));
+				if (!parsedSpeed)
+					throw ToolError(400, "'speed' must be a number 0..1000");
+				speed = *parsedSpeed;
 			} else if (action == "listIdles") {
 				filter = text("filter");
 				if (a_args.contains("limit")) {
@@ -3477,6 +3488,10 @@ namespace dvb
 					return ActorIdle::List(npc, filter, limit);
 				if (action == "stopIdle")
 					return ActorIdle::Stop(npc, freezeAi);
+				if (action == "startLocomotion")
+					return ActorIdle::StartLocomotion(npc, speed);
+				if (action == "stopLocomotion")
+					return ActorIdle::StopLocomotion(npc);
 				if (action == "status")
 					return ActorIdle::Status(npc);
 				auto* idleForm = LookupFormArg(idleArg);
