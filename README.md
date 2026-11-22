@@ -464,6 +464,16 @@ if (dvb->GetBuildNumber() >= 13400) {                                // PostNoti
 }
 ```
 
+A plugin that records its own per-frame data can stamp each sample with the engine's presented-frame
+counter, the same value devbench puts on its recordings and in the `gameFrame` of capture burst
+manifests, so the two line up:
+
+```cpp
+if (dvb->GetBuildNumber() >= 13900) {                                // GetFrame: 1.39.0+
+    const std::int32_t frame = dvb->GetFrame();                      // any thread; -1 if unresolved
+}
+```
+
 To add a sub-capability **under an existing base tool** — instead of a whole new tool — register an
 extension keyed by a string (keeps the agent-facing surface small). Opted-in base tools: `menu` and
 `inspect`. E.g. expose load-timing data as a custom `inspect` kind:

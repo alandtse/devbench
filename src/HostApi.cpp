@@ -178,6 +178,11 @@ namespace dvb::HostApi
 			{
 				return a_key && Notices::Global().Clear(a_key);
 			}
+
+			std::int32_t GetFrame() override
+			{
+				return game::CurrentFrame();
+			}
 		};
 
 		Interface g_interface;
@@ -196,7 +201,7 @@ namespace dvb::HostApi
 				R"({"description":"devbench C-ABI self-test; echoes its args.","inputSchema":{"type":"object"},"readOnly":true})";
 			g_interface.RegisterTool("ping", desc, +[](void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write) {
 					const std::string args = (a_argsJson && *a_argsJson) ? a_argsJson : "{}";
-					const std::string out = R"({"pong":true,"echo":)" + args + "}";
+					const std::string out = R"({"pong":true,"frame":)" + std::to_string(g_interface.GetFrame()) + R"(,"echo":)" + args + "}";
 					a_write(a_sink, out.c_str()); }, nullptr);
 		}
 

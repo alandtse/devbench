@@ -119,6 +119,15 @@ namespace DevBenchAPI
 		//
 		// ABI: appended after PostNotice — call only when GetBuildNumber() >= 13400.
 		virtual bool ClearNotice(const char* a_key) = 0;
+
+		// The engine's presented-frame counter, the same value devbench stamps on its recordings and
+		// the `gameFrame` of capture burst manifests, so a plugin can stamp its own per-frame data
+		// and align it with them. Callable from any thread. Returns -1 when the counter cannot be
+		// resolved on this runtime.
+		//
+		// ABI: appended after ClearNotice — call only when GetBuildNumber() >= 13900
+		// (devbench 1.39.0).
+		virtual std::int32_t GetFrame() = 0;
 	};
 }
 
