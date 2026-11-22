@@ -3454,10 +3454,10 @@ namespace dvb
 			const bool freezeAi = BooleanArgument(a_args, "freezeAi", false);
 			const bool loop = BooleanArgument(a_args, "loop", false);
 
-			std::string  idleArg;
-			std::int64_t repeatMs = ActorIdleLogic::kDefaultRepeatMs;
-			std::size_t  limit = 200;
-			std::string  filter;
+			std::string          idleArg;
+			std::int64_t         repeatMs = ActorIdleLogic::kDefaultRepeatMs;
+			std::size_t          limit = 200;
+			std::string          filter;
 			ActorIdleLogic::Gait gait;
 			if (action == "playIdle") {
 				idleArg = text("idle");

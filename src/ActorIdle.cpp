@@ -39,11 +39,11 @@ namespace dvb::ActorIdle
 
 		struct Locomotion
 		{
-			RE::FormID                                  actor{ 0 };
-			float                                       speed{ 0.0f };
+			RE::FormID                                 actor{ 0 };
+			float                                      speed{ 0.0f };
 			std::vector<ActorIdleLogic::GraphVariable> variables;
-			std::vector<std::string>                    stopEvents;
-			std::uint64_t                               speedPolls{ 0 };
+			std::vector<std::string>                   stopEvents;
+			std::uint64_t                              speedPolls{ 0 };
 		};
 
 		std::vector<Entry> g_entries;  // main thread
@@ -111,7 +111,7 @@ namespace dvb::ActorIdle
 			return std::visit(
 				[&](const auto& v) -> json {
 					using T = std::remove_cvref_t<decltype(v)>;
-					T value{};
+					T    value{};
 					bool found;
 					if constexpr (std::is_same_v<T, bool>)
 						found = a_actor->GetGraphVariableBool(a_variable.name, value);

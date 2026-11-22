@@ -121,7 +121,7 @@ TEST_CASE("variables take a bool, an integer or a float and events are de-duplic
 TEST_CASE("a malformed gait is refused with a reason")
 {
 	std::string error;
-	const auto refused = [&](const json& a_args) { return !ParseGait(a_args, error).has_value(); };
+	const auto  refused = [&](const json& a_args) { return !ParseGait(a_args, error).has_value(); };
 	CHECK(refused(json{ { "sprint", "yes" } }));
 	CHECK(refused(json{ { "speed", 2000 } }));
 	CHECK(refused(json{ { "variables", json::array() } }));
