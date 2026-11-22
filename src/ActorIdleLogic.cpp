@@ -29,9 +29,9 @@ namespace dvb::ActorIdleLogic
 		}
 	}
 
-	std::optional<float> ParseLocomotionSpeed(const json& a_value)
+	std::optional<float> ParseLocomotionSpeed(const json& a_value, bool a_sprint)
 	{
-		return ParseRange(a_value, kDefaultLocomotionSpeed, 0.0, kMaxLocomotionSpeed);
+		return ParseRange(a_value, a_sprint ? kDefaultSprintSpeed : kDefaultLocomotionSpeed, 0.0, kMaxLocomotionSpeed);
 	}
 
 	bool ReplayDue(std::int64_t a_nowMs, std::int64_t a_lastPlayMs, std::int64_t a_repeatMs)

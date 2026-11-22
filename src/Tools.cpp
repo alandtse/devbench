@@ -3412,7 +3412,7 @@ namespace dvb
 			"unloads, dies, or a load starts. Idles only animate while the NPC's AI runs, so a loop keeps the AI on; "
 			"freezeAi (single play only) turns the AI back off after the pose settles. 'stopIdle' ends any loop and "
 			"returns the NPC to its default idle (ResetRoot), optional 'freezeAi'. 'startLocomotion' (optional 'speed' 0..1000 "
-			"default 300) runs the NPC's locomotion cycle in place: it overrides the animation graph's Speed channel "
+			"default 300; 'sprint' default false, which also sets the graph's sprint state and defaults the speed to 600) runs the actor's locomotion cycle in place: it overrides the animation graph's Speed channel "
 			"and holds the NPC on the do-nothing package so it does not travel (speed 300 is a run); 'stopLocomotion' ends it. 'status' returns whether a loop is active and its idle, and any "
 			"in-place run. playIdle and stopIdle return { ref, ok, ... }; every action "
 			"refuses (409) a dead or unloaded NPC, and all but startLocomotion, stopLocomotion and status refuse the player "
@@ -3421,7 +3421,8 @@ namespace dvb
 			{ "type", "object" },
 			{ "properties", json{
 								{ "action", json{ { "type", "string" }, { "enum", json::array({ "listIdles", "playIdle", "stopIdle", "startLocomotion", "stopLocomotion", "status" }) }, { "description", "listIdles | playIdle | stopIdle | startLocomotion | stopLocomotion | status" } } },
-								{ "speed", json{ { "type", "number" }, { "description", "startLocomotion: the graph Speed, 0..1000 (default 300, a run)" } } },
+								{ "speed", json{ { "type", "number" }, { "description", "startLocomotion: the graph Speed, 0..1000 (default 300, a run; 600 with sprint)" } } },
+								{ "sprint", json{ { "type", "boolean" }, { "description", "startLocomotion: also set the graph's sprint state (IsSprinting, iSyncSprintState, sprintStart) so the sprint pose plays (default false)" } } },
 								{ "formId", json{ { "type", "string" }, { "description", "the NPC reference (FormID like 0x000A2C8F, or EditorID)" } } },
 								{ "idle", json{ { "type", "string" }, { "description", "playIdle: the idle's EditorID or FormID" } } },
 								{ "loop", json{ { "type", "boolean" }, { "description", "playIdle: keep replaying the idle once the NPC stops running it (default false)" } } },
@@ -3454,6 +3455,7 @@ namespace dvb
 			std::size_t  limit = 200;
 			std::string  filter;
 			float        speed = 0.0f;
+			bool         sprint = false;
 			if (action == "playIdle") {
 				idleArg = text("idle");
 				if (idleArg.empty())
@@ -3465,7 +3467,8 @@ namespace dvb
 					throw ToolError(400, "'repeatMs' must be an integer 250..60000");
 				repeatMs = *gap;
 			} else if (action == "startLocomotion") {
-				const auto parsedSpeed = ActorIdleLogic::ParseLocomotionSpeed(a_args.contains("speed") ? a_args["speed"] : json(nullptr));
+				sprint = BooleanArgument(a_args, "sprint", false);
+				const auto parsedSpeed = ActorIdleLogic::ParseLocomotionSpeed(a_args.contains("speed") ? a_args["speed"] : json(nullptr), sprint);
 				if (!parsedSpeed)
 					throw ToolError(400, "'speed' must be a number 0..1000");
 				speed = *parsedSpeed;
@@ -3489,7 +3492,7 @@ namespace dvb
 				if (action == "stopIdle")
 					return ActorIdle::Stop(npc, freezeAi);
 				if (action == "startLocomotion")
-					return ActorIdle::StartLocomotion(npc, speed);
+					return ActorIdle::StartLocomotion(npc, speed, sprint);
 				if (action == "stopLocomotion")
 					return ActorIdle::StopLocomotion(npc);
 				if (action == "status")

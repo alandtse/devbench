@@ -37,6 +37,7 @@ namespace dvb::ActorIdle
 		{
 			RE::FormID    actor{ 0 };
 			float         speed{ 0.0f };
+			bool          sprint{ false };
 			std::uint64_t speedPolls{ 0 };
 		};
 
@@ -140,10 +141,10 @@ namespace dvb::ActorIdle
 			return removed != 0;
 		}
 
-		void AddLocomotion(RE::FormID a_actor, float a_speed)
+		void AddLocomotion(RE::FormID a_actor, float a_speed, bool a_sprint)
 		{
 			const std::lock_guard lock{ g_locomotionLock };
-			g_locomotion.push_back({ a_actor, a_speed });
+			g_locomotion.push_back({ a_actor, a_speed, a_sprint });
 			g_locomotionCount.store(g_locomotion.size(), std::memory_order_release);
 		}
 
@@ -270,7 +271,19 @@ namespace dvb::ActorIdle
 		return out;
 	}
 
-	json StartLocomotion(RE::Actor* a_actor, float a_speed)
+	namespace
+	{
+		// The sprint start and stop actions set iSyncSprintState and the sprint anim event; the graph variable IsSprinting
+		// mirrors it.
+		void SetSprintState(RE::Actor* a_actor, bool a_on)
+		{
+			a_actor->SetGraphVariableBool("IsSprinting", a_on);
+			a_actor->SetGraphVariableInt("iSyncSprintState", a_on ? 1 : 0);
+			a_actor->NotifyAnimationGraph(a_on ? "sprintStart" : "sprintStop");
+		}
+	}
+
+	json StartLocomotion(RE::Actor* a_actor, float a_speed, bool a_sprint)
 	{
 		Require(a_actor, true);
 		const bool player = a_actor->IsPlayerRef();
@@ -290,12 +303,15 @@ namespace dvb::ActorIdle
 			a_actor->InitiateDoNothingPackage();
 			a_actor->EnableAI(true);
 		}
-		AddLocomotion(a_actor->GetFormID(), a_speed);
+		AddLocomotion(a_actor->GetFormID(), a_speed, a_sprint);
 		const bool notified = a_actor->NotifyAnimationGraph("moveStart");
+		if (a_sprint)
+			SetSprintState(a_actor, true);
 
 		json out = Describe(a_actor);
 		out["ok"] = true;
 		out["speed"] = a_speed;
+		out["sprint"] = a_sprint;
 		out["moveStartAccepted"] = notified;
 		return out;
 	}
@@ -304,6 +320,7 @@ namespace dvb::ActorIdle
 	{
 		Require(a_actor, true);
 		const bool wasRunning = DropLocomotion(a_actor->GetFormID());
+		SetSprintState(a_actor, false);
 		a_actor->NotifyAnimationGraph("moveStop");
 
 		json out = Describe(a_actor);
@@ -387,7 +404,15 @@ namespace dvb::ActorIdle
 		out["loopIdle"] = idle ? json(idle->GetFormEditorID()) : json(nullptr);
 		const std::lock_guard lock{ g_locomotionLock };
 		const auto*           loco = FindLocomotion(a_actor->GetFormID());
-		out["locomotion"] = loco ? json{ { "speed", loco->speed }, { "speedPolls", loco->speedPolls } } : json(nullptr);
+		if (loco) {
+			bool sprintVariable = false;
+			std::int32_t sprintSync = 0;
+			a_actor->GetGraphVariableBool("IsSprinting", sprintVariable);
+			a_actor->GetGraphVariableInt("iSyncSprintState", sprintSync);
+			out["locomotion"] = json{ { "speed", loco->speed }, { "sprint", loco->sprint }, { "speedPolls", loco->speedPolls }, { "graphIsSprinting", sprintVariable }, { "graphSyncSprintState", sprintSync } };
+		} else {
+			out["locomotion"] = nullptr;
+		}
 		return out;
 	}
 

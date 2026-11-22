@@ -28,9 +28,9 @@ namespace dvb::ActorIdle
 	/// NPC on the do-nothing package so it does not travel. The player (0x14) is accepted in third person only and keeps its AI.
 	/// Throws ToolError (409) as Play does, and 501 on Skyrim VR or a game version whose channel vtable is not known (AE 1.6.1170
 	/// and 1.7.104 are).
-	json StartLocomotion(RE::Actor* a_actor, float a_speed);
+	json StartLocomotion(RE::Actor* a_actor, float a_speed, bool a_sprint);
 
-	/// Ends the in-place run; the actor settles back into its own idle.
+	/// Ends the in-place run (and sprint); the actor settles back into its own idle.
 	json StopLocomotion(RE::Actor* a_actor);
 
 	/// The idles the actor can use now (its own conditions pass), optionally filtered by an EditorID substring.

@@ -16,11 +16,12 @@ namespace dvb::ActorIdleLogic
 	std::optional<std::int64_t> ParseRepeatMs(const json& a_value);
 
 	inline constexpr double kDefaultLocomotionSpeed = 300.0;
+	inline constexpr double kDefaultSprintSpeed = 600.0;
 	inline constexpr double kMaxLocomotionSpeed = 1000.0;
 
-	/// The movement speed for an in-place run: a number within 0..kMaxLocomotionSpeed, absent -> the default; anything else
-	/// is nullopt.
-	std::optional<float> ParseLocomotionSpeed(const json& a_value);
+	/// The movement speed for an in-place run: a number within 0..kMaxLocomotionSpeed, absent -> the run or sprint default;
+	/// anything else is nullopt.
+	std::optional<float> ParseLocomotionSpeed(const json& a_value, bool a_sprint);
 
 	/// A looping idle is replayed once a_repeatMs has passed since it was last played.
 	bool ReplayDue(std::int64_t a_nowMs, std::int64_t a_lastPlayMs, std::int64_t a_repeatMs);

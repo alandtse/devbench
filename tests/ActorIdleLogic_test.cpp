@@ -29,16 +29,23 @@ TEST_CASE("a looping idle is replayed once the repeat interval has passed")
 
 TEST_CASE("the locomotion speed defaults when absent and accepts a number within the bounds")
 {
-	CHECK(ParseLocomotionSpeed(json(nullptr)) == static_cast<float>(kDefaultLocomotionSpeed));
-	CHECK(ParseLocomotionSpeed(json(0)) == 0.0f);
-	CHECK(ParseLocomotionSpeed(json(250.5)) == 250.5f);
-	CHECK(ParseLocomotionSpeed(json(1000)) == 1000.0f);
+	CHECK(ParseLocomotionSpeed(json(nullptr), false) == static_cast<float>(kDefaultLocomotionSpeed));
+	CHECK(ParseLocomotionSpeed(json(0), false) == 0.0f);
+	CHECK(ParseLocomotionSpeed(json(250.5), false) == 250.5f);
+	CHECK(ParseLocomotionSpeed(json(1000), false) == 1000.0f);
+}
+
+TEST_CASE("a sprint defaults to a faster speed and still honours an explicit one")
+{
+	CHECK(ParseLocomotionSpeed(json(nullptr), true) == static_cast<float>(kDefaultSprintSpeed));
+	CHECK(ParseLocomotionSpeed(json(450), true) == 450.0f);
+	CHECK(!ParseLocomotionSpeed(json(1001), true).has_value());
 }
 
 TEST_CASE("a locomotion speed outside the bounds, or not a number, is refused")
 {
-	CHECK(!ParseLocomotionSpeed(json(-1)).has_value());
-	CHECK(!ParseLocomotionSpeed(json(1000.5)).has_value());
-	CHECK(!ParseLocomotionSpeed(json("fast")).has_value());
-	CHECK(!ParseLocomotionSpeed(json(true)).has_value());
+	CHECK(!ParseLocomotionSpeed(json(-1), false).has_value());
+	CHECK(!ParseLocomotionSpeed(json(1000.5), false).has_value());
+	CHECK(!ParseLocomotionSpeed(json("fast"), false).has_value());
+	CHECK(!ParseLocomotionSpeed(json(true), false).has_value());
 }
