@@ -40,9 +40,9 @@ namespace dvb::ActorIdle
 			std::uint64_t speedPolls{ 0 };
 		};
 
-		std::vector<Entry>      g_entries;  // main thread
-		bool                    g_ticking{ false };
-		bool                    g_locomotionHooked{ false };
+		std::vector<Entry> g_entries;  // main thread
+		bool               g_ticking{ false };
+		bool               g_locomotionHooked{ false };
 
 		// The graph polls channels off the main thread, so the in-place runs are guarded; the count lets the hook skip the lock
 		// when none is active.
@@ -92,7 +92,7 @@ namespace dvb::ActorIdle
 				func(a_channel, a_arg);
 				if (g_locomotionCount.load(std::memory_order_acquire) == 0)
 					return;
-				const auto base = reinterpret_cast<std::uintptr_t>(a_channel);
+				const auto  base = reinterpret_cast<std::uintptr_t>(a_channel);
 				const auto* actor = *reinterpret_cast<RE::Actor**>(base + kChannelActorOffset);
 				if (!actor)
 					return;

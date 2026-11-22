@@ -164,7 +164,14 @@
         "properties": {
           "action": {
             "description": "listIdles | playIdle | stopIdle | startLocomotion | stopLocomotion | status",
-            "enum": ["listIdles", "playIdle", "stopIdle", "startLocomotion", "stopLocomotion", "status"],
+            "enum": [
+              "listIdles",
+              "playIdle",
+              "stopIdle",
+              "startLocomotion",
+              "stopLocomotion",
+              "status"
+            ],
             "type": "string"
           },
           "filter": {
