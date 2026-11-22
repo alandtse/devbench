@@ -5,13 +5,20 @@
 
 #include <RE/A/AIProcess.h>
 #include <RE/A/Actor.h>
+#include <RE/P/PlayerCamera.h>
 #include <RE/P/PlayerCharacter.h>
 #include <RE/T/TESFile.h>
 #include <RE/T/TESIdleForm.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <mutex>
+#include <optional>
+#include <string>
 #include <thread>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 namespace dvb::ActorIdle
@@ -30,8 +37,24 @@ namespace dvb::ActorIdle
 			std::int64_t freezeAtMs{ -1 };  // -1: none
 		};
 
+		struct Locomotion
+		{
+			RE::FormID                                 actor{ 0 };
+			float                                      speed{ 0.0f };
+			std::vector<ActorIdleLogic::GraphVariable> variables;
+			std::vector<std::string>                   stopEvents;
+			std::uint64_t                              speedPolls{ 0 };
+		};
+
 		std::vector<Entry> g_entries;  // main thread
 		bool               g_ticking{ false };
+		bool               g_locomotionHooked{ false };
+
+		// The graph polls channels off the main thread, so the in-place runs are guarded; the count lets the hook skip the lock
+		// when none is active.
+		std::mutex               g_locomotionLock;
+		std::vector<Locomotion>  g_locomotion;
+		std::atomic<std::size_t> g_locomotionCount{ 0 };
 
 		std::int64_t NowMs()
 		{
@@ -52,6 +75,115 @@ namespace dvb::ActorIdle
 		void Drop(RE::FormID a_actor)
 		{
 			std::erase_if(g_entries, [&](const Entry& e) { return e.actor == a_actor; });
+		}
+
+		// The graph reads the value the channel cached, so it is overwritten after the poll, not before.
+		constexpr std::size_t kPollSlot = 1;
+		constexpr std::size_t kChannelValueOffset = 0x18;
+		constexpr std::size_t kChannelActorOffset = 0x28;
+
+		// Caller holds g_locomotionLock.
+		Locomotion* FindLocomotion(RE::FormID a_actor)
+		{
+			const auto it = std::ranges::find(g_locomotion, a_actor, &Locomotion::actor);
+			return it != g_locomotion.end() ? &*it : nullptr;
+		}
+
+		void SetGraphVariable(RE::Actor* a_actor, const std::string& a_name, const ActorIdleLogic::GraphValue& a_value)
+		{
+			std::visit(
+				[&](const auto& v) {
+					using T = std::remove_cvref_t<decltype(v)>;
+					if constexpr (std::is_same_v<T, bool>)
+						a_actor->SetGraphVariableBool(a_name, v);
+					else if constexpr (std::is_same_v<T, std::int32_t>)
+						a_actor->SetGraphVariableInt(a_name, v);
+					else
+						a_actor->SetGraphVariableFloat(a_name, v);
+				},
+				a_value);
+		}
+
+		json ReadGraphVariable(RE::Actor* a_actor, const ActorIdleLogic::GraphVariable& a_variable)
+		{
+			return std::visit(
+				[&](const auto& v) -> json {
+					using T = std::remove_cvref_t<decltype(v)>;
+					T    value{};
+					bool found;
+					if constexpr (std::is_same_v<T, bool>)
+						found = a_actor->GetGraphVariableBool(a_variable.name, value);
+					else if constexpr (std::is_same_v<T, std::int32_t>)
+						found = a_actor->GetGraphVariableInt(a_variable.name, value);
+					else
+						found = a_actor->GetGraphVariableFloat(a_variable.name, value);
+					return found ? json(value) : json(nullptr);
+				},
+				a_variable.value);
+		}
+
+		struct SpeedPollHook
+		{
+			static void thunk(void* a_channel, std::uintptr_t a_arg)
+			{
+				func(a_channel, a_arg);
+				if (g_locomotionCount.load(std::memory_order_acquire) == 0)
+					return;
+				const auto base = reinterpret_cast<std::uintptr_t>(a_channel);
+				auto*      actor = *reinterpret_cast<RE::Actor**>(base + kChannelActorOffset);
+				if (!actor)
+					return;
+				const std::lock_guard lock{ g_locomotionLock };
+				auto*                 loco = FindLocomotion(actor->GetFormID());
+				if (!loco)
+					return;
+				*reinterpret_cast<float*>(base + kChannelValueOffset) = loco->speed;
+				++loco->speedPolls;
+				// The player's own update rewrites graph variables from its input state, so they are set again on every poll.
+				for (const auto& variable : loco->variables)
+					SetGraphVariable(actor, variable.name, variable.value);
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		/// Replaces the speed channel's poll once; the vtable resolves through the address library on every supported runtime.
+		void InstallLocomotionHook()
+		{
+			if (g_locomotionHooked)
+				return;
+			REL::Relocation<std::uintptr_t> speedVtbl{ RE::VTABLE_BSTAnimationGraphDataChannel_Actor_float_ActorSpeedChannel_[0] };
+			SpeedPollHook::func = speedVtbl.write_vfunc(kPollSlot, SpeedPollHook::thunk);
+			g_locomotionHooked = true;
+		}
+
+		/// Ends the actor's in-place run: returns its pinned variables to their neutral values and sends its stop events.
+		/// Returns whether a run was active.
+		bool EndLocomotion(RE::Actor* a_actor)
+		{
+			std::optional<Locomotion> ended;
+			{
+				const std::lock_guard lock{ g_locomotionLock };
+				const auto            it = std::ranges::find(g_locomotion, a_actor->GetFormID(), &Locomotion::actor);
+				if (it != g_locomotion.end()) {
+					ended = std::move(*it);
+					g_locomotion.erase(it);
+					g_locomotionCount.store(g_locomotion.size(), std::memory_order_release);
+				}
+			}
+			if (!ended)
+				return false;
+			for (const auto& variable : ended->variables)
+				SetGraphVariable(a_actor, variable.name, ActorIdleLogic::NeutralValue(variable.value));
+			for (const auto& event : ended->stopEvents)
+				a_actor->NotifyAnimationGraph(event);
+			return true;
+		}
+
+		void AddLocomotion(RE::FormID a_actor, const ActorIdleLogic::Gait& a_gait)
+		{
+			const std::lock_guard lock{ g_locomotionLock };
+			g_locomotion.push_back({ a_actor, a_gait.speed, a_gait.variables, a_gait.stopEvents });
+			g_locomotionCount.store(g_locomotion.size(), std::memory_order_release);
 		}
 
 		void Tick();
@@ -109,11 +241,11 @@ namespace dvb::ActorIdle
 			return json{ { "ref", std::format("0x{:08X}", a_actor->GetFormID()) } };
 		}
 
-		void Require(RE::Actor* a_actor)
+		void Require(RE::Actor* a_actor, bool a_allowPlayer = false)
 		{
 			if (!a_actor)
 				throw ToolError(409, "not an actor");
-			if (a_actor->IsPlayerRef())
+			if (a_actor->IsPlayerRef() && !a_allowPlayer)
 				throw ToolError(409, "the player is not driven by idle control");
 			if (a_actor->IsDead())
 				throw ToolError(409, "the actor is dead");
@@ -128,6 +260,7 @@ namespace dvb::ActorIdle
 		if (!a_idle)
 			throw ToolError(404, "idle not found");
 
+		EndLocomotion(a_actor);
 		// Do not drop EnableAI(true): PlayIdle does not animate while the actor's AI is off.
 		a_actor->InitiateDoNothingPackage();
 		a_actor->EnableAI(true);
@@ -155,6 +288,7 @@ namespace dvb::ActorIdle
 	{
 		Require(a_actor);
 		Drop(a_actor->GetFormID());
+		EndLocomotion(a_actor);
 
 		a_actor->EnableAI(true);
 		auto* process = ProcessOf(a_actor);
@@ -172,6 +306,49 @@ namespace dvb::ActorIdle
 		out["aiFrozen"] = a_freezeAi;
 		if (!reset)
 			out["note"] = "ResetRoot idle not found; the current idle was stopped but no neutral pose was forced";
+		return out;
+	}
+
+	json StartLocomotion(RE::Actor* a_actor, const ActorIdleLogic::Gait& a_gait)
+	{
+		Require(a_actor, true);
+		const bool player = a_actor->IsPlayerRef();
+		if (player) {
+			const auto* camera = RE::PlayerCamera::GetSingleton();
+			if (!camera || camera->IsInFirstPerson())
+				throw ToolError(409, "the player runs in place only outside first person: switch with camera setPov third");
+		}
+		InstallLocomotionHook();
+		Drop(a_actor->GetFormID());
+		EndLocomotion(a_actor);
+
+		if (!player) {
+			a_actor->InitiateDoNothingPackage();
+			a_actor->EnableAI(true);
+		}
+		AddLocomotion(a_actor->GetFormID(), a_gait);
+		const bool notified = a_actor->NotifyAnimationGraph("moveStart");
+		json       events = json::array();
+		for (const auto& event : a_gait.startEvents)
+			events.push_back({ { "event", event }, { "accepted", a_actor->NotifyAnimationGraph(event) } });
+
+		json out = Describe(a_actor);
+		out["ok"] = true;
+		out["speed"] = a_gait.speed;
+		out["moveStartAccepted"] = notified;
+		out["events"] = std::move(events);
+		return out;
+	}
+
+	json StopLocomotion(RE::Actor* a_actor)
+	{
+		Require(a_actor, true);
+		const bool wasRunning = EndLocomotion(a_actor);
+		a_actor->NotifyAnimationGraph("moveStop");
+
+		json out = Describe(a_actor);
+		out["ok"] = true;
+		out["wasRunning"] = wasRunning;
 		return out;
 	}
 
@@ -242,17 +419,30 @@ namespace dvb::ActorIdle
 
 	json Status(RE::Actor* a_actor)
 	{
-		Require(a_actor);
+		Require(a_actor, true);
 		json        out = Describe(a_actor);
 		const auto  it = std::ranges::find(g_entries, a_actor->GetFormID(), &Entry::actor);
 		const auto* idle = it != g_entries.end() && it->idle ? RE::TESForm::LookupByID<RE::TESIdleForm>(it->idle) : nullptr;
 		out["looping"] = idle != nullptr;
 		out["loopIdle"] = idle ? json(idle->GetFormEditorID()) : json(nullptr);
+		const std::lock_guard lock{ g_locomotionLock };
+		const auto*           loco = FindLocomotion(a_actor->GetFormID());
+		if (loco) {
+			json variables = json::object();
+			for (const auto& variable : loco->variables)
+				variables[variable.name] = ReadGraphVariable(a_actor, variable);
+			out["locomotion"] = json{ { "speed", loco->speed }, { "speedPolls", loco->speedPolls }, { "variables", std::move(variables) } };
+		} else {
+			out["locomotion"] = nullptr;
+		}
 		return out;
 	}
 
 	void EndSession()
 	{
 		g_entries.clear();
+		const std::lock_guard lock{ g_locomotionLock };
+		g_locomotion.clear();
+		g_locomotionCount.store(0, std::memory_order_release);
 	}
 }
