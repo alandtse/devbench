@@ -77,9 +77,7 @@ namespace dvb::ActorIdle
 			std::erase_if(g_entries, [&](const Entry& e) { return e.actor == a_actor; });
 		}
 
-		// The graph's Speed variable is rebuilt every update by a data channel, which caches the value it polls in a float at
-		// +0x18. Overwriting that float after the channel's PollChannelUpdateImpl (virtual 1) is what the graph then reads; the
-		// actor pointer is at +0x28.
+		// The graph reads the value the channel cached, so it is overwritten after the poll, not before.
 		constexpr std::size_t kPollSlot = 1;
 		constexpr std::size_t kChannelValueOffset = 0x18;
 		constexpr std::size_t kChannelActorOffset = 0x28;
