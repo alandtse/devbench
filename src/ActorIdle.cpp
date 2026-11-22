@@ -93,8 +93,8 @@ namespace dvb::ActorIdle
 				func(a_channel, a_arg);
 				if (g_locomotionCount.load(std::memory_order_acquire) == 0)
 					return;
-				const auto  base = reinterpret_cast<std::uintptr_t>(a_channel);
-				auto* actor = *reinterpret_cast<RE::Actor**>(base + kChannelActorOffset);
+				const auto base = reinterpret_cast<std::uintptr_t>(a_channel);
+				auto*      actor = *reinterpret_cast<RE::Actor**>(base + kChannelActorOffset);
 				if (!actor)
 					return;
 				bool sprint = false;
