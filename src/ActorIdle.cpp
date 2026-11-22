@@ -94,13 +94,23 @@ namespace dvb::ActorIdle
 				if (g_locomotionCount.load(std::memory_order_acquire) == 0)
 					return;
 				const auto  base = reinterpret_cast<std::uintptr_t>(a_channel);
-				const auto* actor = *reinterpret_cast<RE::Actor**>(base + kChannelActorOffset);
+				auto* actor = *reinterpret_cast<RE::Actor**>(base + kChannelActorOffset);
 				if (!actor)
 					return;
-				const std::lock_guard lock{ g_locomotionLock };
-				if (auto* loco = FindLocomotion(actor->GetFormID())) {
+				bool sprint = false;
+				{
+					const std::lock_guard lock{ g_locomotionLock };
+					auto*                 loco = FindLocomotion(actor->GetFormID());
+					if (!loco)
+						return;
 					*reinterpret_cast<float*>(base + kChannelValueOffset) = loco->speed;
 					++loco->speedPolls;
+					sprint = loco->sprint;
+				}
+				// The player's own update rewrites the sprint variables from its input state, so they are set again on every poll.
+				if (sprint) {
+					actor->SetGraphVariableBool("IsSprinting", true);
+					actor->SetGraphVariableInt("iSyncSprintState", 1);
 				}
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
