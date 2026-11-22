@@ -31,9 +31,9 @@ namespace dvb::NodeRecording
 
 		struct Frame
 		{
-			int                                    frame;
-			long long                              tMs;
-			std::vector<std::optional<Transform>>  nodes;
+			int                                   frame;
+			long long                             tMs;
+			std::vector<std::optional<Transform>> nodes;
 		};
 
 		class Sampler
@@ -80,10 +80,10 @@ namespace dvb::NodeRecording
 				return m_frames.size();
 			}
 
-			bool Truncated() const { return m_truncated.load(); }
+			bool                            Truncated() const { return m_truncated.load(); }
 			const std::vector<std::string>& Names() const { return m_names; }
-			int StartFrame() const { return m_startFrame; }
-			RE::FormID FormId() const { return m_formId; }
+			int                             StartFrame() const { return m_startFrame; }
+			RE::FormID                      FormId() const { return m_formId; }
 
 			std::vector<Frame> TakeFrames()
 			{
@@ -152,19 +152,19 @@ namespace dvb::NodeRecording
 				m_frames.push_back(std::move(f));
 			}
 
-			const RE::FormID                      m_formId;
-			const std::vector<std::string>        m_names;
+			const RE::FormID                            m_formId;
+			const std::vector<std::string>              m_names;
 			const std::chrono::steady_clock::time_point m_start;
-			const int                             m_startFrame;
-			int                                   m_lastFrame = -2;  // main thread only
-			std::atomic<bool>                     m_cancelled{ false };
-			std::atomic<bool>                     m_truncated{ false };
-			mutable std::mutex                    m_framesMutex;
-			std::vector<Frame>                    m_frames;
-			std::mutex                            m_wakeMutex;
-			std::condition_variable               m_wakeCv;
-			bool                                  m_wake = false;
-			std::thread                           m_pacer;
+			const int                                   m_startFrame;
+			int                                         m_lastFrame = -2;  // main thread only
+			std::atomic<bool>                           m_cancelled{ false };
+			std::atomic<bool>                           m_truncated{ false };
+			mutable std::mutex                          m_framesMutex;
+			std::vector<Frame>                          m_frames;
+			std::mutex                                  m_wakeMutex;
+			std::condition_variable                     m_wakeCv;
+			bool                                        m_wake = false;
+			std::thread                                 m_pacer;
 		};
 
 		std::mutex               g_mutex;
@@ -183,7 +183,7 @@ namespace dvb::NodeRecording
 				throw ToolError(409, std::format("record nodes: '{}' has no loaded 3D", arg));
 			return json(ref->GetFormID());
 		});
-		std::lock_guard lock(g_mutex);
+		std::lock_guard   lock(g_mutex);
 		if (g_sampler)
 			throw ToolError(409, "a node recording is already running");
 		g_sampler = std::make_unique<Sampler>(formId.get<RE::FormID>(), std::move(a_names));
@@ -224,10 +224,10 @@ namespace dvb::NodeRecording
 		if (!out)
 			throw std::runtime_error(std::format("cannot write {}", a_path.string()));
 		out << json{ { "format", "devbench-node-frames-1" }, { "formId", std::format("{:08X}", sampler->FormId()) },
-						{ "nodes", sampler->Names() }, { "startFrame", sampler->StartFrame() },
-						{ "layout", "per node: [tx,ty,tz, r00,r01,r02,r10,r11,r12,r20,r21,r22, scale] world space, or null when the node was absent" } }
-					.dump()
-			<< '\n';
+			{ "nodes", sampler->Names() }, { "startFrame", sampler->StartFrame() },
+			{ "layout", "per node: [tx,ty,tz, r00,r01,r02,r10,r11,r12,r20,r21,r22, scale] world space, or null when the node was absent" } }
+				   .dump()
+		    << '\n';
 		for (const auto& f : frames) {
 			json nodes = json::array();
 			for (const auto& n : f.nodes)

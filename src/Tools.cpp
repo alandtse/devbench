@@ -4058,7 +4058,7 @@ namespace dvb
 			"(translate, 3x3 rotation, scale) once per presented frame on the main thread, each stamped with the engine frame counter that recordings and capture "
 			"manifests carry, and 'stop' writes them beside the recording as recording_<stamp>.nodes.ndjson (a header line, then one line per frame; a node "
 			"that is absent on a frame is null) and reports { nodeFrames:{ path, frames, nodes, truncated } }; 'status' reports nodeFrames while sampling. "
-"Pass 'timeScale' (0.1..3.0, up to 10.0 with 'allowHigh':true) to replay the whole run that many times "
+			"Pass 'timeScale' (0.1..3.0, up to 10.0 with 'allowHigh':true) to replay the whole run that many times "
 			"faster — the trajectory is paced in GAME time, so the run keeps its shape and a mid-run change is absorbed; "
 			"the setup/restore phase before the trajectory (coc/cow + settle) always runs at normal speed, since a load "
 			"screen isn't sped up by this and its settle physics stay predictable; the scale is restored when the run "
