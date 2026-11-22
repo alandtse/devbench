@@ -14,7 +14,11 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <thread>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 namespace dvb::ActorIdle
@@ -35,10 +39,11 @@ namespace dvb::ActorIdle
 
 		struct Locomotion
 		{
-			RE::FormID    actor{ 0 };
-			float         speed{ 0.0f };
-			bool          sprint{ false };
-			std::uint64_t speedPolls{ 0 };
+			RE::FormID                                  actor{ 0 };
+			float                                       speed{ 0.0f };
+			std::vector<ActorIdleLogic::GraphVariable> variables;
+			std::vector<std::string>                    stopEvents;
+			std::uint64_t                               speedPolls{ 0 };
 		};
 
 		std::vector<Entry> g_entries;  // main thread
@@ -86,6 +91,39 @@ namespace dvb::ActorIdle
 			return it != g_locomotion.end() ? &*it : nullptr;
 		}
 
+		void SetGraphVariable(RE::Actor* a_actor, const std::string& a_name, const ActorIdleLogic::GraphValue& a_value)
+		{
+			std::visit(
+				[&](const auto& v) {
+					using T = std::remove_cvref_t<decltype(v)>;
+					if constexpr (std::is_same_v<T, bool>)
+						a_actor->SetGraphVariableBool(a_name, v);
+					else if constexpr (std::is_same_v<T, std::int32_t>)
+						a_actor->SetGraphVariableInt(a_name, v);
+					else
+						a_actor->SetGraphVariableFloat(a_name, v);
+				},
+				a_value);
+		}
+
+		json ReadGraphVariable(RE::Actor* a_actor, const ActorIdleLogic::GraphVariable& a_variable)
+		{
+			return std::visit(
+				[&](const auto& v) -> json {
+					using T = std::remove_cvref_t<decltype(v)>;
+					T value{};
+					bool found;
+					if constexpr (std::is_same_v<T, bool>)
+						found = a_actor->GetGraphVariableBool(a_variable.name, value);
+					else if constexpr (std::is_same_v<T, std::int32_t>)
+						found = a_actor->GetGraphVariableInt(a_variable.name, value);
+					else
+						found = a_actor->GetGraphVariableFloat(a_variable.name, value);
+					return found ? json(value) : json(nullptr);
+				},
+				a_variable.value);
+		}
+
 		struct SpeedPollHook
 		{
 			static void thunk(void* a_channel, std::uintptr_t a_arg)
@@ -97,21 +135,15 @@ namespace dvb::ActorIdle
 				auto*      actor = *reinterpret_cast<RE::Actor**>(base + kChannelActorOffset);
 				if (!actor)
 					return;
-				bool sprint = false;
-				{
-					const std::lock_guard lock{ g_locomotionLock };
-					auto*                 loco = FindLocomotion(actor->GetFormID());
-					if (!loco)
-						return;
-					*reinterpret_cast<float*>(base + kChannelValueOffset) = loco->speed;
-					++loco->speedPolls;
-					sprint = loco->sprint;
-				}
-				// The player's own update rewrites the sprint variables from its input state, so they are set again on every poll.
-				if (sprint) {
-					actor->SetGraphVariableBool("IsSprinting", true);
-					actor->SetGraphVariableInt("iSyncSprintState", 1);
-				}
+				const std::lock_guard lock{ g_locomotionLock };
+				auto*                 loco = FindLocomotion(actor->GetFormID());
+				if (!loco)
+					return;
+				*reinterpret_cast<float*>(base + kChannelValueOffset) = loco->speed;
+				++loco->speedPolls;
+				// The player's own update rewrites graph variables from its input state, so they are set again on every poll.
+				for (const auto& variable : loco->variables)
+					SetGraphVariable(actor, variable.name, variable.value);
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -142,19 +174,33 @@ namespace dvb::ActorIdle
 			return true;
 		}
 
-		/// Returns whether an in-place run was removed.
-		bool DropLocomotion(RE::FormID a_actor)
+		/// Ends the actor's in-place run: returns its pinned variables to their neutral values and sends its stop events.
+		/// Returns whether a run was active.
+		bool EndLocomotion(RE::Actor* a_actor)
 		{
-			const std::lock_guard lock{ g_locomotionLock };
-			const auto            removed = std::erase_if(g_locomotion, [&](const Locomotion& l) { return l.actor == a_actor; });
-			g_locomotionCount.store(g_locomotion.size(), std::memory_order_release);
-			return removed != 0;
+			std::optional<Locomotion> ended;
+			{
+				const std::lock_guard lock{ g_locomotionLock };
+				const auto            it = std::ranges::find(g_locomotion, a_actor->GetFormID(), &Locomotion::actor);
+				if (it != g_locomotion.end()) {
+					ended = std::move(*it);
+					g_locomotion.erase(it);
+					g_locomotionCount.store(g_locomotion.size(), std::memory_order_release);
+				}
+			}
+			if (!ended)
+				return false;
+			for (const auto& variable : ended->variables)
+				SetGraphVariable(a_actor, variable.name, ActorIdleLogic::NeutralValue(variable.value));
+			for (const auto& event : ended->stopEvents)
+				a_actor->NotifyAnimationGraph(event);
+			return true;
 		}
 
-		void AddLocomotion(RE::FormID a_actor, float a_speed, bool a_sprint)
+		void AddLocomotion(RE::FormID a_actor, const ActorIdleLogic::Gait& a_gait)
 		{
 			const std::lock_guard lock{ g_locomotionLock };
-			g_locomotion.push_back({ a_actor, a_speed, a_sprint });
+			g_locomotion.push_back({ a_actor, a_gait.speed, a_gait.variables, a_gait.stopEvents });
 			g_locomotionCount.store(g_locomotion.size(), std::memory_order_release);
 		}
 
@@ -232,7 +278,7 @@ namespace dvb::ActorIdle
 		if (!a_idle)
 			throw ToolError(404, "idle not found");
 
-		DropLocomotion(a_actor->GetFormID());
+		EndLocomotion(a_actor);
 		// Do not drop EnableAI(true): PlayIdle does not animate while the actor's AI is off.
 		a_actor->InitiateDoNothingPackage();
 		a_actor->EnableAI(true);
@@ -260,7 +306,7 @@ namespace dvb::ActorIdle
 	{
 		Require(a_actor);
 		Drop(a_actor->GetFormID());
-		DropLocomotion(a_actor->GetFormID());
+		EndLocomotion(a_actor);
 
 		a_actor->EnableAI(true);
 		auto* process = ProcessOf(a_actor);
@@ -281,19 +327,7 @@ namespace dvb::ActorIdle
 		return out;
 	}
 
-	namespace
-	{
-		// The sprint start and stop actions set iSyncSprintState and the sprint anim event; the graph variable IsSprinting
-		// mirrors it.
-		void SetSprintState(RE::Actor* a_actor, bool a_on)
-		{
-			a_actor->SetGraphVariableBool("IsSprinting", a_on);
-			a_actor->SetGraphVariableInt("iSyncSprintState", a_on ? 1 : 0);
-			a_actor->NotifyAnimationGraph(a_on ? "sprintStart" : "sprintStop");
-		}
-	}
-
-	json StartLocomotion(RE::Actor* a_actor, float a_speed, bool a_sprint)
+	json StartLocomotion(RE::Actor* a_actor, const ActorIdleLogic::Gait& a_gait)
 	{
 		Require(a_actor, true);
 		const bool player = a_actor->IsPlayerRef();
@@ -307,30 +341,30 @@ namespace dvb::ActorIdle
 		if (!InstallLocomotionHook())
 			throw ToolError(501, "in-place locomotion is not supported on this game version");
 		Drop(a_actor->GetFormID());
-		DropLocomotion(a_actor->GetFormID());
+		EndLocomotion(a_actor);
 
 		if (!player) {
 			a_actor->InitiateDoNothingPackage();
 			a_actor->EnableAI(true);
 		}
-		AddLocomotion(a_actor->GetFormID(), a_speed, a_sprint);
+		AddLocomotion(a_actor->GetFormID(), a_gait);
 		const bool notified = a_actor->NotifyAnimationGraph("moveStart");
-		if (a_sprint)
-			SetSprintState(a_actor, true);
+		json       events = json::array();
+		for (const auto& event : a_gait.startEvents)
+			events.push_back({ { "event", event }, { "accepted", a_actor->NotifyAnimationGraph(event) } });
 
 		json out = Describe(a_actor);
 		out["ok"] = true;
-		out["speed"] = a_speed;
-		out["sprint"] = a_sprint;
+		out["speed"] = a_gait.speed;
 		out["moveStartAccepted"] = notified;
+		out["events"] = std::move(events);
 		return out;
 	}
 
 	json StopLocomotion(RE::Actor* a_actor)
 	{
 		Require(a_actor, true);
-		const bool wasRunning = DropLocomotion(a_actor->GetFormID());
-		SetSprintState(a_actor, false);
+		const bool wasRunning = EndLocomotion(a_actor);
 		a_actor->NotifyAnimationGraph("moveStop");
 
 		json out = Describe(a_actor);
@@ -415,11 +449,10 @@ namespace dvb::ActorIdle
 		const std::lock_guard lock{ g_locomotionLock };
 		const auto*           loco = FindLocomotion(a_actor->GetFormID());
 		if (loco) {
-			bool         sprintVariable = false;
-			std::int32_t sprintSync = 0;
-			a_actor->GetGraphVariableBool("IsSprinting", sprintVariable);
-			a_actor->GetGraphVariableInt("iSyncSprintState", sprintSync);
-			out["locomotion"] = json{ { "speed", loco->speed }, { "sprint", loco->sprint }, { "speedPolls", loco->speedPolls }, { "graphIsSprinting", sprintVariable }, { "graphSyncSprintState", sprintSync } };
+			json variables = json::object();
+			for (const auto& variable : loco->variables)
+				variables[variable.name] = ReadGraphVariable(a_actor, variable);
+			out["locomotion"] = json{ { "speed", loco->speed }, { "speedPolls", loco->speedPolls }, { "variables", std::move(variables) } };
 		} else {
 			out["locomotion"] = nullptr;
 		}

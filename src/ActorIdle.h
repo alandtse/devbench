@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ActorIdleLogic.h"
 #include "Json.h"
 
 #include <cstdint>
@@ -24,13 +25,15 @@ namespace dvb::ActorIdle
 	/// Ends any loop on the actor and returns it to its default idle. a_freezeAi turns its AI back off once it settles.
 	json Stop(RE::Actor* a_actor, bool a_freezeAi);
 
-	/// Runs the actor's locomotion cycle in place: overwrites the value the animation graph's Speed channel polls, and holds an
+	/// Runs the actor's locomotion cycle in place: overwrites the value the animation graph's Speed channel polls, sets the gait's
+	/// graph variables again on every poll and sends its start events, and holds an
 	/// NPC on the do-nothing package so it does not travel. The player (0x14) is accepted in third person only and keeps its AI.
 	/// Throws ToolError (409) as Play does, and 501 on Skyrim VR or a game version whose channel vtable is not known (AE 1.6.1170
 	/// and 1.7.104 are).
-	json StartLocomotion(RE::Actor* a_actor, float a_speed, bool a_sprint);
+	json StartLocomotion(RE::Actor* a_actor, const ActorIdleLogic::Gait& a_gait);
 
-	/// Ends the in-place run (and sprint); the actor settles back into its own idle.
+	/// Ends the in-place run: its pinned variables return to neutral and its stop events are sent, and the actor settles back into
+	/// its own idle.
 	json StopLocomotion(RE::Actor* a_actor);
 
 	/// The idles the actor can use now (its own conditions pass), optionally filtered by an EditorID substring.
