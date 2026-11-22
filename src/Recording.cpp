@@ -5,6 +5,8 @@
 #include "InputHotkeys.h"
 #include "Json.h"
 #include "MainThread.h"
+#include "NodeRecording.h"
+#include "NodeRecordingLogic.h"
 #include "RecordingActivity.h"
 #include "ReplayTrajectory.h"
 #include "TimeScaleControl.h"
@@ -883,6 +885,22 @@ namespace dvb::Recording
 			}
 			if (!correlationId.empty())
 				manifest["correlationId"] = correlationId;
+			std::vector<std::string> nodeNames;
+			std::string              nodesFormId;
+			if (a_args.contains("nodes")) {
+				std::string error;
+				auto        parsed = NodeRecordingLogic::ParseNodeNames(a_args["nodes"], error);
+				if (!parsed) {
+					cancelStart();
+					return json{ { "error", error } };
+				}
+				nodeNames = std::move(*parsed);
+				if (a_args.contains("nodesFormId") && !a_args["nodesFormId"].is_string()) {
+					cancelStart();
+					return json{ { "error", "nodesFormId must be a string" } };
+				}
+				nodesFormId = a_args.value("nodesFormId", std::string{});
+			}
 			json openMenus = json::array();
 			for (const auto& menu : GetOpenMenus())
 				openMenus.push_back(menu);
@@ -892,6 +910,15 @@ namespace dvb::Recording
 				logs::info(
 					"devbench: recording with UNKNOWN entry point — replay won't restore the "
 					"scene (load via the game tool or `coc` so devbench can capture it)");
+
+			if (!nodeNames.empty()) {
+				try {
+					NodeRecording::Start(nodesFormId, nodeNames);
+				} catch (const ToolError& e) {
+					cancelStart();
+					return json{ { "error", e.what() }, { "errorCode", e.code } };
+				}
+			}
 
 			g_userCocPending.store(false, std::memory_order_relaxed);  // don't leak across sessions
 			{
@@ -915,6 +942,7 @@ namespace dvb::Recording
 				} catch (...) {
 					rec.running.store(false, std::memory_order_relaxed);
 					rec.state = RecorderState::idle;
+					NodeRecording::Cancel();
 					throw;
 				}
 			}
@@ -927,9 +955,12 @@ namespace dvb::Recording
 			}
 			Notify("devbench: recording started");
 			logs::info("devbench: recording started (interval {}ms)", interval);
-			return json{ { "action", "start" }, { "recording", true }, { "intervalMs", interval },
+			json started{ { "action", "start" }, { "recording", true }, { "intervalMs", interval },
 				{ "anchored", anchored }, { "correlationId", correlationId },
 				{ "activityCapture", ActivityCaptureContract() } };
+			if (!nodeNames.empty())
+				started["nodes"] = nodeNames;
+			return started;
 		}
 
 		if (action == "checkpoint") {
@@ -993,9 +1024,21 @@ namespace dvb::Recording
 				scenario = BuildScenario(rec, recordedMs);
 				path = WriteScenarioFile(scenario);
 			} catch (const std::exception& e) {
+				NodeRecording::Cancel();
 				std::lock_guard lock(rec.mtx);
 				rec.state = RecorderState::idle;
 				throw ToolError(500, std::format("recording stopped but could not be persisted: {}", e.what()));
+			}
+			json nodeFrames;
+			if (NodeRecording::IsActive()) {
+				fs::path nodesPath = path;
+				nodesPath.replace_extension(".nodes.ndjson");
+				try {
+					nodeFrames = NodeRecording::StopAndWrite(nodesPath);
+				} catch (const std::exception& e) {
+					logs::warn("devbench: node frames not written: {}", e.what());
+					nodeFrames = json{ { "error", e.what() } };
+				}
 			}
 
 			// generic_string(), not string(): a bare `dir / filename` join uses the native
@@ -1025,6 +1068,8 @@ namespace dvb::Recording
 				{ "path", pathStr },
 				{ "meta", scenario["meta"] },
 			};
+			if (!nodeFrames.is_null())
+				response["nodeFrames"] = std::move(nodeFrames);
 			{
 				std::lock_guard lock(rec.mtx);
 				rec.state = RecorderState::idle;
@@ -1047,6 +1092,7 @@ namespace dvb::Recording
 				{ "intervalMs", rec.intervalMs },
 				{ "checkpointCount", rec.checkpoints.size() },
 				{ "activityCounts", SummarizeActivity(rec.activityEvents) },
+				{ "nodeFrames", NodeRecording::Status() },
 			};
 		}
 
