@@ -405,7 +405,7 @@ namespace dvb::ActorIdle
 		const std::lock_guard lock{ g_locomotionLock };
 		const auto*           loco = FindLocomotion(a_actor->GetFormID());
 		if (loco) {
-			bool sprintVariable = false;
+			bool         sprintVariable = false;
 			std::int32_t sprintSync = 0;
 			a_actor->GetGraphVariableBool("IsSprinting", sprintVariable);
 			a_actor->GetGraphVariableInt("iSyncSprintState", sprintSync);
