@@ -148,30 +148,14 @@ namespace dvb::ActorIdle
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
-		// Offset of the speed channel's vtable by runtime; only the AE builds that have been analysed.
-		struct ChannelVtable
-		{
-			REL::Version  version;
-			std::uint64_t speed;
-		};
-		constexpr ChannelVtable kChannelVtables[] = {
-			{ REL::Version{ 1, 6, 1170, 0 }, 0x189E568 },
-			{ REL::Version{ 1, 7, 104, 0 }, 0x191C240 },
-		};
-
-		/// False when this runtime's channel vtables are not known.
-		bool InstallLocomotionHook()
+		/// Replaces the speed channel's poll once; the vtable resolves through the address library on every supported runtime.
+		void InstallLocomotionHook()
 		{
 			if (g_locomotionHooked)
-				return true;
-			const auto version = REL::Module::get().version();
-			const auto it = std::ranges::find(kChannelVtables, version, &ChannelVtable::version);
-			if (it == std::end(kChannelVtables))
-				return false;
-			REL::Relocation<std::uintptr_t> speedVtbl{ REL::Offset(it->speed) };
+				return;
+			REL::Relocation<std::uintptr_t> speedVtbl{ RE::VTABLE_BSTAnimationGraphDataChannel_Actor_float_ActorSpeedChannel_[0] };
 			SpeedPollHook::func = speedVtbl.write_vfunc(kPollSlot, SpeedPollHook::thunk);
 			g_locomotionHooked = true;
-			return true;
 		}
 
 		/// Ends the actor's in-place run: returns its pinned variables to their neutral values and sends its stop events.
@@ -336,10 +320,7 @@ namespace dvb::ActorIdle
 			if (!camera || camera->IsInFirstPerson())
 				throw ToolError(409, "the player runs in place only outside first person: switch with camera setPov third");
 		}
-		if (REL::Module::IsVR())
-			throw ToolError(501, "in-place locomotion is not supported on Skyrim VR yet");
-		if (!InstallLocomotionHook())
-			throw ToolError(501, "in-place locomotion is not supported on this game version");
+		InstallLocomotionHook();
 		Drop(a_actor->GetFormID());
 		EndLocomotion(a_actor);
 

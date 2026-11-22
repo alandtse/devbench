@@ -3417,7 +3417,7 @@ namespace dvb
 			"explicit 'variables' override it. 'stopLocomotion' returns every pinned variable to false/0, sends 'stopEvents' and ends the run. 'status' returns whether a loop is active and its idle, and any "
 			"in-place run. playIdle and stopIdle return { ref, ok, ... }; every action "
 			"refuses (409) a dead or unloaded NPC, and all but startLocomotion, stopLocomotion and status refuse the player "
-			"(formId 0x14 runs in place in third person only, and keeps its AI). Main thread; SE and VR (startLocomotion is refused 501 on VR and on game versions other than AE 1.6.1170 / 1.7.104).";
+			"(formId 0x14 runs in place in third person only, and keeps its AI). Main thread; SE and VR.";
 		actor.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
