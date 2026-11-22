@@ -1,6 +1,7 @@
 #include "InspectLogic.h"
 
 #include <algorithm>
+#include <cctype>
 #include <tuple>
 
 namespace dvb::InspectLogic
@@ -55,6 +56,15 @@ namespace dvb::InspectLogic
 	bool HandsReady(const HandsObservation& a_hands)
 	{
 		return a_hands.settledDrawn && HandReady(a_hands.left) && HandReady(a_hands.right);
+	}
+
+	bool NameMatches(std::string_view a_name, std::string_view a_filter)
+	{
+		if (a_filter.empty())
+			return true;
+		const auto it = std::search(a_name.begin(), a_name.end(), a_filter.begin(), a_filter.end(),
+			[](unsigned char l, unsigned char r) { return std::tolower(l) == std::tolower(r); });
+		return it != a_name.end();
 	}
 
 	std::string BackgroundWarning(bool a_focused, std::optional<bool> a_alwaysActive)

@@ -1185,6 +1185,48 @@ namespace dvb
 			return j;
 		}
 
+		// Every node under a_root in graph order whose name contains a_filter, each charged to a_budget.
+		json NodesUnder(const RE::NiAVObject* a_root, const std::string& a_filter, InspectLogic::TraversalBudget& a_budget)
+		{
+			struct Entry
+			{
+				const RE::NiAVObject* object;
+				const char*           parent;
+				std::size_t           depth;
+			};
+			json                                      out = json::array();
+			std::vector<Entry>                        stack;
+			std::unordered_set<const RE::NiAVObject*> visited;
+			if (a_root)
+				stack.push_back({ a_root, nullptr, 0 });
+			while (!stack.empty()) {
+				const auto [object, parent, depth] = stack.back();
+				stack.pop_back();
+				if (!object || !visited.insert(object).second)
+					continue;
+				if (!a_budget.VisitNode())
+					break;
+				const char* name = object->name.c_str();
+				if (InspectLogic::NameMatches(name ? name : "", a_filter)) {
+					if (!a_budget.Emit())
+						break;
+					const auto* rtti = object->GetRTTI();
+					out.push_back({ { "name", name ? name : "" },
+						{ "type", rtti ? rtti->GetName() : "" },
+						{ "culled", object->GetAppCulled() },
+						{ "depth", depth },
+						{ "parent", parent ? json(parent) : json(nullptr) } });
+				}
+				if (auto* node = const_cast<RE::NiAVObject*>(object)->AsNode()) {
+					auto& children = node->GetChildren();
+					for (auto i = children.size(); i > 0; --i)
+						if (const auto& child = children[i - 1])
+							stack.push_back({ child.get(), name ? name : "", depth + 1 });
+				}
+			}
+			return out;
+		}
+
 		// A node reached twice (a shared child) is read once; every node is charged to a_budget.
 		json LightsUnder(const RE::NiAVObject* a_root, const ActiveLightIndex& a_active, InspectLogic::TraversalBudget& a_budget,
 			std::unordered_set<const RE::NiAVObject*>& a_visited)
@@ -1834,6 +1876,34 @@ namespace dvb
 			//                   'formType' filter, 'radius' (from player), and 'limit' (default 100).
 			// lights: every NiLight under a reference's 3D (default the player, both 3rd- and
 			// 1st-person), or scope='scene' for every light the renderer is using, nearest first.
+			if (kind == "nodes") {
+				const std::string formId = a_args.value("formId", std::string{});
+				const std::string filter = a_args.value("filter", std::string{});
+				std::size_t       limit = 100;
+				if (const auto it = a_args.find("limit"); it != a_args.end()) {
+					if (!it->is_number_integer() || it->get<std::int64_t>() < 0 || it->get<std::int64_t>() > static_cast<std::int64_t>(kLightNodeBudget))
+						throw ToolError(400, std::format("inspect nodes: 'limit' must be an integer 0..{}", kLightNodeBudget));
+					limit = it->get<std::size_t>();
+				}
+				return MainThread::RunAndWait([=]() -> json {
+					RE::TESObjectREFR* ref = nullptr;
+					if (!formId.empty()) {
+						RE::TESForm* f = LookupFormArg(formId);
+						ref = f ? f->As<RE::TESObjectREFR>() : nullptr;
+					} else {
+						ref = RE::PlayerCharacter::GetSingleton();
+					}
+					if (!ref)
+						throw ToolError(404, "inspect nodes: reference not found");
+					auto* root = ref->Get3D();
+					if (!root)
+						throw ToolError(409, "inspect nodes: the reference has no loaded 3D");
+					InspectLogic::TraversalBudget budget(kLightNodeBudget, kLightParentStepBudget, limit);
+					json                          nodes = NodesUnder(root, filter, budget);
+					return json{ { "ref", IdentifyRef(ref) }, { "returned", nodes.size() }, { "truncated", budget.Truncated() }, { "coverage", LightsCoverage(budget) }, { "nodes", std::move(nodes) } };
+				});
+			}
+
 			if (kind == "lights") {
 				const std::string formId = a_args.value("formId", std::string{});
 				const bool        selected = a_args.value("selected", false);
@@ -3197,6 +3267,9 @@ namespace dvb
 				"unknown; 'radius' then refused with 409), ('radius', 'limit'). Every lights read has one budget "
 				"for nodes visited, parent steps and lights emitted, reports it under 'coverage' with 'truncated' "
 				"and 'truncatedBy', and names its 'observation' source; "
+				"'nodes' → the scene-graph nodes under a reference's 3D (default the player; 'formId'), in graph order, as "
+				"{ ref, returned, truncated, coverage, nodes:[{name, type, culled, depth, parent}] } ('filter' is a "
+				"case-insensitive name substring, 'limit' default 100); use it to find the 'name' that actor setNode takes; "
 				"'inventory' → items held by the player (or a container 'formId') { owner, count, items:[{formId, "
 				"name, formType, count, value, weight, equipped}] } (filters: 'formType', 'limit'); "
 				"'quests' → journal (running/completed) { count, quests:[{formId, name, stage, type, active, "
@@ -3241,21 +3314,22 @@ namespace dvb
 				"'extensions' lists those registered kinds + descriptors, and kind=<registered> dispatches.";
 			inspect.description += RegisteredExtensionSummary("inspect", "kinds");
 			inspect.readOnly = true;
-			json kinds = json::array({ "state", "health", "vm", "scene", "mods", "player", "inventory", "quests", "effects", "refs", "lights", "draws", "registrants", "screenshots", "extensions" });
+			json kinds = json::array({ "state", "health", "vm", "scene", "mods", "player", "inventory", "quests", "effects", "refs", "lights", "nodes", "draws", "registrants", "screenshots", "extensions" });
 			for (const auto& k : ToolExtensions::Keys("inspect"))
 				if (std::find(kinds.begin(), kinds.end(), json(k)) == kinds.end())
 					kinds.push_back(k);
 			inspect.inputSchema = json{
 				{ "type", "object" },
 				{ "properties", json{
-									{ "kind", json{ { "type", "string" }, { "enum", kinds }, { "description", "state | health | vm | scene | mods | player | inventory | quests | effects | refs | lights | draws | registrants | screenshots | extensions (health answers off-thread for liveness+identity; or a registered mod kind — listed here + via kind=extensions)" } } },
-									{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form; inventory: the container ref to read (default player); effects: the actor to read (default player); lights: the reference whose 3D to read (default player) (hex formId, e.g. 0x14, or EditorID)" } } },
+									{ "kind", json{ { "type", "string" }, { "enum", kinds }, { "description", "state | health | vm | scene | mods | player | inventory | quests | effects | refs | lights | nodes | draws | registrants | screenshots | extensions (health answers off-thread for liveness+identity; or a registered mod kind — listed here + via kind=extensions)" } } },
+									{ "formId", json{ { "type", "string" }, { "description", "refs: identify this form; inventory: the container ref to read (default player); effects: the actor to read (default player); lights/nodes: the reference whose 3D to read (default player) (hex formId, e.g. 0x14, or EditorID)" } } },
 									{ "selected", json{ { "type", "boolean" }, { "description", "refs/lights: use the console-selected / crosshair ref instead" } } },
 									{ "scope", json{ { "type", "string" }, { "enum", json::array({ "ref", "scene" }) }, { "description", "lights: 'ref' (default) reads one reference's 3D; 'scene' lists every light the renderer is using, nearest the player first, each with the reference it hangs under; any other value is refused (400)" } } },
 									{ "formType", json{ { "type", "string" }, { "description", "refs/inventory: keep only entries whose type matches (e.g. Actor, Weapon, Potion)" } } },
 									{ "model", json{ { "type", "string" }, { "description", "refs enumerate: keep only refs whose base object's mesh path contains this substring (case-insensitive, e.g. 'wrcity01'); matches statics and furniture, not actors" } } },
 									{ "radius", json{ { "type", "number" }, { "description", "refs enumerate: only refs within this distance of the player (0 = whole loaded grid); lights scope=scene: only lights within it (0 = no limit)" } } },
-									{ "limit", json{ { "type", "integer" }, { "description", "refs/inventory/lights: max entries to return (default 100; lights: lights emitted, 0..50000)" } } },
+									{ "limit", json{ { "type", "integer" }, { "description", "refs/inventory/lights/nodes: max entries to return (default 100; lights and nodes: 0..50000)" } } },
+									{ "filter", json{ { "type", "string" }, { "description", "nodes: keep only nodes whose name contains this text (case-insensitive)" } } },
 									{ "reset", json{ { "type", "boolean" }, { "description", "draws: begin a new counting window after this reading" } } },
 								} },
 			};
@@ -3415,13 +3489,16 @@ namespace dvb
 			"('speed' 0..1000, default 300 is a run) and sets graph 'variables' (name to bool, integer or number, which must match the variable's type) again on every graph update, "
 			"sends graph 'events' once, and holds the NPC on the do-nothing package so it does not travel. 'sprint':true is shorthand for the sprint variables (IsSprinting, iSyncSprintState) and the sprintStart / sprintStop events, with a default speed of 600; "
 			"explicit 'variables' override it. 'stopLocomotion' returns every pinned variable to false/0, sends 'stopEvents' and ends the run. 'status' returns whether a loop is active and its idle, and any "
-			"in-place run. playIdle and stopIdle return { ref, ok, ... }; every action "
-			"refuses (409) a dead or unloaded NPC, and all but startLocomotion, stopLocomotion and status refuse the player "
+			"in-place run. 'setNode' (params 'name', 'culled') sets properties on the NiAVObject of that name under the actor's 3D and returns { found, name, previous:{culled}, culled }; 'culled' true hides it and false shows it. "
+			"List the names first with inspect kind=nodes. It works on the player and NPCs, and the change is not saved, so it is undone when the actor's 3D reloads. playIdle and stopIdle return { ref, ok, ... }; every action "
+			"refuses (409) a dead or unloaded NPC, and all but startLocomotion, stopLocomotion, status and setNode refuse the player "
 			"(formId 0x14 runs in place in third person only, and keeps its AI). Main thread; SE and VR.";
 		actor.inputSchema = json{
 			{ "type", "object" },
 			{ "properties", json{
-								{ "action", json{ { "type", "string" }, { "enum", json::array({ "listIdles", "playIdle", "stopIdle", "startLocomotion", "stopLocomotion", "status" }) }, { "description", "listIdles | playIdle | stopIdle | startLocomotion | stopLocomotion | status" } } },
+								{ "action", json{ { "type", "string" }, { "enum", json::array({ "listIdles", "playIdle", "stopIdle", "startLocomotion", "stopLocomotion", "status", "setNode" }) }, { "description", "listIdles | playIdle | stopIdle | startLocomotion | stopLocomotion | status | setNode" } } },
+								{ "name", json{ { "type", "string" }, { "description", "setNode: the exact NiAVObject name under the actor's 3D (list them with inspect kind=nodes)" } } },
+								{ "culled", json{ { "type", "boolean" }, { "description", "setNode: true hides the node (sets app-culled), false shows it; at least one property is required" } } },
 								{ "speed", json{ { "type", "number" }, { "description", "startLocomotion: the graph Speed, 0..1000 (default 300, a run; 600 with sprint:true)" } } },
 								{ "sprint", json{ { "type", "boolean" }, { "description", "startLocomotion: shorthand for the sprint variables and events, with speed defaulting to 600 (default false)" } } },
 								{ "variables", json{ { "type", "object" }, { "description", "startLocomotion: graph variables to hold, name -> bool | integer | number, at most 16; set again on every graph update and returned to false/0 by stopLocomotion" } } },
@@ -3447,8 +3524,8 @@ namespace dvb
 			};
 			const std::string action = text("action");
 			const std::string formId = text("formId");
-			if (action != "listIdles" && action != "playIdle" && action != "stopIdle" && action != "startLocomotion" && action != "stopLocomotion" && action != "status")
-				throw ToolError(400, std::format("unknown action '{}' (listIdles|playIdle|stopIdle|startLocomotion|stopLocomotion|status)", action));
+			if (action != "listIdles" && action != "playIdle" && action != "stopIdle" && action != "startLocomotion" && action != "stopLocomotion" && action != "status" && action != "setNode")
+				throw ToolError(400, std::format("unknown action '{}' (listIdles|playIdle|stopIdle|startLocomotion|stopLocomotion|status|setNode)", action));
 			if (formId.empty())
 				throw ToolError(400, "'formId' (the NPC reference) is required");
 			const bool freezeAi = BooleanArgument(a_args, "freezeAi", false);
@@ -3459,6 +3536,8 @@ namespace dvb
 			std::size_t          limit = 200;
 			std::string          filter;
 			ActorIdleLogic::Gait gait;
+			std::string          nodeName;
+			bool                 culled = false;
 			if (action == "playIdle") {
 				idleArg = text("idle");
 				if (idleArg.empty())
@@ -3475,6 +3554,13 @@ namespace dvb
 				if (!parsed)
 					throw ToolError(400, error);
 				gait = std::move(*parsed);
+			} else if (action == "setNode") {
+				nodeName = text("name");
+				if (nodeName.empty())
+					throw ToolError(400, "'name' (the node to hide or show) is required for setNode");
+				if (!a_args.contains("culled") || !a_args["culled"].is_boolean())
+					throw ToolError(400, "setNode needs a property to set: 'culled' (boolean)");
+				culled = a_args["culled"].get<bool>();
 			} else if (action == "listIdles") {
 				filter = text("filter");
 				if (a_args.contains("limit")) {
@@ -3500,6 +3586,17 @@ namespace dvb
 					return ActorIdle::StopLocomotion(npc);
 				if (action == "status")
 					return ActorIdle::Status(npc);
+				if (action == "setNode") {
+					auto* root = npc->Get3D();
+					if (!root)
+						throw ToolError(409, "the actor has no loaded 3D");
+					auto* node = root->GetObjectByName(nodeName);
+					if (!node)
+						return json{ { "found", false }, { "name", nodeName } };
+					const bool previous = node->GetAppCulled();
+					node->SetAppCulled(culled);
+					return json{ { "found", true }, { "name", nodeName }, { "previous", json{ { "culled", previous } } }, { "culled", culled } };
+				}
 				auto* idleForm = LookupFormArg(idleArg);
 				auto* idle = idleForm ? idleForm->As<RE::TESIdleForm>() : nullptr;
 				if (!idle)

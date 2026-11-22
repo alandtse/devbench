@@ -104,3 +104,12 @@ TEST_CASE("a background warning needs an unfocused window with bAlwaysActive kno
 	CHECK(BackgroundWarning(false, std::nullopt).empty());
 	CHECK(!BackgroundWarning(false, false).empty());
 }
+
+TEST_CASE("a node name filter is a case-insensitive substring and empty matches all")
+{
+	CHECK(NameMatches("NPC Head [Head]", ""));
+	CHECK(NameMatches("NPC Head [Head]", "head"));
+	CHECK(NameMatches("3BA", "3ba"));
+	CHECK(!NameMatches("3BA", "dress"));
+	CHECK(!NameMatches("", "x"));
+}
