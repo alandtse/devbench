@@ -189,6 +189,7 @@ add_files("src/ReplayTrajectory.cpp") -- pose keyframe sampling/interpolation; p
 add_files("src/RecordingActivity.cpp") -- activity contract + input/trajectory interleave; pure logic
 add_files("src/DrawStatsLogic.cpp")
 add_files("src/RunStatusLogic.cpp") -- run-status transcript compaction; pure logic
+add_files("src/NodeRecordingLogic.cpp") -- node-name list validation for record nodes; pure logic
 add_headerfiles("tests/*.h")
 set_pcxxheader("tests/pch.h")
 add_defines("_WINSOCKAPI_")

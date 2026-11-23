@@ -4054,6 +4054,10 @@ namespace dvb
 			"{id, ok, path, inconclusive, inconclusiveReason?, ssim?, threshold?, passed?} — read "
 			"this instead of filtering the (often much larger) 'results' step transcript yourself."
 			" Only one replay runs at a time: starting another while one is in flight is refused with 409 naming the active runId. "
+			"'start' with 'nodes' (names, at most 16) and optional 'nodesFormId' (default the player) also records those nodes' world transforms "
+			"(translate, 3x3 rotation, scale) once per presented frame on the main thread, each stamped with the engine frame counter that recordings and capture "
+			"manifests carry, and 'stop' writes them beside the recording as recording_<stamp>.nodes.ndjson (a header line, then one line per frame; a node "
+			"that is absent on a frame is null) and reports { nodeFrames:{ path, frames, nodes, truncated } }; 'status' reports nodeFrames while sampling. "
 			"Pass 'timeScale' (0.1..3.0, up to 10.0 with 'allowHigh':true) to replay the whole run that many times "
 			"faster — the trajectory is paced in GAME time, so the run keeps its shape and a mid-run change is absorbed; "
 			"the setup/restore phase before the trajectory (coc/cow + settle) always runs at normal speed, since a load "
@@ -4065,6 +4069,8 @@ namespace dvb
 			{ "type", "object" },
 			{ "properties", json{
 								{ "action", json{ { "type", "string" }, { "enum", json::array({ "start", "stop", "status", "replay", "checkpoint" }) }, { "description", "start | stop | status | replay | checkpoint" } } },
+								{ "nodes", json{ { "type", "array" }, { "items", json{ { "type", "string" } } }, { "description", "start: names of scene-graph nodes (at most 16, list them with inspect kind=nodes) whose world transform is recorded once per presented frame under 'nodesFormId' until stop" } } },
+								{ "nodesFormId", json{ { "type", "string" }, { "description", "start with nodes: the reference whose nodes are sampled (default the player, 0x14)" } } },
 								{ "intervalMs", json{ { "type", "integer" }, { "minimum", 10 }, { "maximum", kMaximumVRTrackedDurationMs }, { "description", "start: player-pose and raw-VR-tracking sample period in ms (default = config recordIntervalMs)" } } },
 								{ "allowNoPlayer", json{ { "type", "boolean" }, { "description", "start: permit a main-menu/new-game recording before a PlayerCharacter is loaded (default false)" } } },
 								{ "correlationId", json{ { "type", "string" }, { "maxLength", 128 }, { "description", "start: caller correlation identifier retained in status and recording metadata" } } },
