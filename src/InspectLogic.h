@@ -17,6 +17,9 @@ namespace dvb::InspectLogic
 	/// "" and "ref" read one reference's 3D, "scene" reads the renderer's light lists; anything else is nullopt.
 	std::optional<LightsScope> ParseLightsScope(std::string_view a_scope);
 
+	/// True when a_filter is empty or a case-insensitive substring of a_name.
+	bool NameMatches(std::string_view a_name, std::string_view a_filter);
+
 	/// One budget for a whole lights read: graph nodes visited, parent links walked, and lights emitted.
 	/// Once a limit is hit that kind of work stops and the read reports itself truncated.
 	class TraversalBudget
